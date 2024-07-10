@@ -104,14 +104,39 @@ set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 
+set(BENCHMARK_MIN_VERSION "v1.8.4")
+message("Build system will fetch and install Google Benchmark.")
+ExternalProject_Add(prj_benchmark
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/google/benchmark/archive/refs/tags/${BENCHMARK_MIN_VERSION}.tar.gz -o benchmark-${BENCHMARK_MIN_VERSION}.tar.gz &&
+                        tar -xzf benchmark-${BENCHMARK_MIN_VERSION}.tar.gz -C benchmark-${BENCHMARK_MIN_VERSION} --strip-components 1 &&
+                        rm benchmark-${BENCHMARK_MIN_VERSION}.tar.gz
+
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/benchmark-${BENCHMARK_MIN_VERSION}
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   cmake -E make_directory "build" &&
+                        cmake -E chdir "build" cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DCMAKE_BUILD_TYPE=Release ../
+    BUILD_COMMAND       cmake --build "build" --config Release
+    INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
+                        cp -rf include/benchmark ${EXT_INCLUDE}
+)
+
+set(BENCHMARK_LIB ${EXT_LIB}/libbenchmark.a)
+
+add_library(benchmark STATIC IMPORTED)
+set_target_properties(benchmark PROPERTIES IMPORTED_LOCATION ${BENCHMARK_LIB})
+add_dependencies(benchmark prj_benchmark)
+
+
 set(MALLOC_LIB "")
 set(JEMALLOC_MIN_VERSION "5.3.0")
 find_package(Jemalloc ${JEMALLOC_MIN_VERSION})
 if(JEMALLOC_FOUND)
-    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system")
+    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system.")
     set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
 else()
-    message("Build system will fetch and install jemalloc")
+    message("Build system will fetch and install jemalloc.")
     ExternalProject_Add(prj_jemalloc
         DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
         DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/${JEMALLOC_MIN_VERSION}.tar.gz -o jemalloc-${JEMALLOC_MIN_VERSION}.tar.gz &&

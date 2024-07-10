@@ -16,6 +16,10 @@ add_library(core STATIC ${SRC})
 add_executable(${PROJECT_NAME} main.cpp)
 
 
+# Dependencies
+add_dependencies(core prj_benchmark)
+
+
 # Configs for targets.
 
 target_include_directories(core PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
@@ -35,6 +39,8 @@ target_link_libraries(core PRIVATE jemalloc)
 target_link_libraries(core PRIVATE ZLIB::ZLIB)
 
 target_link_libraries(core PRIVATE Threads::Threads)
+
+target_link_libraries(core PRIVATE benchmark)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 
