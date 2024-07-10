@@ -84,6 +84,11 @@ if(UBSAN)
 endif()
 
 
+# Required preprocessor definitions.
+set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
+add_compile_definitions(${XXHASH_DEFS})
+
+
 # Required packages / libraries from the system.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
