@@ -8,7 +8,7 @@ set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
 # Libraries.
 
 set(SRC
-        Ref_Parser.cpp)
+        Parser.cpp)
 
 add_library(core STATIC ${SRC})
 

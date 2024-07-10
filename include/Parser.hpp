@@ -17,7 +17,7 @@ struct _KSEQ_DATA;  // Forward declaration for `kseq`'s sequence-data format.
 
 
 // FASTA/FASTQ file parser.
-class Ref_Parser
+class Parser
 {
     typedef _KSEQ_DATA kseq_t;
 
@@ -33,7 +33,7 @@ private:
 
 
     // Constructs a parser for the reference input collection `refs`.
-    Ref_Parser(const std::vector<std::string>& refs);
+    Parser(const std::vector<std::string>& refs);
 
     // Opens the reference at path `reference_path`.
     void open_reference(const std::string& reference_path);
@@ -45,7 +45,7 @@ private:
 public:
 
     // Constructs a parser for the file at path `file_path`.
-    Ref_Parser(const std::string& file_path);
+    Parser(const std::string& file_path);
 
     // Returns the path to the reference currently being parsed.
     const std::string& curr_ref() const;

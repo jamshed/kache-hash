@@ -1,5 +1,5 @@
 
-#include "Ref_Parser.hpp"
+#include "Parser.hpp"
 #include "kseq/kseq.h"
 
 #include <iostream>
@@ -10,7 +10,7 @@
 KSEQ_INIT(gzFile, gzread)
 
 
-Ref_Parser::Ref_Parser(const std::string& file_path)
+Parser::Parser(const std::string& file_path)
 {
     ref_paths.push(file_path);
 
@@ -19,12 +19,12 @@ Ref_Parser::Ref_Parser(const std::string& file_path)
 }
 
 
-Ref_Parser::Ref_Parser(const std::vector<std::string>& refs):
+Parser::Parser(const std::vector<std::string>& refs):
     ref_paths(std::deque<std::string>(refs.begin(), refs.end()))
 {}
 
 
-void Ref_Parser::open_reference(const std::string& reference_path)
+void Parser::open_reference(const std::string& reference_path)
 {
     file_ptr = gzopen(reference_path.c_str(), "r");  // Open the file handler.
     if(file_ptr == nullptr)
@@ -43,7 +43,7 @@ void Ref_Parser::open_reference(const std::string& reference_path)
 }
 
 
-bool Ref_Parser::open_next_reference()
+bool Parser::open_next_reference()
 {
     if(ref_paths.empty())
         return false;
@@ -56,13 +56,13 @@ bool Ref_Parser::open_next_reference()
 }
 
 
-const std::string& Ref_Parser::curr_ref() const
+const std::string& Parser::curr_ref() const
 {
     return curr_ref_path;
 }
 
 
-bool Ref_Parser::read_next_seq()
+bool Parser::read_next_seq()
 {
     // Sequences still remain at the current reference being parsed.
     if(parser != nullptr && kseq_read(parser) >= 0)
@@ -82,43 +82,43 @@ bool Ref_Parser::read_next_seq()
 }
 
 
-const char* Ref_Parser::seq() const
+const char* Parser::seq() const
 {
     return parser->seq.s;
 }
 
 
-size_t Ref_Parser::seq_len() const
+size_t Parser::seq_len() const
 {
     return parser->seq.l;
 }
 
 
-size_t Ref_Parser::buff_sz() const
+size_t Parser::buff_sz() const
 {
     return parser->seq.m;
 }
 
 
-uint64_t Ref_Parser::ref_id() const
+uint64_t Parser::ref_id() const
 {
     return ref_count;
 }
 
 
-uint64_t Ref_Parser::seq_id() const
+uint64_t Parser::seq_id() const
 {
     return seq_id_;
 }
 
 
-const char* Ref_Parser::seq_name() const
+const char* Parser::seq_name() const
 {
     return parser->name.s;
 }
 
 
-void Ref_Parser::close()
+void Parser::close()
 {
     if(file_ptr != nullptr)
     {
