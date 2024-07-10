@@ -208,6 +208,15 @@ public:
 
 
 template <uint16_t k>
+class Kmer_Hasher
+{
+public:
+
+    uint64_t operator()(const Kmer<k>& key, uint64_t seed = 0) const { return key.to_u64(seed); }
+};
+
+
+template <uint16_t k>
 inline void Kmer<k>::left_shift()
 {
     left_shift<1>();
