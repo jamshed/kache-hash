@@ -27,7 +27,7 @@ void BM_file_read(benchmark::State& state)
         while(input.read_next_seq())
             benchmark::DoNotOptimize(sum_len += input.seq_len());
 
-        std::cout << "Sequence length: " << sum_len << "\n";
+        // std::cout << "Sequence length: " << sum_len << "\n";
     }
 }
 
@@ -59,7 +59,7 @@ void BM_kmer_hash(benchmark::State& state)
             }
         }
 
-        std::cout << "Input k-mer set signature: " << h << "\n";
+        // std::cout << "Input k-mer set signature: " << h << "\n";
 
         input.close();
     }
@@ -87,7 +87,7 @@ void BM_set_insert_generic(benchmark::State& state)
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert(v.canonical());
+                benchmark::DoNotOptimize(S.insert(v.canonical()));
 
                 if(kmer_idx + k == len)
                     break;
@@ -99,6 +99,6 @@ void BM_set_insert_generic(benchmark::State& state)
 
         input.close();
 
-        std::cout << "Set size: " << S.size() << "\n";
+        // std::cout << "Set size: " << S.size() << "\n";
     }
 };

@@ -38,8 +38,6 @@ void Parser::open_reference(const std::string& reference_path)
     curr_ref_path = reference_path;
     ref_count++;
     seq_id_ = 0;
-
-    std::cout << "\nOpened reference " << ref_count << " from " << curr_ref_path << "\n";
 }
 
 
@@ -127,7 +125,5 @@ void Parser::close()
 
         parser = nullptr;
         file_ptr = nullptr;
-
-        std::cerr << "\rClosed reference " << curr_ref() << ".\n";
     }
 }
