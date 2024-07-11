@@ -94,6 +94,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(PFM REQUIRED)
 
 # Required external projects.
 include(ExternalProject)
@@ -116,7 +117,7 @@ ExternalProject_Add(prj_benchmark
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
     CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -E chdir "build" cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DCMAKE_BUILD_TYPE=Release ../
+                        cmake -E chdir "build" cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DBENCHMARK_ENABLE_LIBPFM=ON -DCMAKE_BUILD_TYPE=Release ../
     BUILD_COMMAND       cmake --build "build" --config Release
     INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
                         cp -rf include/benchmark ${EXT_INCLUDE}

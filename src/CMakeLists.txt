@@ -43,6 +43,8 @@ target_link_libraries(core PRIVATE Threads::Threads)
 
 target_link_libraries(core PRIVATE benchmark)
 
+target_link_libraries(core PRIVATE pfm)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE benchmark)
 
