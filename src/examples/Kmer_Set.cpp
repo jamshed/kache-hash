@@ -105,3 +105,42 @@ void BM_set_insert_generic(benchmark::State& state)
         // std::cout << "Set size: " << S.size() << "\n";
     }
 }
+
+
+void BM_set_insert_batched(benchmark::State& state)
+{
+    Kmer_Hashset<k> S(final_sz);
+
+    for(auto _ : state)
+    {
+        S.clear();
+
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            assert(len >= k);
+
+            Directed_Vertex<k> v(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                // TODO: this statement is significantly slower than the next one w/ the custom hashset. Diagnose.
+                S.insert_lazy(v.canonical());
+                // benchmark::DoNotOptimize(S.insert_lazy(v.canonical()));
+
+                if(kmer_idx + k == len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+
+        S.flush_buffer();
+        input.close();
+
+        // std::cout << "Set size: " << S.size() << "\n";
+    }
+}

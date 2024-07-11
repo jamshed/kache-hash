@@ -11,7 +11,9 @@
 #include <cstddef>
 #include <limits>
 #include <cstring>
+#include <vector>
 #include <cmath>
+#include <algorithm>
 #include <cassert>
 
 
@@ -34,12 +36,20 @@ private:
 
     uint8_t cur_stamp;  // Current timestamp, or the version of the table. It need not be just 1 byte.
 
+    std::vector<Kmer<k>> U; // Buffer of update-entries.
+    static constexpr std::size_t buf_cap = 1 * 1024 * 1024 / (sizeof(Kmer<k>)); // 1MB worth of update entries.
+
 
     // Maps the hash value `h` to an index into the table.
     auto hash_to_idx(const std::size_t h) const { return h & wrapper_mask; }
 
     // Returns the next (wrapped) index to `i`.
     auto next_idx(const std::size_t idx) const { return hash_to_idx(idx + 1); }
+
+    // Attemps to insert the k-mer `key` onward from the index `idx`. Returns
+    // `true` iff the insertion was successful, i.e. when the k-mer was not
+    // present in the set.
+    bool insert_at(const Kmer<k>& key, std::size_t idx);
 
 
 public:
@@ -67,6 +77,13 @@ public:
     // Inserts the k-mer `key` to the hashset. Returns `true` iff the insertion
     // was successful, i.e. when the k-mer was not present in the set.
     bool insert(const Kmer<k>& key);
+
+    // Adds the k-mer `key` to the hashset buffer for insertion at some time.
+    // Returns `true` iff this call triggers a buffer flush.
+    bool insert_lazy(const Kmer<k>& key);
+
+    // Completes and flushes all the pending insertions of the hashset.
+    void flush_buffer();
 };
 
 
@@ -116,8 +133,14 @@ inline void Kmer_Hashset<k>::clear()
 template <uint16_t k>
 inline bool Kmer_Hashset<k>::insert(const Kmer<k>& key)
 {
-    const auto h = hash_to_idx(key.to_u64());
-    for(std::size_t i = h; ; i = next_idx(i))
+    return insert_at(key, hash_to_idx(key.to_u64()));
+}
+
+
+template <uint16_t k>
+inline bool Kmer_Hashset<k>::insert_at(const Kmer<k>& key, const std::size_t idx)
+{
+    for(std::size_t i = idx; ; i = next_idx(i))
         if(T[i] != cur_stamp)   // Empty slot as it contains an entry from a previous version of the table.
         {
             assert(size() < capacity());
@@ -132,6 +155,58 @@ inline bool Kmer_Hashset<k>::insert(const Kmer<k>& key)
             return false;
 
     return false;
+}
+
+
+template <uint16_t k>
+inline bool Kmer_Hashset<k>::insert_lazy(const Kmer<k>& key)
+{
+    U.emplace_back(key);
+    if(U.size() == buf_cap)
+    {
+        flush_buffer();
+        return true;
+    }
+
+    return false;
+}
+
+
+template <uint16_t k>
+inline void Kmer_Hashset<k>::flush_buffer()
+{
+    constexpr std::size_t batch_size = 64;
+    uint64_t H[2][batch_size];
+
+    std::size_t processed = 0;
+    std::size_t cur_batch_sz;
+    std::size_t next_batch_sz = std::min(batch_size, U.size());
+    for(std::size_t i = 0; i < next_batch_sz; ++i)
+        H[0][i] = hash_to_idx(U[i].to_u64());
+
+    for(std::size_t b_id = 0; processed < U.size(); ++b_id)
+    {
+        cur_batch_sz = next_batch_sz;
+        const auto next_g_base = processed + cur_batch_sz;
+        next_batch_sz = std::min(batch_size, U.size() - next_g_base);
+        const auto* const h_cur = &H[b_id & 1][0];
+        auto* const h_next = &H[(b_id + 1) & 1][0];
+
+        // Prefetch next batch's initial slots.
+        for(std::size_t i = 0; i < next_batch_sz; ++i)
+        {
+            h_next[i] = hash_to_idx(U[next_g_base + i].to_u64());
+            __builtin_prefetch(T + h_next[i], 1, 0);
+        }
+
+        // Process current batch.
+        for(std::size_t i = 0; i < cur_batch_sz; ++i)
+            insert_at(U[processed + i], h_cur[i]);
+
+        processed += cur_batch_sz;
+    }
+
+    U.clear();
 }
 
 
