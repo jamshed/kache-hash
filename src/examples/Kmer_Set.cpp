@@ -26,6 +26,42 @@ void BM_file_read(benchmark::State& state)
         Parser input(file_path);
         while(input.read_next_seq())
             benchmark::DoNotOptimize(sum_len += input.seq_len());
+
+        std::cout << "Sequence length: " << sum_len << "\n";
+    }
+}
+
+
+void BM_kmer_hash(benchmark::State& state)
+{
+    for(auto _ : state)
+    {
+        Parser input(file_path);
+        uint64_t h = 0;
+
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            assert(len >= k);
+
+            Directed_Vertex<k> v(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                benchmark::DoNotOptimize(h ^= v.canonical().to_u64());
+
+                if(kmer_idx + k == len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+
+        std::cout << "Input k-mer set signature: " << h << "\n";
+
+        input.close();
     }
 }
 
