@@ -13,12 +13,25 @@
 #include <cassert>
 
 
+constexpr uint16_t k = 31;
+constexpr const char* file_path = "/ssd2/jamshed/small-read.k31.cf3.fa";
+constexpr std::size_t final_sz = 8501727;
+
+
+void BM_file_read(benchmark::State& state)
+{
+    for(auto _ : state)
+    {
+        std::size_t sum_len = 0;
+        Parser input(file_path);
+        while(input.read_next_seq())
+            benchmark::DoNotOptimize(sum_len += input.seq_len());
+    }
+}
+
+
 void BM_set_insert_generic(benchmark::State& state)
 {
-    constexpr uint16_t k = 31;
-    const std::string file_path("/ssd2/jamshed/small-read.k31.cf3.fa");
-    constexpr std::size_t final_sz = 8501727;
-
     ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> S;
     S.reserve(final_sz);
 
