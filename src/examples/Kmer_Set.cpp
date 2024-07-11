@@ -71,14 +71,13 @@ void BM_set_insert_generic(benchmark::State& state)
 {
     // ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> S;
     // S.reserve(final_sz);
-    Kmer_Hashset<k> S(8501727);
+    Kmer_Hashset<k> S(final_sz);
 
     for(auto _ : state)
     {
         S.clear();
 
         Parser input(file_path);
-
         while(input.read_next_seq())
         {
             auto const seq = input.seq();
@@ -90,8 +89,8 @@ void BM_set_insert_generic(benchmark::State& state)
             while(true)
             {
                 // TODO: this statement is significantly slower than the next one w/ the custom hashset. Diagnose.
-                // S.insert(v.canonical());
-                benchmark::DoNotOptimize(S.insert(v.canonical()));
+                S.insert(v.canonical());
+                // benchmark::DoNotOptimize(S.insert(v.canonical()));
 
                 if(kmer_idx + k == len)
                     break;
@@ -105,4 +104,4 @@ void BM_set_insert_generic(benchmark::State& state)
 
         // std::cout << "Set size: " << S.size() << "\n";
     }
-};
+}
