@@ -3,6 +3,7 @@
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "Parser.hpp"
+#include "Kmer_Hashset.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
 
@@ -68,8 +69,9 @@ void BM_kmer_hash(benchmark::State& state)
 
 void BM_set_insert_generic(benchmark::State& state)
 {
-    ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> S;
-    S.reserve(final_sz);
+    // ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> S;
+    // S.reserve(final_sz);
+    Kmer_Hashset<k> S(8501727);
 
     for(auto _ : state)
     {
@@ -87,6 +89,8 @@ void BM_set_insert_generic(benchmark::State& state)
             std::size_t kmer_idx = 0;
             while(true)
             {
+                // TODO: this statement is significantly slower than the next one w/ the custom hashset. Diagnose.
+                // S.insert(v.canonical());
                 benchmark::DoNotOptimize(S.insert(v.canonical()));
 
                 if(kmer_idx + k == len)
