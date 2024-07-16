@@ -1,9 +1,13 @@
 
 
 #include "Kmer.hpp"
+#include "DNA_Utility.hpp"
+#include "utility.hpp"
+#include "xxHash/xxhash.h"
 
 #include <cstdint>
 #include <cstddef>
+#include <cassert>
 
 
 template <typename T_seq_, uint16_t k, bool is_canonical_> class Minimizer_Iterator;
@@ -19,16 +23,7 @@ public:
 
     // Returns the hash value of the l-mer `lmer`. The seed-value `seed` is used
     // in hashing.
-    static uint64_t hash(minimizer_t lmer, uint64_t seed = 0);
-
-    // Extracts the minimizer of the k-mer `kmer` into `min`, and its index into
-    // `idx`.
-    template <uint16_t k>
-    static void get_minimizer(const Kmer<k>& kmer, const uint16_t l, minimizer_t& min, std::size_t& idx);
-
-    // Extracts the minimizer of the k-mer `kmer` into `min`.
-    template <uint16_t k>
-    static minimizer_t canonical_minimizer(const Kmer<k>& kmer, const uint16_t l);
+    static uint64_t hash(minimizer_t lmer, uint16_t l, uint64_t seed);
 };
 
 
@@ -84,62 +79,12 @@ inline bool Lmer_Tuple::operator<(const Lmer_Tuple& rhs) const
 }
 
 
-inline uint64_t Minimizer_Utility::hash(const minimizer_t lmer, const uint64_t seed)
+inline uint64_t Minimizer_Utility::hash(const minimizer_t lmer, const uint16_t l, const uint64_t seed)
 {
-#ifdef CF_DEVELOP_MODE
-    return lmer;    // TODO: add as debug option for developer.
-#endif
-
-    return XXH3_64bits_withSeed(&lmer, sizeof(lmer), seed);
-    // TODO: the entropy of the minimizer-hash is getting diluted by considering all the leading 0 bits (64 - 2l bits, specifically.)
-    // return wyhash(&lmer, (2 * l + 7) / 8, seed, wy_salt);
-    // return wyhash(&lmer, sizeof(lmer), seed, wy_salt);
+    // return lmer;
+    // return XXH3_64bits_withSeed(&lmer, sizeof(lmer), seed);
+    return XXH3_64bits_withSeed(&lmer, (2 * l + 7) / 8, seed);
 }
-
-
-template <uint16_t K>
-inline void Minimizer_Utility::get_minimizer(const Kmer<K>& kmer, const uint16_t l, minimizer_t& min, std::size_t& idx)
-{
-    const uint64_t* const kmer_data = kmer.data();
-
-    const minimizer_t last_lmer = kmer_data[0] & ((uint64_t(0b1) << (2 * l)) - 1);  // The last l-mer in `kmer`.
-    Lmer_Tuple curr_lmer(last_lmer, K - l, hash(last_lmer));
-    Lmer_Tuple min_lmer(curr_lmer);
-
-    uint64_t base;
-    for(std::size_t i = l; i < K; ++i)  // Backward scan of l-mers in `kmer`. Yes, backwards.
-    {
-        base = (kmer_data[i >> 5] >> (2 * (i & 31))) & uint64_t(0b11);
-        curr_lmer.lmer = (curr_lmer.lmer >> 2) | (base << (2 * (l - 1)));
-        curr_lmer.index--;
-        curr_lmer.hash = hash(curr_lmer.lmer);
-
-        if(curr_lmer < min_lmer)
-            min_lmer = curr_lmer;
-    }
-
-    min = min_lmer.lmer, idx = min_lmer.index;
-}
-
-
-template <uint16_t k>
-inline uint64_t Minimizer_Utility::canonical_minimizer(const Kmer<k>& kmer, const uint16_t l)
-{
-    minimizer_t min_f, min_r;
-    std::size_t min_idx;
-
-    get_minimizer(kmer, l, min_f, min_idx);
-    get_minimizer(kmer.reverse_complement(), l, min_r, min_idx);
-
-    const auto h_f = hash(min_f), h_r = hash(min_r);
-    return h_f != h_r ? (h_f < h_r ? min_f : min_r) : std::min(min_f, min_r);
-}
-
-
-
-#include "utility.hpp"
-
-#include <cstddef>
 
 
 // Fixed-capacity deque of capacity at least `req_cap_`. UB when size exceeds
@@ -193,15 +138,6 @@ public:
 
     void pop_front() { shrink_front(); }
 };
-
-
-
-#include "DNA_Utility.hpp"
-#include "Kmer.hpp"
-#include "xxHash/xxhash.h"
-
-#include <cstdint>
-#include <cassert>
 
 
 // =============================================================================
@@ -273,10 +209,9 @@ public:
     // Returns the minimizer's 64-bit hash value.
     uint64_t hash() const;
 
-    // Computes the `l`-minimizer of the `k`-length sequence `kmer` at `min`,
-    // its hash at `h`, and index in `kmer` ar `idx`. The seed value `seed` is
-    // used in hashing the `l`-mers.
-    static void minimizer(T_seq_ kmer, uint16_t l, uint64_t seed, minimizer_t& min, uint64_t& h, std::size_t& idx);
+    // 
+    minimizer_t lmer() const { return last_lmer; }
+    minimizer_t lmer_bar() const { return last_lmer_bar; }
 };
 
 
@@ -320,9 +255,9 @@ inline void Minimizer_Iterator<T_seq_, k, is_canonical_>::reset(T_seq_ const seq
             last_lmer_bar |= (static_cast<minimizer_t>(DNA_Utility::complement(base)) << (2 * idx));
     }
 
-    dq_f.emplace_back(last_lmer, last_lmer_idx, Minimizer_Utility::hash(last_lmer, seed));
+    dq_f.emplace_back(last_lmer, last_lmer_idx, Minimizer_Utility::hash(last_lmer, l, seed));
     if constexpr(is_canonical_)
-        dq_r.emplace_back(last_lmer_bar, last_lmer_idx, Minimizer_Utility::hash(last_lmer_bar, seed));
+        dq_r.emplace_back(last_lmer_bar, last_lmer_idx, Minimizer_Utility::hash(last_lmer_bar, l, seed));
 
     while(last_lmer_idx + (l - 1) < static_cast<std::size_t>(k - 1))
         operator++();
@@ -364,9 +299,9 @@ inline void Minimizer_Iterator<T_seq_, k, is_canonical_>::advance(const char ch)
         };
 
 
-    fix_dq(dq_f, Lmer_Tuple(last_lmer, last_lmer_idx, Minimizer_Utility::hash(last_lmer, seed)));
+    fix_dq(dq_f, Lmer_Tuple(last_lmer, last_lmer_idx, Minimizer_Utility::hash(last_lmer, l, seed)));
     if constexpr(is_canonical_)
-        fix_dq(dq_r, Lmer_Tuple(last_lmer_bar, last_lmer_idx, Minimizer_Utility::hash(last_lmer_bar, seed)));
+        fix_dq(dq_r, Lmer_Tuple(last_lmer_bar, last_lmer_idx, Minimizer_Utility::hash(last_lmer_bar, l, seed)));
 }
 
 
@@ -418,12 +353,4 @@ inline uint64_t Minimizer_Iterator<T_seq_, k, is_canonical_>::hash() const
         return dq_f.front() < dq_r.front() ? dq_f.front().hash : dq_r.front().hash;
     else
         return dq_f.front().hash;
-}
-
-
-template <typename T_seq_, uint16_t k, bool is_canonical_>
-inline void Minimizer_Iterator<T_seq_, k, is_canonical_>::minimizer(T_seq_ kmer, uint16_t l, uint64_t seed, minimizer_t& min, uint64_t& h, std::size_t& idx)
-{
-    Minimizer_Iterator(kmer, k, l, seed).value_at(min, idx);
-    h = Minimizer_Utility::hash(min);
 }
