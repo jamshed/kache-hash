@@ -4,23 +4,17 @@
 #include "Directed_Vertex.hpp"
 #include "Parser.hpp"
 #include "Kmer_Hashset.hpp"
-#include "Minimizer_Iterator.hpp"
+#include "globals.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <limits>
 #include <string>
 #include <iostream>
 #include <cassert>
 #include <sys/types.h>
-
-
-constexpr uint16_t k = 31;
-constexpr const char* file_path = "/ssd2/jamshed/small-read.k31.cf3.fa";
-constexpr std::size_t final_sz = 8501727;
 
 
 void BM_file_read(benchmark::State& state)
@@ -146,43 +140,5 @@ void BM_set_insert_batched(benchmark::State& state)
         input.close();
 
         // std::cout << "Set size: " << S.size() << "\n";
-    }
-}
-
-
-void BM_scan_super_kmer(benchmark::State& state)
-{
-    const uint16_t l = 12;
-    Min_Iterator<k> min_it(l);
-
-    for(auto _ : state)
-    {
-        uint64_t min_h = 0;
-        Parser input(file_path);
-        while(input.read_next_seq())
-        {
-            auto const seq = input.seq();
-            auto const len = input.seq_len();
-            assert(len >= k);
-
-            std::size_t kmer_idx = 0;
-            min_it.reset(seq);
-
-            while(true)
-            {
-                benchmark::DoNotOptimize(min_h ^= min_it.hash());
-                // min_h ^= min_it.hash();
-
-                if(kmer_idx + k == len)
-                    break;
-
-                min_it.advance(seq[kmer_idx + k]);
-                kmer_idx++;
-            }
-        }
-
-        input.close();
-
-        // std::cout << "Minimizers' signature: " << min_h << "\n";
     }
 }

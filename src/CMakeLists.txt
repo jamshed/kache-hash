@@ -9,7 +9,9 @@ set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
 
 set(SRC
         Parser.cpp
-        examples/Kmer_Set.cpp)
+        examples/Kmer_Set.cpp
+        examples/Minimizer_Scan.cpp
+)
 
 add_library(core STATIC ${SRC})
 
