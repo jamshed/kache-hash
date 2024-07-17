@@ -16,7 +16,7 @@
 
 
 // A class to iterate over the minimizers of the constituent `k`-mers of a given
-// sequence, computing the minimizer for each `k`-mer in amortized O(1) time.
+// sequence, computing the minimizer for each `k`-mer in amortized `O(1)` time.
 // Canonical minimizers are computed, i.e. both strand-forms of the sequence is
 // considered.
 template <uint16_t k>
@@ -25,7 +25,8 @@ class Min_Iterator
 private:
 
     const uint16_t l;   // Minimizer size.
-    const uint16_t lmer_word_c; // Number of words in an l-mer.
+    const uint16_t lmer_byte_c; // Number of bytes in an `l`-mer.
+    const int16_t w;    // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
 
     uint64_t last_lmer; // The last l-mer processed from the sequence.
     uint64_t last_lmer_bar; // Reverse complement of the last l-mer processed.
@@ -39,6 +40,9 @@ private:
     uint64_t M_pre[k];  // Suffix-mins of the prefix window.
     uint64_t M_suf; // Min of the suffix window.
 
+    int16_t P_pre[k];   // Positions (absolute) of the suffix-mins at the prefix window.
+    int16_t P_suf;  // Position (absolute) of the min at the suffix window.
+
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
 
 
@@ -47,6 +51,8 @@ private:
 
     // Returns the 64-bit equivalent of `val`.
     template <typename T_> static constexpr uint64_t as_u64(const T_ val) { return static_cast<uint64_t>(val); }
+
+    static constexpr auto cmov = [](const bool cond, const int16_t x, const int16_t y) { return cond ? x : y; };
 
     // Returns the 64-bit hash value of the canonically equivalent l-mer pair
     // `(lmer, lmer_bar)`.
@@ -78,13 +84,20 @@ public:
 
     // Moves the iterator to a next k-mer extending it with the character `ch`.
     void advance(char ch);
+
+    // Returns the minimizer's position in the `k`-mer in the forward-strand.
+    // If the minimizer actually comes from the reverse-strand, then the l-mer
+    // at this index must be taken in the RC-orientation to get the minimizer.
+    // If there are multiple candidates, then returns some value `< 0`.
+    int16_t hash_pos() const;
 };
 
 
 template <uint16_t k>
 inline Min_Iterator<k>::Min_Iterator(const uint16_t l):
       l(l)
-    , lmer_word_c((2 * l + 7) / 8)
+    , lmer_byte_c((2 * l + 7) / 8)
+    , w(k - l + 1)
     , clear_MSN_mask(~(as_u64(0b11) << (2 * (l - 1))))
 {}
 
@@ -96,7 +109,8 @@ inline uint64_t Min_Iterator<k>::lmer_hash(const uint64_t lmer, const uint64_t l
     const auto h = [&](const uint64_t lmer)
         {
             // TODO: does making the size of the key unknown at compile-time non-trivially affect runtime?
-            return XXH3_64bits_withSeed(&lmer, lmer_word_c, min_seed);
+            // Can use template-metaprogramming to solve this.
+            return XXH3_64bits_withSeed(&lmer, lmer_byte_c, min_seed);
             // return XXH3_64bits_withSeed(&lmer, sizeof(lmer), min_seed);
         };
 
@@ -147,12 +161,14 @@ inline void Min_Iterator<k>::reset_windows()
 
     // TODO: try vectorization, if not already done by the compiler.
 
-    const int16_t lmer_c = k - l + 1;
-    M_pre[lmer_c] = std::numeric_limits<uint64_t>::max();
-    for(int16_t i = lmer_c - 1; i >= 0; --i)
-        M_pre[i] = min(M_pre[i + 1], H[i]);
+    M_pre[w] = std::numeric_limits<uint64_t>::max();
+    P_pre[w] = -w;
+    for(int16_t i = w - 1; i >= 0; --i)
+        M_pre[i] = min(M_pre[i + 1], H[i]),
+        P_pre[i] = cmov(M_pre[i + 1] < H[i], P_pre[i + 1], cmov(M_pre[i + 1] > H[i], i, -w));
 
     M_suf = std::numeric_limits<uint64_t>::max();
+    P_suf = -w;
     pivot = 0;
 }
 
@@ -161,6 +177,16 @@ template <uint16_t k>
 inline uint64_t Min_Iterator<k>::hash() const
 {
     return min(M_pre[pivot], M_suf);
+}
+
+
+template <uint16_t k>
+inline int16_t Min_Iterator<k>::hash_pos() const
+{
+    return cmov(M_pre[pivot] < M_suf,
+                    P_pre[pivot] - pivot,
+                    cmov(M_pre[pivot] > M_suf,
+                        w - pivot + P_suf, -w));
 }
 
 
@@ -175,6 +201,7 @@ inline void Min_Iterator<k>::advance(const char ch)
     last_lmer_bar = (last_lmer_bar >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
 
     H[pivot] = lmer_hash(last_lmer, last_lmer_bar);
+    P_suf = cmov(M_suf < H[pivot], P_suf, cmov(M_suf > H[pivot], pivot, -w));
     M_suf = min(M_suf, H[pivot]);
 
     if(pivot < static_cast<std::size_t>(k - l))
