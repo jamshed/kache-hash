@@ -17,11 +17,10 @@
 #include <cassert>
 
 
-// A fixed-sized hashset for k-mers.
+// A fixed-sized hashset for `k`-mers.
 template <uint16_t k>
 class Kmer_Hashset
 {
-
 private:
 
     static constexpr double lf_default = 0.75;  // Default maximum load-factor.
@@ -46,15 +45,15 @@ private:
     // Returns the next (wrapped) index to `i`.
     auto next_idx(const std::size_t idx) const { return hash_to_idx(idx + 1); }
 
-    // Attemps to insert the k-mer `key` onward from the index `idx`. Returns
-    // `true` iff the insertion was successful, i.e. when the k-mer was not
+    // Attemps to insert the `k`-mer `key` onward from the index `idx`. Returns
+    // `true` iff the insertion was successful, i.e. when the `k`-mer was not
     // present in the set.
     bool insert_at(const Kmer<k>& key, std::size_t idx);
 
 
 public:
 
-    // Constructs a hashset to support upto `max_n` k-mers, with a maximum
+    // Constructs a hashset to support upto `max_n` `k`-mers, with a maximum
     // load-factor of `lf`.
     Kmer_Hashset(std::size_t max_n, double lf = lf_default);
 
@@ -63,7 +62,7 @@ public:
     Kmer_Hashset& operator=(const Kmer_Hashset&) = delete;
     Kmer_Hashset& operator=(Kmer_Hashset&&) = delete;
 
-    ~Kmer_Hashset() { deallocate(T); }
+    ~Kmer_Hashset() { deallocate(K), deallocate(T); }
 
     // Returns the size of the hashset.
     auto size() const { return sz; }
@@ -74,11 +73,12 @@ public:
     // Clears the hashset.
     void clear();
 
-    // Inserts the k-mer `key` to the hashset. Returns `true` iff the insertion
-    // was successful, i.e. when the k-mer was not present in the set.
+    // Inserts the `k`-mer `key` to the hashset. Returns `true` iff the
+    // insertion was successful, i.e. when the `k`-mer was not present in the
+    // set.
     bool insert(const Kmer<k>& key);
 
-    // Adds the k-mer `key` to the hashset buffer for insertion at some time.
+    // Adds the `k`-mer `key` to the hashset buffer for insertion at some time.
     // Returns `true` iff this call triggers a buffer flush.
     bool insert_lazy(const Kmer<k>& key);
 

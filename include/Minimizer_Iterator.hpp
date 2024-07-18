@@ -89,6 +89,7 @@ public:
     // If the minimizer actually comes from the reverse-strand, then the l-mer
     // at this index must be taken in the RC-orientation to get the minimizer.
     // If there are multiple candidates, then returns some value `< 0`.
+    // TODO: rename.
     int16_t hash_pos() const;
 };
 

@@ -657,7 +657,10 @@ inline Kmer<k>::operator std::string() const
 template <uint16_t k>
 std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer)
 {
-    out << kmer.string_label();
+    std::string label;
+    kmer.get_label(label);
+
+    out << label;
 
     return out;
 }

@@ -44,13 +44,13 @@ private:
     // Returns the next (wrapped) index to `i`.
     auto next_idx(const std::size_t idx) const { return hash_to_idx(idx + 1); }
 
-    // Attemps to insert the k-mer `key` at the index `idx`. Returns `true` iff
-    // the insertion was successful, i.e. when the k-mer was not present at the
-    // index.
+    // Attemps to insert the `k`-mer `key` at the index `idx`. Returns `true`
+    // iff the insertion was successful, i.e. when the `k`-mer was not present
+    // at the index.
     bool try_insert_at(const Kmer<k>& key, std::size_t idx);
 
-    // Attemps to insert the k-mer `key` onward from the index `idx`. Returns
-    // `true` iff the insertion was successful, i.e. when the k-mer was not
+    // Attemps to insert the `k`-mer `key` onward from the index `idx`. Returns
+    // `true` iff the insertion was successful, i.e. when the `k`-mer was not
     // present in the set.
     bool try_insert_from(const Kmer<k>& key, std::size_t idx);
 
@@ -60,7 +60,7 @@ private:
 
 public:
 
-    // Constructs a hashset to support upto `max_n` k-mers, with a maximum
+    // Constructs a hashset to support upto `max_n` `k`-mers, with a maximum
     // load-factor of `lf`.
     Streaming_Kmer_Hashset(std::size_t max_n, double lf = lf_default);
 
