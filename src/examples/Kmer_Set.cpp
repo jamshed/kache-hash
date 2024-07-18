@@ -4,6 +4,7 @@
 #include "Directed_Vertex.hpp"
 #include "Parser.hpp"
 #include "Kmer_Hashset.hpp"
+#include "Streaming_Kmer_Hashset.hpp"
 #include "globals.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
@@ -137,6 +138,31 @@ void BM_set_insert_batched(benchmark::State& state)
         }
 
         S.flush_buffer();
+        input.close();
+
+        std::cout << "Set size: " << S.size() << "\n";
+    }
+}
+
+
+void BM_set_insert_streaming(benchmark::State& state)
+{
+    Streaming_Kmer_Hashset<k> S(final_sz);
+
+    for(auto _ : state)
+    {
+        S.clear();
+
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            assert(len >= k);
+
+            S.insert(seq, len);
+        }
+
         input.close();
 
         // std::cout << "Set size: " << S.size() << "\n";
