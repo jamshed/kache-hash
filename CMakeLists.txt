@@ -30,6 +30,16 @@ endif()
 set(GCC_VERSION_MIN "9.1")
 set(CLANG_VERSION_MIN "9.0")
 
+if(ASAN OR UBSAN)
+    set(CLANG TRUE)
+endif()
+
+if(CLANG)
+    set(CMAKE_C_COMPILER clang)
+    set(CMAKE_CXX_COMPILER clang++)
+    # set(CMAKE_LINKER_TYPE LLD)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS GCC_VERSION_MIN)
         message(FATAL_ERROR "${PROJECT_NAME} requires GCC version to be at least ${GCC_VERSION_MIN}."
@@ -44,7 +54,15 @@ endif()
 
 
 # Warning flags: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html.
-set(WARNING_FLAGS -Wall -Wextra)
+set(WARNING_FLAGS   -Wall -Wextra -Wpedantic)
+set(SUPPRESS_WARNING_FLAGS)
+
+# Warning flags to be suppressed with clang.
+set(CLANG_SUPPRESS_WARNING_FLAGS    -Wno-unknown-attributes)
+
+if(CLANG)
+    list(APPEND SUPPRESS_WARNING_FLAGS ${CLANG_SUPPRESS_WARNING_FLAGS})
+endif()
 
 # Debug flags: https://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html.
 set(DEBUG_FLAGS -ggdb)
@@ -67,7 +85,7 @@ set(OPTIMIZE_FLAGS -funroll-loops -march=native)
 set(COMPILE_FLAGS "")
 set(LINK_FLAGS "")
 
-list(APPEND COMPILE_FLAGS ${WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+list(APPEND COMPILE_FLAGS ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 if(DEBUG_INFO)
     list(APPEND COMPILE_FLAGS ${DEBUG_FLAGS})
@@ -87,6 +105,7 @@ endif()
 # Required preprocessor definitions.
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
 add_compile_definitions(${XXHASH_DEFS})
+add_compile_definitions(CMAKE_EXPORT_COMPILE_COMMANDS)  # Better `clangd` scan.
 
 
 # Required packages / libraries from the system.
