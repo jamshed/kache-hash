@@ -184,6 +184,7 @@ inline uint64_t Min_Iterator<k>::hash() const
 template <uint16_t k>
 inline int16_t Min_Iterator<k>::hash_pos() const
 {
+    // TODO: fix ominous UBs from type mismatches.
     return cmov(M_pre[pivot] < M_suf,
                     P_pre[pivot] - pivot,
                     cmov(M_pre[pivot] > M_suf,
