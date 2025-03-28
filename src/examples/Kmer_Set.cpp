@@ -33,6 +33,26 @@ void BM_file_read(benchmark::State& state)
 }
 
 
+void BM_file_scan(benchmark::State& state)
+{
+    uint64_t a, c, g, t;
+    for(auto _ : state)
+    {
+        a = 0, c = 0, g = 0, t = 0;
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            const auto s = input.seq();
+            for(std::size_t i = 0; i < input.seq_len(); ++i)
+                benchmark::DoNotOptimize(a += (s[i] == 'A')),
+                benchmark::DoNotOptimize(c += (s[i] == 'C')),
+                benchmark::DoNotOptimize(g += (s[i] == 'G')),
+                benchmark::DoNotOptimize(t += (s[i] == 'T'));
+        }
+    }
+}
+
+
 void BM_kmer_hash(benchmark::State& state)
 {
     for(auto _ : state)
