@@ -46,9 +46,10 @@ private:
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
 
-    ankerl::unordered_dense::set<uint64_t, Kmer_Hasher<k>> mins; // Set of all minimizers; used for developer stats.
+    ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmers; // Map of all minimizers to its associated k-mers; used for developer stats.
     ankerl::unordered_dense::set<uint64_t, Kmer_Hasher<k>> mins_ov;  // Set of overflowing minimizers; used for developer stats.
-    std::vector<uint64_t> M;    // `M[i]` stores the first minimizer-hash that mapped to block `i`.
+    std::vector<uint64_t> M;    // `M[i]` stores the first minimizer-hash that mapped to block `i`; used for developer stats.
+    static constexpr uint64_t skew_th = 16; // Threshold number of associated k-mers for a minimizer to be considered a skew k-mer.
 
 
 public:
@@ -141,7 +142,7 @@ inline void Streaming_Hash_Set<k, l>::insert(const char* const s, const std::siz
             sup_kmer_c += (h != last_min);
             last_min = h;
 
-            mins.insert(h);
+            min_to_kmers[h].insert(key);
         }
 
 
@@ -191,15 +192,22 @@ inline void Streaming_Hash_Set<k, l>::print_stats()
     std::cerr   << "========================================\n";
 
     uint64_t hash_conflict = 0;
-    for(const auto m : mins)
-        if(M[m & idx_mask] != m)
+    uint64_t skew_c = 0;
+    for(const auto& m : min_to_kmers)
+    {
+        if(M[m.first & idx_mask] != m.first)
             hash_conflict++;
 
-    std::cerr   << "Minimizer set size:            " << mins.size() << ".\n";
+        if(m.second.size() >= skew_th)
+            skew_c++;
+    }
+
+    std::cerr   << "Minimizer set size:            " << min_to_kmers.size() << ".\n";
     std::cerr   << "Overflow minimizer set size:   " << mins_ov.size() << " ("
-                    << (mins_ov.size() * 100.0 / mins.size()) << "%).\n";
+                    << (mins_ov.size() * 100.0 / min_to_kmers.size()) << "%).\n";
     std::cerr   << "Hash-conflicts for minimizers: " << hash_conflict
-                    << " (" << (hash_conflict * 100.0 / mins.size()) << "%).\n";
+                    << " (" << (hash_conflict * 100.0 / min_to_kmers.size()) << "%).\n";
+    std::cerr   << "Skew-minimizers having more than " << skew_th << " k-mers: " << skew_c << " (" << (skew_c * 100.0 / min_to_kmers.size()) << "%).\n";
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete set size: " << size() << ".\n";
