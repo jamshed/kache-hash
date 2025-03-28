@@ -81,9 +81,9 @@ inline bool Lmer_Tuple::operator<(const Lmer_Tuple& rhs) const
 
 inline uint64_t Minimizer_Utility::hash(const minimizer_t lmer, const uint16_t l, const uint64_t seed)
 {
-    // return lmer;
-    // return XXH3_64bits_withSeed(&lmer, sizeof(lmer), seed);
-    return XXH3_64bits_withSeed(&lmer, (2 * l + 7) / 8, seed);
+    (void)l;
+    return XXH3_64bits_withSeed(&lmer, sizeof(lmer), seed);
+    // return XXH3_64bits_withSeed(&lmer, (2 * l + 7) / 8, seed);
 }
 
 
