@@ -46,9 +46,9 @@ private:
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
 
-    ankerl::unordered_dense::set<uint64_t, Kmer_Hasher<k>> mins; // Set of all minimizer; used for developer stats.
+    ankerl::unordered_dense::set<uint64_t, Kmer_Hasher<k>> mins; // Set of all minimizers; used for developer stats.
     ankerl::unordered_dense::set<uint64_t, Kmer_Hasher<k>> mins_ov;  // Set of overflowing minimizers; used for developer stats.
-    std::vector<uint64_t> M;
+    std::vector<uint64_t> M;    // `M[i]` stores the first minimizer-hash that mapped to block `i`.
 
 
 public:
@@ -64,7 +64,7 @@ public:
 
     ~Streaming_Hash_Set() { deallocate(K), deallocate(T); }
 
-    // Returns the capacity of the hash set.
+    // Returns the capacity (in terms of keys) of the hash set.
     auto capacity() const { return cap_ * B; }
 
     // Returns the size of the hash set.
@@ -130,7 +130,7 @@ inline void Streaming_Hash_Set<k, l>::insert(const char* const s, const std::siz
 
     Min_Iterator<k> min_it(l);
     min_it.reset(s);
-    uint64_t last_min = 0;  // Undercounting 1 super k-mer from `s` with probability 1/2^64.
+    uint64_t last_min = 0;  // Undercounting the first super k-mer from `s` with probability 1/2^64.
     while(true)
     {
         const auto h = min_it.hash();
@@ -146,14 +146,13 @@ inline void Streaming_Hash_Set<k, l>::insert(const char* const s, const std::siz
 
 
         const auto i = h & idx_mask;
-        std::size_t j = 0;
-
         if constexpr(track_stats_)
         {
             if(M[i] == 0)
                 M[i] = h;
         }
 
+        std::size_t j = 0;
         for(; j < B; ++j)
             if(T[i][j] != cur_stamp)
             {
@@ -192,14 +191,14 @@ inline void Streaming_Hash_Set<k, l>::print_stats()
     std::cerr   << "========================================\n";
 
     uint64_t hash_conflict = 0;
-    for(const auto& m : mins)
+    for(const auto m : mins)
         if(M[m & idx_mask] != m)
             hash_conflict++;
 
-    std::cerr   << "Minimizer set size:          " << mins.size() << ".\n";
-    std::cerr   << "Overflow minimizer set size: " << mins_ov.size() << " ("
+    std::cerr   << "Minimizer set size:            " << mins.size() << ".\n";
+    std::cerr   << "Overflow minimizer set size:   " << mins_ov.size() << " ("
                     << (mins_ov.size() * 100.0 / mins.size()) << "%).\n";
-    std::cerr   << "Number of hash-conflicts for minimizers: " << hash_conflict
+    std::cerr   << "Hash-conflicts for minimizers: " << hash_conflict
                     << " (" << (hash_conflict * 100.0 / mins.size()) << "%).\n";
     std::cerr   << "========================================\n";
 
