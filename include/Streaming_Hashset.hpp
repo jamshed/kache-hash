@@ -187,6 +187,10 @@ inline void Streaming_Hash_Set<k, l>::insert(const char* const s, const std::siz
 template <uint16_t k, uint16_t l>
 inline void Streaming_Hash_Set<k, l>::print_stats()
 {
+    std::cerr   << "Table height: " << cap_ << ".\n";
+    std::cerr   << "Table width:  " << B << ".\n";
+    std::cerr   << "========================================\n";
+
     std::cerr   << "Total sequence length:  " << sum_len << ".\n";
     std::cerr   << "Number of super k-mers: " << sup_kmer_c << ".\n";
     std::cerr   << "========================================\n";
