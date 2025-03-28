@@ -5,6 +5,7 @@
 #include "Parser.hpp"
 #include "Kmer_Hashset.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
+#include "Streaming_Hashset.hpp"
 #include "globals.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
@@ -101,7 +102,7 @@ void BM_set_insert_generic(benchmark::State& state)
 
         input.close();
 
-        // std::cout << "Set size: " << S.size() << "\n";
+        std::cout << "Set size: " << S.size() << "\n";
     }
 }
 
@@ -165,6 +166,39 @@ void BM_set_insert_streaming(benchmark::State& state)
 
         input.close();
 
-        // std::cout << "Set size: " << S.size() << "\n";
+        std::cout << "Set size: " << S.size() << "\n";
     }
 }
+
+
+template <bool track_stats_>
+void BM_set_insert_streaming_blocked(benchmark::State& state)
+{
+    Streaming_Hash_Set<k> S(final_sz);
+
+    for(auto _ : state)
+    {
+        S.clear();
+
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            assert(len >= k);
+
+            S.template insert<track_stats_>(seq, len);
+        }
+
+        input.close();
+    }
+
+    std::cout << "Set size: " << S.size() << "\n";
+    if constexpr(track_stats_)
+        S.print_stats();
+}
+
+
+
+template void BM_set_insert_streaming_blocked<false>(benchmark::State& state);
+template void BM_set_insert_streaming_blocked<true>(benchmark::State& state);

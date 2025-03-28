@@ -15,6 +15,7 @@ void BM_set_insert_batched(benchmark::State&);
 void BM_set_insert_streaming(benchmark::State&);
 
 
+/*
 BENCHMARK(BM_file_read)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(scan_minimizer_correctness);
@@ -26,5 +27,10 @@ BENCHMARK(BM_kmer_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisec
 BENCHMARK(BM_set_insert_generic)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_batched)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_streaming)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
+*/
+
+template<bool track_stats_ = false> void BM_set_insert_streaming_blocked(benchmark::State&);
+BENCHMARK(BM_set_insert_streaming_blocked<true>)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_set_insert_streaming_blocked<false>)->MinWarmUpTime(1)->MinTime(2)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();
