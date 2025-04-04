@@ -112,7 +112,7 @@ inline uint64_t Min_Iterator<k>::lmer_hash(const uint64_t lmer, const uint64_t l
             // TODO: does making the size of the key unknown at compile-time non-trivially affect runtime?
             // Can use template-metaprogramming to solve this.
             // return XXH3_64bits_withSeed(&lmer, lmer_byte_c, min_seed);
-            return XXH3_64bits_withSeed(&lmer, sizeof(lmer), min_seed);
+            return XXH3_64bits_withSeed(&lmer, sizeof(lmer), min_seed); // TODO: replace with rolling hash: `xxHash` is too costly in this context.
         };
 
     return min(h(lmer), h(lmer_bar));
