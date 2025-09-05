@@ -29,7 +29,7 @@ private:
 
     static constexpr double lf_default = 0.375; // Default maximum load-factor.
 
-    static constexpr std::size_t B = 8;    // Block size.
+    static constexpr std::size_t B = 16;    // Block size.
 
     std::size_t cap_;   // True capacity of the set in terms of blocks; adjusted to be a power of 2.
     std::size_t idx_mask;   // Mask to wrap indexing within the table.
