@@ -87,11 +87,12 @@ void BM_kmer_hash(benchmark::State& state)
 }
 
 
+template <typename T_ht_>
 void BM_set_insert_generic(benchmark::State& state)
 {
+    T_ht_ S(final_sz);
     // ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> S;
     // S.reserve(final_sz);
-    Kmer_Hashset<k> S(final_sz);
 
     for(auto _ : state)
     {
@@ -109,8 +110,8 @@ void BM_set_insert_generic(benchmark::State& state)
             while(true)
             {
                 // TODO: this statement is significantly slower than the next one w/ the custom hashset. Diagnose.
-                S.insert(v.canonical());
-                // benchmark::DoNotOptimize(S.insert(v.canonical()));
+                // S.insert(v.canonical());
+                benchmark::DoNotOptimize(S.insert(v.canonical()));
 
                 if(kmer_idx + k == len)
                     break;
@@ -124,6 +125,18 @@ void BM_set_insert_generic(benchmark::State& state)
 
         std::cout << "Set size: " << S.size() << "\n";
     }
+}
+
+
+void BM_set_insert_generic_3rd_party(benchmark::State& state)
+{
+    BM_set_insert_generic<ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(state);
+}
+
+
+void BM_set_insert_generic(benchmark::State& state)
+{
+    BM_set_insert_generic<Kmer_Hashset<k>>(state);
 }
 
 
@@ -147,8 +160,8 @@ void BM_set_insert_batched(benchmark::State& state)
             while(true)
             {
                 // TODO: this statement is significantly slower than the next one w/ the custom hashset. Diagnose.
-                S.insert_lazy(v.canonical());
-                // benchmark::DoNotOptimize(S.insert_lazy(v.canonical()));
+                // S.insert_lazy(v.canonical());
+                benchmark::DoNotOptimize(S.insert_lazy(v.canonical()));
 
                 if(kmer_idx + k == len)
                     break;

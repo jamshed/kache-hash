@@ -4,6 +4,7 @@
 
 
 
+#include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <cassert>
@@ -59,6 +60,14 @@ inline constexpr std::size_t ceil_pow_2(std::size_t x)
     x |= (x >> 32);
 
     return x + 1;
+}
+
+
+// Returns the bits in the indices `[l, h]` (0-indexed) of `x`.
+inline constexpr uint64_t bits(uint64_t x, uint64_t l, uint64_t h)
+{
+    assert(l <= h && h < 64);
+    return (x << (63 - h)) >> ((63 - h) + l);
 }
 
 
