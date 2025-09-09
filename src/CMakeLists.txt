@@ -37,7 +37,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${LINK_FLAGS})
 
 # Target-links.
 target_link_libraries(core PRIVATE jemalloc)
-# target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
 
 target_link_libraries(core PRIVATE ZLIB::ZLIB)
 
