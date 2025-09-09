@@ -15,16 +15,15 @@
 #include <cassert>
 
 
-// A class to iterate over the minimizers of the constituent `k`-mers of a given
-// sequence, computing the minimizer for each `k`-mer in amortized `O(1)` time.
-// Canonical minimizers are computed, i.e. both strand-forms of the sequence is
-// considered.
-template <uint16_t k>
+// A class to iterate over the `l`-minimizers of the constituent `k`-mers of a
+// given sequence, computing the minimizer for each `k`-mer in amortized `O(1)`
+// time. Canonical minimizers are computed, i.e. both strand-forms of the
+// sequence is considered.
+template <uint16_t k, uint16_t l>
 class Min_Iterator
 {
 private:
 
-    const uint16_t l;   // Minimizer size.
     const uint16_t lmer_byte_c; // Number of bytes in an `l`-mer.
     const int16_t w;    // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
 
@@ -68,7 +67,7 @@ public:
 
     // Constructs a minimizer iterator to iterate over `l`-minimizers of
     // the `k`-mers of a given sequence in a streaming manner.
-    Min_Iterator(uint16_t l);
+    Min_Iterator();
 
     Min_Iterator(const Min_Iterator&) = delete;
     Min_Iterator(Min_Iterator&&) = delete;
@@ -94,17 +93,16 @@ public:
 };
 
 
-template <uint16_t k>
-inline Min_Iterator<k>::Min_Iterator(const uint16_t l):
-      l(l)
-    , lmer_byte_c((2 * l + 7) / 8)
+template <uint16_t k, uint16_t l>
+inline Min_Iterator<k, l>::Min_Iterator():
+      lmer_byte_c((2 * l + 7) / 8)
     , w(k - l + 1)
     , clear_MSN_mask(~(as_u64(0b11) << (2 * (l - 1))))
 {}
 
 
-template <uint16_t k>
-inline uint64_t Min_Iterator<k>::lmer_hash(const uint64_t lmer, const uint64_t lmer_bar)
+template <uint16_t k, uint16_t l>
+inline uint64_t Min_Iterator<k, l>::lmer_hash(const uint64_t lmer, const uint64_t lmer_bar)
 {
     constexpr uint64_t min_seed = 0;
     const auto h = [&](const uint64_t lmer)
@@ -119,8 +117,8 @@ inline uint64_t Min_Iterator<k>::lmer_hash(const uint64_t lmer, const uint64_t l
 }
 
 
-template <uint16_t k>
-inline void Min_Iterator<k>::reset(const char* const seq)
+template <uint16_t k, uint16_t l>
+inline void Min_Iterator<k, l>::reset(const char* const seq)
 {
     last_lmer = 0;
     last_lmer_bar = 0;
@@ -155,8 +153,8 @@ inline void Min_Iterator<k>::reset(const char* const seq)
 }
 
 
-template <uint16_t k>
-inline void Min_Iterator<k>::reset_windows()
+template <uint16_t k, uint16_t l>
+inline void Min_Iterator<k, l>::reset_windows()
 {
     assert(pivot == k - l);
 
@@ -174,15 +172,15 @@ inline void Min_Iterator<k>::reset_windows()
 }
 
 
-template <uint16_t k>
-inline uint64_t Min_Iterator<k>::hash() const
+template <uint16_t k, uint16_t l>
+inline uint64_t Min_Iterator<k, l>::hash() const
 {
     return min(M_pre[pivot], M_suf);
 }
 
 
-template <uint16_t k>
-inline int16_t Min_Iterator<k>::hash_pos() const
+template <uint16_t k, uint16_t l>
+inline int16_t Min_Iterator<k, l>::hash_pos() const
 {
     // TODO: fix ominous UBs from type mismatches.
     return cmov(M_pre[pivot] < M_suf,
@@ -192,8 +190,8 @@ inline int16_t Min_Iterator<k>::hash_pos() const
 }
 
 
-template <uint16_t k>
-inline void Min_Iterator<k>::advance(const char ch)
+template <uint16_t k, uint16_t l>
+inline void Min_Iterator<k, l>::advance(const char ch)
 {
     assert(DNA_Utility::is_DNA_base(ch));
 

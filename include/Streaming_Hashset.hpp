@@ -129,7 +129,7 @@ inline void Streaming_Hash_Set<k, l>::insert(const char* const s, const std::siz
     Directed_Vertex<k> v(s);
     std::size_t kmer_idx = 0;
 
-    Min_Iterator<k> min_it(l);
+    Min_Iterator<k, l> min_it;
     min_it.reset(s);
     uint64_t last_min = 0;  // Undercounting the first super k-mer from `s` with probability 1/2^64.
     while(true)

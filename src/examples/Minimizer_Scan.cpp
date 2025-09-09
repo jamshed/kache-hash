@@ -14,9 +14,9 @@
 
 void scan_minimizer_correctness(benchmark::State& state)
 {
-    const uint16_t l = 12;
+    constexpr uint16_t l = 12;
     Minimizer_Iterator<const char*, k, true> min_it_base(l);
-    Min_Iterator<k> min_it(l);
+    Min_Iterator<k, l> min_it;
 
     for(auto _ :state)
     {
@@ -106,8 +106,8 @@ void BM_scan_minimizer_baseline(benchmark::State& state)
 
 void BM_scan_minimizer(benchmark::State& state)
 {
-    const uint16_t l = 12;
-    Min_Iterator<k> min_it(l);
+    constexpr uint16_t l = 12;
+    Min_Iterator<k, l> min_it;
 
     for(auto _ : state)
     {
@@ -144,8 +144,8 @@ void BM_scan_minimizer(benchmark::State& state)
 
 void BM_scan_minimizer_pos(benchmark::State& state)
 {
-    const uint16_t l = 12;
-    Min_Iterator<k> min_it(l);
+    constexpr uint16_t l = 12;
+    Min_Iterator<k, l> min_it;
 
     for(auto _ : state)
     {

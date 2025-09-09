@@ -35,7 +35,7 @@ private:
     uint8_t cur_stamp;  // Current timestamp, or the version of the table. It need not be just 1 byte.
 
     static constexpr uint16_t l = 12;
-    Min_Iterator<k> min_it;
+    Min_Iterator<k, l> min_it;
 
 
     // Maps the hash value `h` to an index into the table.
@@ -94,7 +94,6 @@ inline Streaming_Double_Probe_Hashset<k>::Streaming_Double_Probe_Hashset(const s
     , T(allocate<uint8_t>(capacity_))
     , sz(0)
     , cur_stamp(std::numeric_limits<uint8_t>::max())
-    , min_it(l)
 {
     assert(capacity_ > 1);
 
