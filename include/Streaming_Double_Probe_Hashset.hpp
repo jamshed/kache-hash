@@ -1,6 +1,6 @@
 
-#ifndef STREAMING_KMER_HASHSET_HPP
-#define STREAMING_KMER_HASHSET_HPP
+#ifndef STREAMING_DOUBLE_PROBE_HASHSET_HPP
+#define STREAMING_DOUBLE_PROBE_HASHSET_HPP
 
 
 
@@ -18,7 +18,7 @@
 
 // A fixed-sized hashset for `k`-mers.
 template <uint16_t k>
-class Streaming_Kmer_Hashset
+class Streaming_Double_Probe_Hashset
 {
 private:
 
@@ -62,14 +62,14 @@ public:
 
     // Constructs a hashset to support upto `max_n` `k`-mers, with a maximum
     // load-factor of `lf`.
-    Streaming_Kmer_Hashset(std::size_t max_n, double lf = lf_default);
+    Streaming_Double_Probe_Hashset(std::size_t max_n, double lf = lf_default);
 
-    Streaming_Kmer_Hashset(const Streaming_Kmer_Hashset&) = delete;
-    Streaming_Kmer_Hashset(Streaming_Kmer_Hashset&&) = delete;
-    Streaming_Kmer_Hashset& operator=(const Streaming_Kmer_Hashset&) = delete;
-    Streaming_Kmer_Hashset& operator=(Streaming_Kmer_Hashset&&) = delete;
+    Streaming_Double_Probe_Hashset(const Streaming_Double_Probe_Hashset&) = delete;
+    Streaming_Double_Probe_Hashset(Streaming_Double_Probe_Hashset&&) = delete;
+    Streaming_Double_Probe_Hashset& operator=(const Streaming_Double_Probe_Hashset&) = delete;
+    Streaming_Double_Probe_Hashset& operator=(Streaming_Double_Probe_Hashset&&) = delete;
 
-    ~Streaming_Kmer_Hashset() { deallocate(K), deallocate(T); }
+    ~Streaming_Double_Probe_Hashset() { deallocate(K), deallocate(T); }
 
     // Returns the size of the hashset.
     auto size() const { return sz; }
@@ -87,7 +87,7 @@ public:
 
 
 template <uint16_t k>
-inline Streaming_Kmer_Hashset<k>::Streaming_Kmer_Hashset(const std::size_t max_n, const double lf):
+inline Streaming_Double_Probe_Hashset<k>::Streaming_Double_Probe_Hashset(const std::size_t max_n, const double lf):
       capacity_(ceil_pow_2(static_cast<std::size_t>(std::ceil(max_n / lf))))
     , wrapper_mask(capacity_ - 1)
     , K(allocate<Kmer<k>>(capacity_))
@@ -103,7 +103,7 @@ inline Streaming_Kmer_Hashset<k>::Streaming_Kmer_Hashset(const std::size_t max_n
 
 
 template <uint16_t k>
-inline void Streaming_Kmer_Hashset<k>::clear()
+inline void Streaming_Double_Probe_Hashset<k>::clear()
 {
     sz = 0;
     cur_stamp = (cur_stamp + 1u) & std::numeric_limits<decltype(cur_stamp)>::max();
@@ -116,7 +116,7 @@ inline void Streaming_Kmer_Hashset<k>::clear()
 
 
 template <uint16_t k>
-inline void Streaming_Kmer_Hashset<k>::insert(const char* const seq, const std::size_t len)
+inline void Streaming_Double_Probe_Hashset<k>::insert(const char* const seq, const std::size_t len)
 {
     assert(len >= k);
 
@@ -154,7 +154,7 @@ inline void Streaming_Kmer_Hashset<k>::insert(const char* const seq, const std::
 
 
 template <uint16_t k>
-inline bool Streaming_Kmer_Hashset<k>::try_insert_at(const Kmer<k>& key, const std::size_t idx)
+inline bool Streaming_Double_Probe_Hashset<k>::try_insert_at(const Kmer<k>& key, const std::size_t idx)
 {
     if(T[idx] != cur_stamp) // Empty slot as it contains an entry from a previous version of the table.
     {
@@ -172,7 +172,7 @@ inline bool Streaming_Kmer_Hashset<k>::try_insert_at(const Kmer<k>& key, const s
 
 
 template <uint16_t k>
-inline bool Streaming_Kmer_Hashset<k>::try_insert_from(const Kmer<k>& key, const std::size_t idx)
+inline bool Streaming_Double_Probe_Hashset<k>::try_insert_from(const Kmer<k>& key, const std::size_t idx)
 {
     for(std::size_t i = idx; ; i = next_idx(i))
         if(try_insert_at(key, i))
@@ -185,7 +185,7 @@ inline bool Streaming_Kmer_Hashset<k>::try_insert_from(const Kmer<k>& key, const
 
 
 template <uint16_t k>
-inline bool Streaming_Kmer_Hashset<k>::probe_at(const Kmer<k>& key, const std::size_t idx)
+inline bool Streaming_Double_Probe_Hashset<k>::probe_at(const Kmer<k>& key, const std::size_t idx)
 {
     return T[idx] == cur_stamp && K[idx] == key;
 }
