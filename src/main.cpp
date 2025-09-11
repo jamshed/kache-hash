@@ -35,8 +35,8 @@ BENCHMARK(BM_set_insert_generic)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_batched)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_streaming)->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_set_insert_streaming_blocked<false>)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_streaming_blocked<true>)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_streaming_bucketed<false>)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_set_insert_streaming_bucketed<true>)->Unit(benchmark::kMillisecond);
 
 
 BENCHMARK_MAIN();
