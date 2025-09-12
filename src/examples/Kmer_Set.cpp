@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <vector>
 #include <iostream>
 #include <cassert>
 #include <sys/types.h>
@@ -242,12 +243,14 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
     {
         S.clear();
 
+        std::vector<std::string> P; P.push_back(file_path);
+        S.preprocess_skew_mins(P);
+
         Parser input(file_path);
         while(input.read_next_seq())
         {
             auto const seq = input.seq();
             auto const len = input.seq_len();
-            assert(len >= k);
 
             S.template insert<track_stats_>(seq, len);
         }

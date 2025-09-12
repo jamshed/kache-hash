@@ -8,6 +8,7 @@
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "Minimizer_Iterator.hpp"
+#include "Parser.hpp"
 #include "utility.hpp"
 
 #include "unordered_dense/unordered_dense.h"
@@ -35,6 +36,8 @@ private:
     Kmer<k>* K; // Flat table of key-collection of size `cap x B`.
     uint8_t* S; // Size of each bucket.
 
+    ankerl::unordered_dense::set<uint64_t> skew_mins;   // Skew minimizers.
+    static constexpr uint64_t skew_th = 2 * B;
     ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> overflow; // The overflow table. TODO: replace.
 
     uint64_t sum_len;   // Total sequence length provided.
@@ -77,6 +80,10 @@ public:
     // table.
     template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
 
+    // Preprocesses a prefix of sequences from the files at `file_path` to
+    // populate a collection of skew-minimizers.
+    void preprocess_skew_mins(const std::vector<std::string>& file_paths);
+
     // Reports developer statistics about the table.
     void report_stats() const;
 };
@@ -105,6 +112,7 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
     sum_len = 0, sup_kmer_c = 0;
 
     std::memset(S, 0, cap_);
+    skew_mins.clear();
     overflow.clear();
 
     min_to_kmer.clear();
@@ -138,22 +146,27 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
             min_to_kmer[h].insert(key);
         }
 
-        const auto b = h & idx_mask;
-        if(!insert_at(key, b))
+        if(skew_mins.contains(h))
+            overflow.insert(key);
+        else
         {
-            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
-
-            const auto p = h_1 & idx_mask;
-            const auto q = h_2 & idx_mask;
-            if(!find(key, p) && !find(key, q))
+            const auto b = h & idx_mask;
+            if(!insert_at(key, b))
             {
-                if(S[p] < S[q])
-                    K[p * B + S[p]++] = key;
-                else if(S[q] < B)
-                    K[q * B + S[q]++] = key;
-                else
-                    overflow.insert(key);
+                const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+                const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+
+                const auto p = h_1 & idx_mask;
+                const auto q = h_2 & idx_mask;
+                if(!find(key, p) && !find(key, q))
+                {
+                    if(S[p] < S[q])
+                        K[p * B + S[p]++] = key;
+                    else if(S[q] < B)
+                        K[q * B + S[q]++] = key;
+                    else
+                        overflow.insert(key);
+                }
             }
         }
 
@@ -192,6 +205,54 @@ inline bool Streaming_Kmer_Hashset<k, l>::insert_at(const Kmer<k> key, const std
     K[b * B + S[b]] = key;
     S[b]++;
     return true;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector<std::string>& file_paths)
+{
+    std::size_t scanned_kmer = 0;
+    constexpr std::size_t scan_th = 100'000;
+
+    Min_Iterator<k, l> min_it;
+    ankerl::unordered_dense::map<uint64_t, uint64_t> min_freq;
+
+    for(const auto& path : file_paths)
+    {
+        Parser input(path);
+        while(scanned_kmer < scan_th && input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            if(len < k)
+                continue;
+
+            min_it.reset(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                min_freq[min_it.hash()]++;
+
+                if(kmer_idx + k == len)
+                    break;
+
+                min_it.advance(seq[kmer_idx + k]);
+                kmer_idx++;
+            }
+
+            scanned_kmer += (len - k + 1);
+        }
+
+        if(scanned_kmer >= scan_th)
+            break;
+    }
+
+
+    for(auto [min, f] : min_freq)
+        if(f > skew_th)
+            skew_mins.insert(min);
+
+    std::cerr << "#skew-minimizers: " << skew_mins.size() << "\n";
 }
 
 
