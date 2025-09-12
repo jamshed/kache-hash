@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 #include <cstring>
 #include <iostream>
 #include <algorithm>
@@ -38,6 +39,9 @@ private:
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
+
+    // Following are for used for developer stats.
+    ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
 
     // Tries to insert the k-mer `key` into the bucket `b`, returning `true` iff
@@ -102,6 +106,8 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
 
     std::memset(S, 0, cap_);
     overflow.clear();
+
+    min_to_kmer.clear();
 }
 
 
@@ -129,6 +135,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
         {
             sup_kmer_c += (last_min != h);
             last_min = h;
+            min_to_kmer[h].insert(key);
         }
 
         const auto b = h & idx_mask;
@@ -202,9 +209,19 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
 
     uint64_t sz = 0;
     std::for_each(S, S + cap_, [&](auto s){ sz += s; });
+
+    uint64_t skew_min = 0;
+    for(const auto& m : min_to_kmer)
+        if(m.second.size() > B)
+            skew_min++;
+
+    std::cerr   << "Minimizer set size: " << min_to_kmer.size() << ".\n";
+    std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << ".\n";
+    std::cerr   << "========================================\n";
+
     std::cerr   << "Complete set size: " << sz << ".\n";
     std::cerr   << "Overflow set size: " << overflow.size() << " ("
-                    << (overflow.size() * 100.0 / sz) << "%).\n";
+                    << (overflow.size() * 100.0 / (sz + overflow.size())) << "%).\n";
     std::cerr   << "========================================\n";
 
 
