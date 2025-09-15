@@ -18,6 +18,7 @@ void BM_set_insert_streaming(benchmark::State&);
 
 template<bool track_stats_ = false> void BM_set_insert_streaming_blocked(benchmark::State&);
 
+template<bool track_stats_ = false> void BM_set_insert_streaming_bucketed(benchmark::State&);
 
 BENCHMARK(BM_file_read)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_scan_minimizer_baseline)->Unit(benchmark::kMillisecond);
