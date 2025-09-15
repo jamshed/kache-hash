@@ -20,9 +20,9 @@ template<bool track_stats_ = false> void BM_set_insert_streaming_blocked(benchma
 
 template<bool track_stats_ = false> void BM_set_insert_streaming_bucketed(benchmark::State&);
 
-BENCHMARK(BM_file_read)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_file_read)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_scan_minimizer_baseline)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_scan_minimizer)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_scan_minimizer)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_scan_minimizer_pos)->Unit(benchmark::kMillisecond);
 
 // BENCHMARK(BM_kmer_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
@@ -32,12 +32,12 @@ BENCHMARK(BM_scan_minimizer)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_kmer_hash)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_generic_3rd_party)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_generic)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_batched)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_streaming)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_generic)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_batched)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_streaming)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_set_insert_streaming_bucketed<false>)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_streaming_bucketed<true>)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_streaming_bucketed<true>)->Unit(benchmark::kMillisecond);
 
 
 BENCHMARK_MAIN();
