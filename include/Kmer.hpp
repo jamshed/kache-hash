@@ -56,15 +56,15 @@ private:
 public:
 
     // Default constructs the k-mer with a 0-value, equivalent to "AA...A".
-    Kmer();
+    constexpr Kmer();
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const char* label, std::size_t kmer_idx);
+    constexpr Kmer(const char* label, std::size_t kmer_idx);
 
     // Constructs a k-mer from the provided characters at
     // `label[0, ..., k - 1]`.
-    Kmer(const char* label);
+    constexpr Kmer(const char* label);
 
     // Constructs a k-mer from the provided string `label`.
     Kmer(const std::string& label);
@@ -76,12 +76,6 @@ public:
     // Constructs a k-mer that has its encoding equivalent to the value `int_val`.
     // k must be at most 32 for this construction.
     Kmer(uint64_t int_val);
-
-    // Copy constructs the k-mer from another k-mer `rhs`.
-    Kmer(const Kmer<k>& rhs);
-
-    // Copy assignment operator.
-    Kmer<k>& operator=(const Kmer<k>& rhs);
 
     // Returns the number of machine-words used to represent this k-mer.
     constexpr static uint16_t num_words();
@@ -273,20 +267,20 @@ inline uint64_t Kmer<k>::to_u64(const uint64_t seed) const
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer():
+inline constexpr Kmer<k>::Kmer():
     kmer_data() // Value-initializes the data array, i.e. zeroes it out.
 {}
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const char* const label, const std::size_t kmer_idx):
+inline constexpr Kmer<k>::Kmer(const char* const label, const std::size_t kmer_idx):
     Kmer(label + kmer_idx)
 {}
 
 
 template <uint16_t k>
 __attribute__((optimize("unroll-loops")))
-inline Kmer<k>::Kmer(const char* const label)
+inline constexpr Kmer<k>::Kmer(const char* const label)
 {
     constexpr uint16_t packed_word_count = k / 32;
 
@@ -318,27 +312,6 @@ inline Kmer<k>::Kmer(const uint64_t int_val)
     static_assert(k <= 32, "k-mer conversions from 64-bit unsigned integers is only defined for k <= 32.");
 
     kmer_data[0] = int_val;
-}
-
-
-template <uint16_t k>
-inline Kmer<k>::Kmer(const Kmer<k>& rhs)
-{
-    *this = rhs;
-}
-
-
-template <uint16_t k>
-inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
-{
-    static_assert(NUM_INTS <= 4);
-
-    if constexpr(k <= 32)
-        kmer_data[0] = rhs.kmer_data[0];
-    else
-        std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
-
-    return *this;
 }
 
 
