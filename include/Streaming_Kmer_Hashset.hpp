@@ -8,6 +8,7 @@
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "Minimizer_Iterator.hpp"
+#include "Hash_Set.hpp"
 #include "Parser.hpp"
 #include "utility.hpp"
 
@@ -36,9 +37,9 @@ private:
     Kmer<k>* K; // Flat table of key-collection of size `cap x B`.
     uint8_t* S; // Size of each bucket.
 
-    ankerl::unordered_dense::set<uint64_t> skew_mins;   // Skew minimizers.
     static constexpr uint64_t skew_th = B;
-    ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> overflow; // The overflow table. TODO: replace.
+    Hash_Set<uint64_t> skew_mins;   // Skew minimizers.
+    Hash_Set<Kmer<k>> overflow; // The overflow table.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
