@@ -21,6 +21,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Compilers for sanitizer-support.
 if(ASAN OR UBSAN)
+    set(CLANG TRUE)
+endif()
+
+if(CLANG)
     set(CMAKE_C_COMPILER clang)
     set(CMAKE_CXX_COMPILER clang++)
     # set(CMAKE_LINKER_TYPE LLD)
