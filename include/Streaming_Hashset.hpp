@@ -27,7 +27,7 @@ class Streaming_Hash_Set
 {
 private:
 
-    static constexpr double lf_default = 0.375; // Default maximum load-factor.
+    static constexpr double lf_default = 0.8; // Default maximum load-factor.
 
     static constexpr std::size_t B = 16;    // Block size.
 

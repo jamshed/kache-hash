@@ -29,7 +29,7 @@ class Streaming_Kmer_Hashset
 private:
 
     static constexpr double lf_default = 0.8;   // Default load factor: 80%.
-    static constexpr std::size_t B = 16;    // Bucket size.
+    static constexpr std::size_t B = 32;    // Bucket size.
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
@@ -37,7 +37,7 @@ private:
     uint8_t* S; // Size of each bucket.
 
     ankerl::unordered_dense::set<uint64_t> skew_mins;   // Skew minimizers.
-    static constexpr uint64_t skew_th = 2 * B;
+    static constexpr uint64_t skew_th = B;
     ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>> overflow; // The overflow table. TODO: replace.
 
     uint64_t sum_len;   // Total sequence length provided.
