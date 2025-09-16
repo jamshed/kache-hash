@@ -8,7 +8,7 @@
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "Minimizer_Iterator.hpp"
-#include "Hash_Set.hpp"
+#include "Hash_Table.hpp"
 #include "Parser.hpp"
 #include "utility.hpp"
 
