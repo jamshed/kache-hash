@@ -230,7 +230,7 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector
 
             min_it.reset(seq);
             std::size_t kmer_idx = 0;
-            while(true)
+            while(scanned_kmer < scan_th)
             {
                 min_freq[min_it.hash()]++;
 
@@ -239,13 +239,9 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector
 
                 min_it.advance(seq[kmer_idx + k]);
                 kmer_idx++;
+                scanned_kmer++;
             }
-
-            scanned_kmer += (len - k + 1);
         }
-
-        if(scanned_kmer >= scan_th)
-            break;
     }
 
 
