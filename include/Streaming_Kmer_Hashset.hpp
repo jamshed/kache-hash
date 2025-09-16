@@ -213,10 +213,10 @@ template <uint16_t k, uint16_t l>
 inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector<std::string>& file_paths)
 {
     std::size_t scanned_kmer = 0;
-    constexpr std::size_t scan_th = 100'000;
+    constexpr std::size_t scan_th = 1'000'000;
 
     Min_Iterator<k, l> min_it;
-    ankerl::unordered_dense::map<uint64_t, uint64_t> min_freq;
+    Hash_Map<uint64_t, uint64_t> min_freq;
 
     for(const auto& path : file_paths)
     {
@@ -250,6 +250,8 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector
             skew_mins.insert(min);
 
     std::cerr << "#skew-minimizers: " << skew_mins.size() << "\n";
+    std::cerr << "Minimizer-counting map size: " << min_freq.size() << "\n";
+    std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
 }
 
 
@@ -275,6 +277,8 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
 
     std::cerr   << "Minimizer set size: " << min_to_kmer.size() << ".\n";
     std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << ".\n";
+    std::cerr   << "Identified skew-minimizer set size: " << skew_mins.size() << "\n";
+    std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete set size: " << sz << ".\n";
