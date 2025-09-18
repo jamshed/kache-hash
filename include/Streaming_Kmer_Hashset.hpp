@@ -14,6 +14,9 @@
 
 #include "unordered_dense/unordered_dense.h"
 
+#include <immintrin.h>
+
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
 #include <random>
@@ -32,6 +35,7 @@ private:
 
     static constexpr double lf_default = 0.8;   // Default load factor: 80%.
     static constexpr std::size_t B = 32;    // Bucket size.
+    static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
@@ -55,6 +59,9 @@ private:
 
     // Returns `true` iff the k-mer `key` is present at the bucket `b`.
     bool find(Kmer<k> key, std::size_t b) const;
+
+    // Returns `true` iff the k-mer `key` is present at the bucket `b`.
+    bool find_512(Kmer<k> key, std::size_t b) const;
 
 public:
 
@@ -194,6 +201,29 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const std::siz
     for(std::size_t j = 0; j < S[b]; ++j)
         if(K[b * B + j] == key)
             return true;
+
+    return false;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline bool Streaming_Kmer_Hashset<k, l>::find_512(const Kmer<k> key, const std::size_t b) const
+{
+    assert(b < cap_);   assert(S[b] <= B);
+
+    const auto query = _mm512_set1_epi64(key.as_int());
+
+    std::size_t j = 0;
+    for(; j < S[b] && j + 8 <= B; j += 8)
+    {
+        const auto v = _mm512_load_si512(static_cast<const void*>(K + (b * B + j)));
+        const auto cmp = _mm512_cmpeq_epi64_mask(v, query);
+        if(cmp)
+        {
+            const auto off = __builtin_ctz(static_cast<uint8_t>(cmp));
+            return off < S[b];
+        }
+    }
 
     return false;
 }
