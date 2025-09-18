@@ -341,12 +341,14 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
     std::for_each(S, S + cap_, [&](auto s){ sz += s; });
 
     uint64_t skew_min = 0;
+    uint64_t skew_kmer = 0;
     for(const auto& m : min_to_kmer)
-        if(m.second.size() > B)
-            skew_min++;
+        if(m.second.size() > skew_th)
+            skew_min++, skew_kmer += m.second.size();
 
     std::cerr   << "Minimizer set size: " << min_to_kmer.size() << ".\n";
-    std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << ".\n";
+    std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << " (" << (skew_min * 100.0 / min_to_kmer.size()) << "%).\n";
+    std::cerr   << "Associated k-mer count: " << skew_kmer << " (" << (skew_kmer * 100.0 / sz) << "%).\n";
     std::cerr   << "Identified skew-minimizer set size: " << skew_mins.size() << "\n";
     std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
     std::cerr   << "========================================\n";
