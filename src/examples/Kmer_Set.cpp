@@ -98,6 +98,10 @@ void BM_set_insert_generic(benchmark::State& state)
 
     for(auto _ : state)
     {
+        constexpr uint64_t log_step = 32768;
+        uint64_t n = 0, checkpoint = log_step;
+        std::cerr << "\n";
+
         S.clear();
 
         Parser input(file_path);
@@ -121,11 +125,18 @@ void BM_set_insert_generic(benchmark::State& state)
                 v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
                 kmer_idx++;
             }
+
+            n += len - k + 1;
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rInserted " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
         }
 
         input.close();
 
-        std::cout << "Set size: " << S.size() << "\n";
+        std::cout << "\nSet size: " << S.size() << "\n";
     }
 }
 
@@ -241,6 +252,10 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
     for(auto _ : state)
     {
+        constexpr uint64_t log_step = 32768;
+        uint64_t n = 0, checkpoint = log_step;
+        std::cerr << "\n";
+
         S.clear();
 
         std::vector<std::string> P; P.push_back(file_path);
@@ -254,12 +269,19 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
             auto const len = input.seq_len();
 
             S.template insert<track_stats_>(seq, len);
+
+            n += len - k + 1;
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rInserted " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
         }
 
         input.close();
     }
 
-    std::cout << "Set size: " << S.size() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
     if constexpr(track_stats_)
         S.report_stats();
 }
