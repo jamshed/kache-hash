@@ -245,6 +245,7 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
         std::vector<std::string> P; P.push_back(file_path);
         S.preprocess_skew_mins(P);
+        // S.preprocess_skew_mins_random(P);
 
         Parser input(file_path);
         while(input.read_next_seq())

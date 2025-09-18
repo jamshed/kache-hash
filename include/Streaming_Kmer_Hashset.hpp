@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <random>
 #include <vector>
 #include <cstring>
 #include <iostream>
@@ -84,6 +85,10 @@ public:
     // Preprocesses a prefix of sequences from the files at `file_path` to
     // populate a collection of skew-minimizers.
     void preprocess_skew_mins(const std::vector<std::string>& file_paths);
+
+    // Preprocesses a random set of k-mers from the files at `file_path` to
+    // populate a collection of skew-minimizers. Proof-of-concept method.
+    void preprocess_skew_mins_random(const std::vector<std::string>& file_paths);
 
     // Reports developer statistics about the table.
     void report_stats() const;
@@ -242,6 +247,41 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector
                 scanned_kmer++;
             }
         }
+    }
+
+
+    for(auto [min, f] : min_freq)
+        if(f > skew_th)
+            skew_mins.insert(min);
+
+    std::cerr << "#skew-minimizers: " << skew_mins.size() << "\n";
+    std::cerr << "Minimizer-counting map size: " << min_freq.size() << "\n";
+    std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins_random(const std::vector<std::string>& file_paths)
+{
+    constexpr std::size_t scan_th = 1'000'000;
+
+    std::string s;
+    for(const auto& path : file_paths)
+    {
+        Parser input(path);
+        while(input.read_next_seq())
+            s += input.seq();
+    }
+
+    Min_Iterator<k, l> min_it;
+    Hash_Map<uint64_t, uint64_t> min_freq;
+
+    std::mt19937 r(std::chrono::system_clock::now().time_since_epoch().count());
+    for(std::size_t i = 0; i < scan_th; ++i)
+    {
+        const auto idx = r() % (s.length() - k);
+        min_it.reset(s.c_str() + idx);
+        min_freq[min_it.hash()]++;
     }
 
 
