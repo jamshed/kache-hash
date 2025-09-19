@@ -16,7 +16,7 @@ set(SRC
 add_library(core STATIC ${SRC})
 
 # Executables.
-add_executable(${PROJECT_NAME} main.cpp)
+add_executable(bench bench.cpp)
 
 
 # Dependencies
@@ -26,13 +26,13 @@ add_dependencies(core prj_benchmark)
 # Configs for targets.
 
 target_include_directories(core PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
-target_include_directories(${PROJECT_NAME} PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(bench PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 target_compile_options(core PRIVATE ${COMPILE_FLAGS})
-target_compile_options(${PROJECT_NAME} PRIVATE ${COMPILE_FLAGS})
+target_compile_options(bench PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(core PRIVATE ${LINK_FLAGS})
-target_link_libraries(${PROJECT_NAME} PRIVATE ${LINK_FLAGS})
+target_link_libraries(bench PRIVATE ${LINK_FLAGS})
 
 
 # Target-links.
@@ -47,11 +47,11 @@ target_link_libraries(core PRIVATE benchmark)
 
 target_link_libraries(core PRIVATE pfm)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
-target_link_libraries(${PROJECT_NAME} PRIVATE benchmark)
+target_link_libraries(bench PRIVATE core)
+target_link_libraries(bench PRIVATE benchmark)
 
 
 # Installation path.
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS bench
         DESTINATION bin
         )
