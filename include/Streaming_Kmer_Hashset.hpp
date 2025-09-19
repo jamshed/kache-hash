@@ -196,6 +196,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
 template <uint16_t k, uint16_t l>
 inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const std::size_t b) const
 {
+/*
     assert(b < cap_);   assert(S[b] <= B);
 
     for(std::size_t j = 0; j < S[b]; ++j)
@@ -203,6 +204,9 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const std::siz
             return true;
 
     return false;
+*/
+
+    return find_512(key, b);
 }
 
 
