@@ -9,18 +9,14 @@
 #include "Directed_Vertex.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Hash_Table.hpp"
-#include "Parser.hpp"
 #include "utility.hpp"
 
 #include "unordered_dense/unordered_dense.h"
 
 #include <immintrin.h>
 
-#include <chrono>
 #include <cstdint>
 #include <cstddef>
-#include <random>
-#include <vector>
 #include <cstring>
 #include <iostream>
 #include <algorithm>
@@ -43,7 +39,6 @@ private:
     uint8_t* S; // Size of each bucket.
 
     static constexpr uint64_t skew_th = B;
-    Hash_Set<uint64_t> skew_mins;   // Skew minimizers.
     Hash_Set<Kmer<k>> overflow; // The overflow table.
 
     uint64_t sum_len;   // Total sequence length provided.
@@ -82,6 +77,9 @@ public:
     // Returns the size of the table.
     auto size() const { uint64_t sz = 0; std::for_each(S, S + cap_, [&](auto s){ sz += s; }); return sz + overflow.size(); }
 
+    // Returns the size of the overflow table.
+    auto overflow_size() const { return overflow.size(); }
+
     // Clears the table.
     void clear();
 
@@ -89,6 +87,7 @@ public:
     // table.
     template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
 
+/*
     // Preprocesses a prefix of sequences from the files at `file_path` to
     // populate a collection of skew-minimizers.
     void preprocess_skew_mins(const std::vector<std::string>& file_paths);
@@ -96,6 +95,7 @@ public:
     // Preprocesses a random set of k-mers from the files at `file_path` to
     // populate a collection of skew-minimizers. Proof-of-concept method.
     void preprocess_skew_mins_random(const std::vector<std::string>& file_paths);
+*/
 
     // Reports developer statistics about the table.
     void report_stats() const;
@@ -125,7 +125,8 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
     sum_len = 0, sup_kmer_c = 0;
 
     std::memset(S, 0, cap_);
-    skew_mins.clear();
+
+    // skew_mins.clear();
     overflow.clear();
 
     min_to_kmer.clear();
@@ -159,27 +160,22 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
             min_to_kmer[h].insert(key);
         }
 
-        if(skew_mins.contains(h))
-            overflow.insert(key);
-        else
+        const auto b = h & idx_mask;
+        if(!insert_at(key, b))
         {
-            const auto b = h & idx_mask;
-            if(!insert_at(key, b))
-            {
-                const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-                const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-                const auto p = h_1 & idx_mask;
-                const auto q = h_2 & idx_mask;
-                if(!find(key, p) && !find(key, q))
-                {
-                    if(S[p] < S[q])
-                        K[p * B + S[p]++] = key;
-                    else if(S[q] < B)
-                        K[q * B + S[q]++] = key;
-                    else
-                        overflow.insert(key);
-                }
+            const auto p = h_1 & idx_mask;
+            const auto q = h_2 & idx_mask;
+            if(!find(key, p) && !find(key, q))
+            {
+                if(S[p] < S[q])
+                    K[p * B + S[p]++] = key;
+                else if(S[q] < B)
+                    K[q * B + S[q]++] = key;
+                else
+                    overflow.insert(key);
             }
         }
 
@@ -248,6 +244,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::insert_at(const Kmer<k> key, const std
 }
 
 
+/*
 template <uint16_t k, uint16_t l>
 inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector<std::string>& file_paths)
 {
@@ -327,6 +324,7 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins_random(const std:
     std::cerr << "Minimizer-counting map size: " << min_freq.size() << "\n";
     std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
 }
+*/
 
 
 template <uint16_t k, uint16_t l>
@@ -353,8 +351,8 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
     std::cerr   << "Minimizer set size: " << min_to_kmer.size() << ".\n";
     std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << " (" << (skew_min * 100.0 / min_to_kmer.size()) << "%).\n";
     std::cerr   << "Associated k-mer count: " << skew_kmer << " (" << (skew_kmer * 100.0 / sz) << "%).\n";
-    std::cerr   << "Identified skew-minimizer set size: " << skew_mins.size() << "\n";
-    std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
+    // std::cerr   << "Identified skew-minimizer set size: " << skew_mins.size() << "\n";
+    // std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete set size: " << sz << ".\n";

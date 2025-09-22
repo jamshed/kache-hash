@@ -1,5 +1,6 @@
 
 #include "Streaming_Kmer_Hashset.hpp"
+#include "Parser.hpp"
 
 #include <cstdint>
 #include <string>
@@ -18,8 +19,8 @@ void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 
     S.clear();
 
-    std::vector<std::string> P; P.push_back(file_path);
-    S.preprocess_skew_mins(P);
+    // std::vector<std::string> P; P.push_back(file_path);
+    // S.preprocess_skew_mins(P);
     // S.preprocess_skew_mins_random(P);
 
     Parser input(file_path);
@@ -40,6 +41,10 @@ void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 
     input.close();
     std::cout << "\nSet size: " << S.size() << "\n";
+
+    std::cerr   << "Complete set size: " << S.size() << ".\n";
+    std::cerr   << "Overflow set size: " << S.overflow_size() << " ("
+                    << (S.overflow_size() * 100.0 / (S.size() + S.overflow_size())) << "%).\n";
 }
 
 int main(int argc, char* argv[])

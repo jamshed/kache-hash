@@ -15,7 +15,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
-#include <vector>
 #include <iostream>
 #include <cassert>
 #include <sys/types.h>
@@ -258,8 +257,8 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
         S.clear();
 
-        std::vector<std::string> P; P.push_back(file_path);
-        S.preprocess_skew_mins(P);
+        // std::vector<std::string> P; P.push_back(file_path);
+        // S.preprocess_skew_mins(P);
         // S.preprocess_skew_mins_random(P);
 
         Parser input(file_path);
