@@ -2,6 +2,7 @@
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
+#include "Rolling_Hash.hpp"
 #include "Parser.hpp"
 #include "Kmer_Hashset.hpp"
 #include "Streaming_Double_Probe_Hashset.hpp"
@@ -77,6 +78,40 @@ void BM_kmer_hash(benchmark::State& state)
                     break;
 
                 v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+
+        // std::cout << "Input k-mer set signature: " << h << "\n";
+
+        input.close();
+    }
+}
+
+
+void BM_rolling_hash(benchmark::State& state)
+{
+    for(auto _ : state)
+    {
+        Parser input(file_path);
+        uint64_t h = 0;
+
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            assert(len >= k);
+            Rolling_Hash<k> rh(seq);
+
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                benchmark::DoNotOptimize(h ^= rh.hash());
+
+                if(kmer_idx + k == len)
+                    break;
+
+                rh.advance(seq[kmer_idx + k]);
                 kmer_idx++;
             }
         }

@@ -1,0 +1,84 @@
+
+#ifndef ROLLING_HASH_HPP
+#define ROLLING_HASH_HPP
+
+
+
+#include "DNA_Utility.hpp"
+
+#include <cstdint>
+#include <cstddef>
+#include <cassert>
+
+
+// Rolling tabulation hasher for `k`-mers.
+template <uint16_t k>
+class Rolling_Hash
+{
+private:
+
+    uint8_t base[k];    // Circular queue of the nucleobases in the current k-mer.
+    std::size_t off;    // Index of the front of the queue.
+
+    static constexpr auto t = __TIME__;
+    static constexpr auto atoi = [](const char ch){ return static_cast<uint64_t>(ch - '0'); };
+
+    static constexpr uint64_t a = 6364136223846793005llu;   // Multiplier in LCG: from Knuth's MMIX.
+    static constexpr uint64_t c = 1442695040888963407llu;   // Increment in LCG: from Knuth's MMIX.
+    static constexpr uint64_t s_a = (atoi(t[0]) * 10 + atoi(t[1])) * 3600 + (atoi(t[3]) * 10 + atoi(t[4])) * 60 + (atoi(t[6]) * 10 + atoi(t[7]));
+    static constexpr uint64_t s_c = a * s_a + c;
+    static constexpr uint64_t s_g = a * s_c + c;
+    static constexpr uint64_t s_t = a * s_g + c;
+    static constexpr uint64_t s[] = {s_a, s_c, s_g, s_t};   // Substitutes for nucleobases.
+
+    uint64_t h; // Current hash.
+
+    // Returns the rotation of `x` to the left by `r` bits.
+    constexpr uint64_t rotl(const uint64_t x, const uint32_t r) const { return (x << r) | (x >> (64 - r)); }
+
+public:
+
+    // Constructs a rolling tabulation hasher for `k`-mers initialized at the
+    // beginning of the sequence `seq`.
+    Rolling_Hash(const char* seq);
+
+    // Advances the hasher in its underlying sequence by the nucleobase `ch` to
+    // the right.
+    void advance(char ch);
+
+    // Returns the current hash.
+    uint64_t hash() const { return h; }
+
+    // Returns an `N`-bit checksum of the hash.
+    template <uint8_t N = 8> uint64_t checksum() const { return h >> (64 - N); }
+};
+
+
+template <uint16_t k>
+inline Rolling_Hash<k>::Rolling_Hash(const char* const seq)
+{
+    h = 0;
+    off = 0;
+    for(std::size_t i = 0; i < k; ++i)
+    {
+        base[i] = DNA_Utility::map_base_unchecked(seq[i]);
+        const auto sub = s[base[i]];
+        h ^= rotl(sub, k - 1 - i);
+    }
+}
+
+
+template <uint16_t k>
+inline void Rolling_Hash<k>::advance(const char ch)
+{
+    const auto outgoing = s[base[off]];
+    base[off] = DNA_Utility::map_base_unchecked(ch);
+    const auto incoming = s[base[off]];
+    off = (off + 1 >= k ? 0 : off + 1);
+
+    h = rotl(h, 1) ^ rotl(outgoing, k) ^ incoming;
+}
+
+
+
+#endif
