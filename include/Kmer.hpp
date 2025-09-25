@@ -4,6 +4,7 @@
 
 
 
+#include "DNA.hpp"
 #include "DNA_Utility.hpp"
 #include "Kmer_Utility.hpp"
 #include "xxHash/xxhash.h"
@@ -165,6 +166,10 @@ public:
     // appending the base coded with the edge encoding `edge` to
     // the end, i.e. rolls the k-mer to the "right" by one base.
     void roll_forward(DNA::Extended_Base edge);
+
+    // Transforms this k-mer by chopping off the first base and appending the
+    // `base` to the end, i.e. rolls the k-mer to the "right" by one base.
+    void roll_forward(DNA::Base base);
 
     // Transforms this k-mer by chopping off the last base and
     // appending the base coded with the edge encoding `edge` to
@@ -556,6 +561,15 @@ inline void Kmer<k>::roll_forward(const DNA::Extended_Base edge)
     kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
     left_shift<1>();
     kmer_data[0] |= static_cast<uint64_t>(mapped_base);
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_forward(const DNA::Base base)
+{
+    kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
+    left_shift<1>();
+    kmer_data[0] |= static_cast<uint64_t>(base);
 }
 
 

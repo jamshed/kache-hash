@@ -11,6 +11,7 @@ void BM_scan_minimizer_pos(benchmark::State&);
 
 void BM_file_scan(benchmark::State&);
 void BM_kmer_hash(benchmark::State&);
+void BM_rolling_hash(benchmark::State&);
 void BM_set_insert_generic_3rd_party(benchmark::State&);
 void BM_set_insert_generic(benchmark::State&);
 void BM_set_insert_batched(benchmark::State&);
@@ -30,7 +31,8 @@ template<bool track_stats_ = false> void BM_set_insert_streaming_bucketed(benchm
 // BENCHMARK(BM_set_insert_batched)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_streaming)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_kmer_hash)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_kmer_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_rolling_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_set_insert_generic_3rd_party)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_generic)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_batched)->Unit(benchmark::kMillisecond);
