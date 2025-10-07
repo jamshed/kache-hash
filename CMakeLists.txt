@@ -128,7 +128,7 @@ set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 
-set(BENCHMARK_MIN_VERSION "v1.8.4")
+set(BENCHMARK_MIN_VERSION "v1.9.4")
 message("Build system will fetch and install Google Benchmark.")
 ExternalProject_Add(prj_benchmark
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
@@ -140,7 +140,7 @@ ExternalProject_Add(prj_benchmark
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
     CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -E chdir "build" cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DBENCHMARK_ENABLE_LIBPFM=ON -DCMAKE_BUILD_TYPE=Release ../
+                        cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DCMAKE_BUILD_TYPE=Release -DBENCHMARK_ENABLE_LIBPFM=ON -S . -B "build"
     BUILD_COMMAND       cmake --build "build" --config Release
     INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
                         cp -rf include/benchmark ${EXT_INCLUDE}
