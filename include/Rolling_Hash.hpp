@@ -31,14 +31,18 @@ private:
     static constexpr uint64_t s_t = a * s_g + c;
     static constexpr uint64_t s[] = {s_a, s_c, s_g, s_t};   // Substitution function for nucleobases.
 
-    uint64_t h_f;   // Hash of the current k-mer in the forward-strand.
-    uint64_t h_r;   // Hash of the current k-mer in the reverse-strand.
-
     // Returns the rotation of `x` to the left by `r` bits.
-    constexpr uint64_t rotl(const uint64_t x, const uint32_t r) const { return (x << r) | (x >> (64 - r)); }
+    static constexpr uint64_t rotl(const uint64_t x, const uint32_t r) { return (x << r) | (x >> (64 - r)); }
 
     // Returns the rotation of `x` to the right by `r` bits.
-    constexpr uint64_t rotr(const uint64_t x, const uint32_t r) const { return (x >> r) | (x << (64 - r)); }
+    static constexpr uint64_t rotr(const uint64_t x, const uint32_t r) { return (x >> r) | (x << (64 - r)); }
+
+    static constexpr uint64_t rotl_k[]   = {rotl(s_a, k), rotl(s_c, k), rotl(s_g, k), rotl(s_t, k)};    // Left-rotation result by `k`.
+    static constexpr uint64_t rotl_km1[] = {rotl(s_a, k - 1), rotl(s_c, k - 1), rotl(s_g, k - 1), rotl(s_t, k - 1)};    // Left-rotation result by `k - 1`.
+    static constexpr uint64_t rotr_1[]   = {rotr(s_a, 1), rotr(s_c, 1), rotr(s_g, 1), rotr(s_t, 1)};    // Right-rotation result.
+
+    uint64_t h_f;   // Hash of the current k-mer in the forward-strand.
+    uint64_t h_r;   // Hash of the current k-mer in the reverse-strand.
 
 public:
 
@@ -87,12 +91,12 @@ inline void Rolling_Hash<k, canonical>::advance(const char ch)
     const auto in = base[off];
     off = (off + 1 >= k ? 0 : off + 1);
 
-    h_f = rotl(h_f, 1) ^ rotl(s[out], k) ^ s[in];
+    h_f = rotl(h_f ^ rotl_km1[out], 1) ^ s[in];
     if constexpr(canonical)
     {
         const auto o = DNA_Utility::complement(DNA::Base(out));
         const auto i = DNA_Utility::complement(DNA::Base(in));
-        h_r = rotr(h_r, 1) ^ rotr(s[o], 1) ^ rotl(s[i], k - 1);
+        h_r = rotr(h_r ^ s[o], 1) ^ rotl_km1[i];
     }
 }
 
