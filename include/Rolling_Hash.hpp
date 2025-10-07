@@ -64,7 +64,7 @@ public:
     uint64_t hash() const;
 
     // Returns an `N`-bit checksum of the hash.
-    template <uint8_t N = 8> uint64_t checksum() const;
+    template <uint8_t N = 8> uint64_t checksum() const { return hash() >> (64 - N); }
 };
 
 
@@ -75,7 +75,7 @@ inline Rolling_Hash<k, canonical>::Rolling_Hash(const char* const seq)
     off = 0;
     for(std::size_t i = 0; i < k; ++i)
     {
-        base[i] = DNA_Utility::map_base_unchecked(seq[i]);
+        base[i] = DNA_Utility::map_base(seq[i]);
         h_f ^= rotl(s[base[i]], k - 1 - i);
         if constexpr(canonical)
             h_r ^= rotl(s[DNA_Utility::complement(DNA::Base(base[i]))], i);
@@ -108,14 +108,6 @@ inline uint64_t Rolling_Hash<k, canonical>::hash() const
         return h_f + h_r;
 
     return h_f;
-}
-
-
-template <uint16_t k, bool canonical>
-template <uint8_t N>
-inline uint64_t Rolling_Hash<k, canonical>::checksum() const
-{
-    return hash() >> (64 - N);
 }
 
 
