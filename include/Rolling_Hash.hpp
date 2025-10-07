@@ -105,7 +105,7 @@ template <uint16_t k, bool canonical>
 inline uint64_t Rolling_Hash<k, canonical>::hash() const
 {
     if constexpr(canonical)
-        return h_f ^ h_r;
+        return h_f + h_r;
 
     return h_f;
 }
