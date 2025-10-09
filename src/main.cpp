@@ -60,15 +60,17 @@ void test_rolling_hash(const std::string& file_path)
     ankerl::unordered_dense::map<Kmer<k>, uint64_t, Kmer_Hasher<k>> kmer_hash;
     ankerl::unordered_dense::set<uint64_t> H;
 
+    uint64_t kmer_c = 0;
     Parser input(file_path);
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
         auto const len = input.seq_len();
+        assert(len >= k);
 
         Directed_Vertex<k> v(seq);
         Rolling_Hash<k, canonical> rh(seq);
-        std::size_t i = 0;
+        std::size_t kmer_idx = 0;
         while(true)
         {
             const Kmer<k>& kmer = canonical ? v.canonical() : v.kmer();
@@ -78,20 +80,22 @@ void test_rolling_hash(const std::string& file_path)
                 C[rh.checksum()]++;
             else if(kmer_hash[kmer] != rh.hash())
             {
-                std::cerr << "Hash mismatch for k-mer " << kmer << " at index " << i << ". Previously computed hash: " << kmer_hash[kmer] << ", newly computed hash: " << rh.hash() << "\n";
+                std::cerr << "Hash mismatch for k-mer " << kmer << " at index " << kmer_idx << ". Previously computed hash: " << kmer_hash[kmer] << ", newly computed hash: " << rh.hash() << "\n";
                 std::exit(EXIT_FAILURE);
             }
 
-            if(i + k >= len)
+            kmer_c++;
+            if(kmer_idx + k >= len)
                 break;
 
-            v.roll_forward(DNA_Utility::map_base(seq[i + k]));
-            rh.advance(seq[i + k]);
-            i++;
+            v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+            rh.advance(seq[kmer_idx + k]);
+            kmer_idx++;
         }
     }
 
     std::cerr << "\n======== Hash stats ========\n";
+    std::cerr << "#Inserted-k-mers: " << kmer_c << "\n";
     std::cerr << "#Unique-k-mers: " << kmer_hash.size() << "\n";
     std::cerr << "#Unique-hashes: " << H.size() << "\n";
     std::cerr << "Hash uniqueness ratio: " << ((H.size() * 100.0) / kmer_hash.size()) << "%.\n";
@@ -249,11 +253,11 @@ int main(int argc, char* argv[])
 
     // benchmark_hash_set<k, l>(path, final_sz);
 
-    // test_rolling_hash<k, false>(path);
+    test_rolling_hash<k, true>(path);
     // test_rolling_hash<k, true>(path);
     // check_rolling_hash_reverse<k>(path);
-    bench_rolling_hash<k>(path);
-    bench_ntHash<k>(path);
+    // bench_rolling_hash<k>(path);
+    // bench_ntHash<k>(path);
 
     return 0;
 }

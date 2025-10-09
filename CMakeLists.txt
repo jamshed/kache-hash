@@ -105,6 +105,10 @@ if(UBSAN)
     list(APPEND LINK_FLAGS ${UBSAN_LINK_FLAGS} ${UBSAN_FLAGS})
 endif()
 
+if(QUIET)
+    add_compile_definitions(QUIET)
+endif()
+
 
 # Required preprocessor definitions.
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
