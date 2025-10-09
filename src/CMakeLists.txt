@@ -53,9 +53,11 @@ target_link_libraries(core PRIVATE pfm)
 
 target_link_libraries(bench PRIVATE core)
 target_link_libraries(bench PRIVATE benchmark)
+target_link_libraries(bench PRIVATE nthash)
 
 target_link_libraries(main PRIVATE core)
 target_link_libraries(main PRIVATE benchmark)
+target_link_libraries(main PRIVATE nthash)
 
 
 # Installation path.
