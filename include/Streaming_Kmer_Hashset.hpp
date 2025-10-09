@@ -7,6 +7,7 @@
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
+#include "Rolling_Hash.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Hash_Table.hpp"
 #include "utility.hpp"
@@ -17,9 +18,9 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <bit>
 #include <cstring>
 #include <iostream>
-#include <algorithm>
 #include <cassert>
 
 
@@ -32,11 +33,16 @@ private:
     static constexpr double lf_default = 0.8;   // Default load factor: 80%.
     static constexpr std::size_t B = 32;    // Bucket size.
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
+    static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
     Kmer<k>* K; // Flat table of key-collection of size `cap x B`.
-    uint8_t* S; // Size of each bucket.
+
+    typedef uint8_t checksum_t;
+    checksum_t* C;  // Checksum table for the keys.
+
+    uint64_t sz;    // Size of the main table.
 
     static constexpr uint64_t skew_th = B;
     Hash_Set<Kmer<k>> overflow; // The overflow table.
@@ -48,15 +54,20 @@ private:
     ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
 
-    // Tries to insert the k-mer `key` into the bucket `b`, returning `true` iff
-    // `key` is absent at bucket `b` after this operation.
-    bool insert_at(Kmer<k> key, std::size_t b);
+    // Returns the size of the `b`'th bucket.
+    std::size_t bucket_size(std::size_t b) const;
 
-    // Returns `true` iff the k-mer `key` is present at the bucket `b`.
-    bool find(Kmer<k> key, std::size_t b) const;
+    // Returns `true` iff the k-mer `key` with checksum `c` is present at the
+    // `i`'th bucket.
+    bool find(Kmer<k> key, checksum_t c, std::size_t i) const;
 
-    // Returns `true` iff the k-mer `key` is present at the bucket `b`.
-    bool find_512(Kmer<k> key, std::size_t b) const;
+    // Directly inserts the k-mer `key` with checksum `c` into the `i`'th
+    // bucket, at index `j` of the bucket.
+    void insert_at(const Kmer<k> key, const checksum_t c, const std::size_t i, const std::size_t j) { K[i * B + j] = key, C[i * B + j] = c, sz++; }
+
+    // Tries to insert the k-mer `key` with checksum `c` into the `i`'th bucket,
+    // returning `true` iff `key` is absent at the bucket after this operation.
+    bool try_insert_at(Kmer<k> key, checksum_t c, std::size_t i);
 
 public:
 
@@ -75,7 +86,7 @@ public:
     auto capacity() const { return cap_ * B; }
 
     // Returns the size of the table.
-    auto size() const { uint64_t sz = 0; std::for_each(S, S + cap_, [&](auto s){ sz += s; }); return sz + overflow.size(); }
+    auto size() const { return sz + overflow_size(); }
 
     // Returns the size of the overflow table.
     auto overflow_size() const { return overflow.size(); }
@@ -106,7 +117,8 @@ template <uint16_t k, uint16_t l>
 inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t max_sz, const double lf):
       cap_(ceil_pow_2((max_sz / lf) / B))
     , K(allocate<Kmer<k>>(cap_ * B))
-    , S(allocate<uint8_t>(cap_))
+    , C(allocate<checksum_t>(cap_ * B))
+    , sz(0)
 {
     clear();
 }
@@ -115,7 +127,7 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t ma
 template <uint16_t k, uint16_t l>
 inline Streaming_Kmer_Hashset<k, l>::~Streaming_Kmer_Hashset()
 {
-    deallocate(K), deallocate(S);
+    deallocate(K), deallocate(C);
 }
 
 
@@ -124,12 +136,54 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
 {
     sum_len = 0, sup_kmer_c = 0;
 
-    std::memset(S, 0, cap_);
+    std::memset(C, 0, cap_ * B);    // Checksum `0` denotes absence of a key.
+    sz = 0;
 
     // skew_mins.clear();
     overflow.clear();
 
     min_to_kmer.clear();
+}
+
+
+template <uint16_t k, uint16_t l>
+inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
+{
+    assert(i < cap_);
+
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
+    const auto query = _mm256_set1_epi8(static_cast<char>(c));
+    auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
+
+    while(cmp)
+    {
+        const auto j = __builtin_ctz(cmp);
+        if(K[i * B + j] == key)
+            return true;
+
+        cmp &= (cmp - 1);
+    }
+
+    return false;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
+{
+    if(find(key, c, i))
+        return true;
+
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
+    const auto zero = _mm256_setzero_si256();
+    const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
+
+    const auto j = std::countr_zero(cmp);
+    if(j == 32)
+        return false;
+
+    insert_at(key, c, i, j);
+    return true;
 }
 
 
@@ -145,6 +199,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
     std::size_t kmer_idx = 0;
 
     Min_Iterator<k, l> min_it;
+    Rolling_Hash<k> rh(s);
     min_it.reset(s);
     uint64_t last_min = 0;  // Undercounting the first super k-mer from `s` with probability 1 / 2^64.
     while(true)
@@ -161,19 +216,32 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
         }
 
         const auto b = h & idx_mask;
-        if(!insert_at(key, b))
+        const auto c = std::max(rh.template checksum<sizeof(checksum_t) * 8>(), uint64_t(1));   // Avoiding checksum 0 by overloading checksum 1.
+        if(!try_insert_at(key, c, b))
         {
+            // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
             const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
             const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
             const auto p = h_1 & idx_mask;
             const auto q = h_2 & idx_mask;
-            if(!find(key, p) && !find(key, q))
+            if(!find(key, c, p) && !find(key, c, q))
             {
-                if(S[p] < S[q])
-                    K[p * B + S[p]++] = key;
-                else if(S[q] < B)
-                    K[q * B + S[q]++] = key;
+                const auto zero = _mm256_setzero_si256();
+
+                const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (p * B)));
+                const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (q * B)));
+
+                const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
+                const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
+
+                const auto sz_p = B - std::popcount(cmp_p);
+                const auto sz_q = B - std::popcount(cmp_q);
+
+                if(sz_p < sz_q)
+                    insert_at(key, c, p, std::countr_zero(cmp_p));
+                else if(sz_q < B)
+                    insert_at(key, c, q, std::countr_zero(cmp_q));
                 else
                     overflow.insert(key);
             }
@@ -182,65 +250,21 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
         if(kmer_idx + k == len)
             break;
 
-        min_it.advance(s[kmer_idx + k]);
         v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+        min_it.advance(s[kmer_idx + k]);
+        rh.advance(s[kmer_idx + k]);
         kmer_idx++;
     }
 }
 
 
 template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const std::size_t b) const
+inline std::size_t Streaming_Kmer_Hashset<k, l>::bucket_size(const std::size_t b) const
 {
-/*
-    assert(b < cap_);   assert(S[b] <= B);
-
-    for(std::size_t j = 0; j < S[b]; ++j)
-        if(K[b * B + j] == key)
-            return true;
-
-    return false;
-*/
-
-    return find_512(key, b);
-}
-
-
-template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::find_512(const Kmer<k> key, const std::size_t b) const
-{
-    assert(b < cap_);   assert(S[b] <= B);
-
-    const auto query = _mm512_set1_epi64(key.as_int());
-
-    std::size_t j = 0;
-    for(; j < S[b] && j + 8 <= B; j += 8)
-    {
-        const auto v = _mm512_load_si512(static_cast<const void*>(K + (b * B + j)));
-        const auto cmp = _mm512_cmpeq_epi64_mask(v, query);
-        if(cmp)
-        {
-            const auto off = __builtin_ctz(static_cast<uint8_t>(cmp));
-            return off < S[b];
-        }
-    }
-
-    return false;
-}
-
-
-template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::insert_at(const Kmer<k> key, const std::size_t b)
-{
-    if(find(key, b))
-        return true;
-
-    if(S[b] == B)
-        return false;
-
-    K[b * B + S[b]] = key;
-    S[b]++;
-    return true;
+    const auto zero  = _mm256_setzero_si256();
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (b * B)));
+    const auto cmp   = _mm256_cmpeq_epi8_mask(c_vec, zero);
+    return B - std::popcount(cmp);
 }
 
 
@@ -339,8 +363,7 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
     std::cerr   << "========================================\n";
 
 
-    uint64_t sz = 0;
-    std::for_each(S, S + cap_, [&](auto s){ sz += s; });
+    uint64_t sz = size();
 
     uint64_t skew_min = 0;
     uint64_t skew_kmer = 0;
@@ -363,7 +386,7 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
 
     uint64_t full = 0, empty = 0;
     for(std::size_t b = 0; b < cap_; ++b)
-        full += (S[b] == B), empty += (S[b] == 0);
+        full += (bucket_size(b) == B), empty += (bucket_size(b) == 0);
 
     std::cerr   << "#Blocks:       " << cap_ << ".\n";
     std::cerr   << "#Full-blocks:  " << full << "(" << (full * 100.0 / cap_) << "%).\n";
