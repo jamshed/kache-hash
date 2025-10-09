@@ -117,7 +117,7 @@ template <uint16_t k, uint16_t l>
 inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t max_sz, const double lf):
       cap_(ceil_pow_2((max_sz / lf) / B))
     , K(allocate<Kmer<k>>(cap_ * B))
-    , C(allocate<checksum_t>(cap_ * B))
+    , C(aligned_allocate<checksum_t>(cap_ * B, 32))
     , sz(0)
 {
     clear();
