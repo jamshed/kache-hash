@@ -140,7 +140,7 @@ ExternalProject_Add(prj_benchmark
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
     CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -E chdir "build" cmake -DBENCHMARK_DOWNLOAD_DEPENDENCIES=on -DBENCHMARK_ENABLE_LIBPFM=ON -DCMAKE_BUILD_TYPE=Release ../
+                        cmake -D BENCHMARK_DOWNLOAD_DEPENDENCIES=on -D CMAKE_BUILD_TYPE=Release -D BENCHMARK_ENABLE_LIBPFM=ON -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -S . -B "build"
     BUILD_COMMAND       cmake --build "build" --config Release
     INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
                         cp -rf include/benchmark ${EXT_INCLUDE}

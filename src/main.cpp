@@ -16,20 +16,16 @@
 #include <cstdlib>
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 {
-    Streaming_Kmer_Hashset<k> S(final_sz);
+    Streaming_Kmer_Hashset<k, l> S(final_sz);
 
     constexpr uint64_t log_step = 32768;
     uint64_t n = 0, checkpoint = log_step;
     std::cerr << "\n";
 
     S.clear();
-
-    // std::vector<std::string> P; P.push_back(file_path);
-    // S.preprocess_skew_mins(P);
-    // S.preprocess_skew_mins_random(P);
 
     Parser input(file_path);
     while(input.read_next_seq())
