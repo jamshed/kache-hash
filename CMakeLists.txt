@@ -184,6 +184,27 @@ if(NOT JEMALLOC_FOUND)
 endif()
 
 
+set(NTHASH_LIB "")
+set(NTHASH_MIN_VERSION "v2.3.0")
+message("Build system will fetch and install ntHash for benchmarking.")
+ExternalProject_Add(prj_nthash
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    git clone git@github.com:bcgsc/ntHash.git
+
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/ntHash
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   meson setup --buildtype=release --prefix=${CMAKE_SOURCE_DIR}/external/ build
+    BUILD_COMMAND       meson install -C build
+    INSTALL_COMMAND     ""
+)
+
+set(NTHASH_LIB ${EXT_LIB}/libnthash.a)
+add_library(nthash STATIC IMPORTED)
+set_target_properties(nthash PROPERTIES IMPORTED_LOCATION ${NTHASH_LIB})
+add_dependencies(nthash prj_nthash)
+
+
 # Build type.
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build Type" FORCE)
