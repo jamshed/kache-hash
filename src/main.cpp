@@ -5,6 +5,7 @@
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
 
+#include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 
 #include <cstddef>
@@ -171,6 +172,71 @@ void check_rolling_hash_reverse(const std::string& file_path)
 }
 
 
+template <uint16_t k>
+void bench_rolling_hash(const std::string& file_path)
+{
+    Parser input(file_path);
+    uint64_t h = 0;
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        assert(len >= k);
+        Rolling_Hash<k, true> rh(seq);
+
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            h ^= rh.hash();
+
+            if(kmer_idx + k == len)
+                break;
+
+            rh.advance(seq[kmer_idx + k]);
+            kmer_idx++;
+        }
+    }
+
+    std::cout << "Input k-mer collection signature: " << h << "\n";
+
+    input.close();
+}
+
+
+template <uint16_t k>
+void bench_ntHash(const std::string& file_path)
+{
+    Parser input(file_path);
+    uint64_t h = 0;
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        // auto const len = input.seq_len();
+        // assert(len >= k);
+        // Rolling_Hash<k, true> rh(seq);
+        nthash::NtHash nth(seq, 1, k);
+
+        // std::size_t kmer_idx = 0;
+        while(nth.roll())
+        {
+            h ^= *nth.hashes();
+
+            // if(kmer_idx + k == len)
+            //     break;
+
+            // rh.advance(seq[kmer_idx + k]);
+            // kmer_idx++;
+        }
+    }
+
+    std::cout << "Input k-mer collection signature: " << h << "\n";
+
+    input.close();
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -184,8 +250,10 @@ int main(int argc, char* argv[])
     // benchmark_hash_set<k, l>(path, final_sz);
 
     // test_rolling_hash<k, false>(path);
-    test_rolling_hash<k, true>(path);
+    // test_rolling_hash<k, true>(path);
     // check_rolling_hash_reverse<k>(path);
+    bench_rolling_hash<k>(path);
+    bench_ntHash<k>(path);
 
     return 0;
 }
