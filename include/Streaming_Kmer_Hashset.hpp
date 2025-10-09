@@ -42,6 +42,8 @@ private:
     typedef uint8_t checksum_t;
     checksum_t* C;  // Checksum table for the keys.
 
+    uint8_t* S; // Size of the buckets.
+
     uint64_t sz;    // Size of the main table.
 
     static constexpr uint64_t skew_th = B;
@@ -118,6 +120,7 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t ma
       cap_(ceil_pow_2((max_sz / lf) / B))
     , K(allocate<Kmer<k>>(cap_ * B))
     , C(aligned_allocate<checksum_t>(cap_ * B, 32))
+    , S(allocate<uint8_t>(cap_))
     , sz(0)
 {
     clear();
@@ -127,7 +130,7 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t ma
 template <uint16_t k, uint16_t l>
 inline Streaming_Kmer_Hashset<k, l>::~Streaming_Kmer_Hashset()
 {
-    deallocate(K), deallocate(C);
+    deallocate(K), deallocate(C), deallocate(S);
 }
 
 
@@ -138,6 +141,8 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
 
     std::memset(C, 0, cap_ * B);    // Checksum `0` denotes absence of a key.
     sz = 0;
+
+    std::memset(S, 0, cap_);
 
     // skew_mins.clear();
     overflow.clear();
@@ -174,6 +179,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const
     if(find(key, c, i))
         return true;
 
+/*
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
     const auto zero = _mm256_setzero_si256();
     const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
@@ -184,6 +190,14 @@ inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const
 
     insert_at(key, c, i, j);
     return true;
+*/
+    if(S[i] < B)
+    {
+        insert_at(key, c, i, S[i]++);
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -227,6 +241,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
             const auto q = h_2 & idx_mask;
             if(!find(key, c, p) && !find(key, c, q))
             {
+/*
                 const auto zero = _mm256_setzero_si256();
 
                 const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (p * B)));
@@ -242,6 +257,13 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
                     insert_at(key, c, p, std::countr_zero(cmp_p));
                 else if(sz_q < B)
                     insert_at(key, c, q, std::countr_zero(cmp_q));
+                else
+                    overflow.insert(key);
+*/
+                if(S[p] < S[q])
+                    insert_at(key, c, p, S[p]++);
+                else if(S[q] < B)
+                    insert_at(key, c, q, S[q]++);
                 else
                     overflow.insert(key);
             }
