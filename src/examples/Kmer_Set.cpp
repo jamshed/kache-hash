@@ -9,6 +9,8 @@
 #include "Streaming_Hashset.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
 #include "globals.hpp"
+
+#include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
 
@@ -101,7 +103,7 @@ void BM_rolling_hash(benchmark::State& state)
             auto const seq = input.seq();
             auto const len = input.seq_len();
             assert(len >= k);
-            Rolling_Hash<k> rh(seq);
+            Rolling_Hash<k, true> rh(seq);
 
             std::size_t kmer_idx = 0;
             while(true)
@@ -114,6 +116,30 @@ void BM_rolling_hash(benchmark::State& state)
                 rh.advance(seq[kmer_idx + k]);
                 kmer_idx++;
             }
+        }
+
+        // std::cout << "Input k-mer set signature: " << h << "\n";
+
+        input.close();
+    }
+}
+
+
+void BM_ntHash(benchmark::State& state)
+{
+    for(auto _ : state)
+    {
+        Parser input(file_path);
+        uint64_t h = 0;
+
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            assert(input.seq_len() >= k);
+            nthash::NtHash nth(seq, 1, k);
+
+            while(nth.roll())
+                benchmark::DoNotOptimize(h ^= *nth.hashes());
         }
 
         // std::cout << "Input k-mer set signature: " << h << "\n";
