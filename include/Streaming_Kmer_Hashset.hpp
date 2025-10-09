@@ -199,7 +199,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
     std::size_t kmer_idx = 0;
 
     Min_Iterator<k, l> min_it;
-    Rolling_Hash<k> rh(s);
+    Rolling_Hash<k, true> rh(s);
     min_it.reset(s);
     uint64_t last_min = 0;  // Undercounting the first super k-mer from `s` with probability 1 / 2^64.
     while(true)
