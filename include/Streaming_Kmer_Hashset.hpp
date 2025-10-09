@@ -384,13 +384,14 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
     std::cerr   << "========================================\n";
 
 
-    uint64_t full = 0, empty = 0;
+    uint64_t full = 0, empty = 0, blk_occ = 0;
     for(std::size_t b = 0; b < cap_; ++b)
-        full += (bucket_size(b) == B), empty += (bucket_size(b) == 0);
+        full += (bucket_size(b) == B), empty += (bucket_size(b) == 0), blk_occ += bucket_size(b);
 
     std::cerr   << "#Blocks:       " << cap_ << ".\n";
     std::cerr   << "#Full-blocks:  " << full << "(" << (full * 100.0 / cap_) << "%).\n";
     std::cerr   << "#Empty-blocks: " << empty << "(" << (empty * 100.0 / cap_) << "%).\n";
+    std::cerr   << "Avg-occupancy: " << blk_occ / cap_ << ".\n";
     std::cerr   << "========================================\n";
 
 }
