@@ -35,7 +35,7 @@ template<bool track_stats_ = false> void BM_set_insert_streaming_bucketed(benchm
 // BENCHMARK(BM_kmer_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_ntHash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_rolling_hash)->MinWarmUpTime(1)->MinTime(5)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_set_insert_generic_3rd_party)->Unit(benchmark::kMillisecond);
+// BENCHMARK(BM_set_insert_generic_3rd_party)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_generic)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_batched)->Unit(benchmark::kMillisecond);
 // BENCHMARK(BM_set_insert_streaming)->Unit(benchmark::kMillisecond);
