@@ -21,6 +21,8 @@
 #include <bit>
 #include <cstring>
 #include <iostream>
+#include <fstream>
+#include <cstdlib>
 #include <cassert>
 
 
@@ -75,6 +77,9 @@ public:
     // with a maximum load-factor of `lf`.
     Streaming_Kmer_Hashset(std::size_t max_sz, double lf = lf_default);
 
+    // Deserializes a streaming k-mer hashset from the stream `is`.
+    Streaming_Kmer_Hashset(std::ifstream& is) { deserialize(is); };
+
     Streaming_Kmer_Hashset(const Streaming_Kmer_Hashset&) = delete;
     Streaming_Kmer_Hashset(Streaming_Kmer_Hashset&&) = delete;
     Streaming_Kmer_Hashset& operator=(const Streaming_Kmer_Hashset&) = delete;
@@ -98,15 +103,11 @@ public:
     // table.
     template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
 
-/*
-    // Preprocesses a prefix of sequences from the files at `file_path` to
-    // populate a collection of skew-minimizers.
-    void preprocess_skew_mins(const std::vector<std::string>& file_paths);
+    // Serializes the table to the stream `os`.
+    void serialize(std::ofstream& os) const;
 
-    // Preprocesses a random set of k-mers from the files at `file_path` to
-    // populate a collection of skew-minimizers. Proof-of-concept method.
-    void preprocess_skew_mins_random(const std::vector<std::string>& file_paths);
-*/
+    // Deserializes the table from the stream `is`.
+    void deserialize(std::ifstream& is);
 
     // Reports developer statistics about the table.
     void report_stats() const;
@@ -349,6 +350,50 @@ inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins_random(const std:
     std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
 }
 */
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::serialize(std::ofstream& os) const
+{
+    ::serialize(k, os), ::serialize(l, os), ::serialize(B, os);
+
+    ::serialize(cap_, os);
+    ::serialize(K, cap_ * B, os), ::serialize(C, cap_ * B, os);
+
+    ::serialize(sz, os);
+
+    overflow.serialize(os);
+
+    ::serialize(sum_len, os), ::serialize(sup_kmer_c, os);
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::deserialize(std::ifstream& is)
+{
+    uint16_t k_, l_;
+    std::size_t B_;
+    ::deserialize(k_, is), ::deserialize(l_, is), ::deserialize(B_, is);
+    if(k_ != k || l_ != l || B_ != B)
+    {
+        std::cerr << "Mismatching configuration of the hash table. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    ::deserialize(cap_, is);
+
+    if(K)
+        deallocate(K), deallocate(C);
+
+    K = allocate<Kmer<k>>(cap_ * B), C = aligned_allocate<checksum_t>(cap_ * B, 32);
+    ::deserialize(K, cap_ * B, is), ::deserialize(C, cap_ * B, is);
+
+    ::deserialize(sz, is);
+
+    overflow.deserialize(is);
+
+    ::deserialize(sum_len, is), ::deserialize(sup_kmer_c, is);
+}
 
 
 template <uint16_t k, uint16_t l>
