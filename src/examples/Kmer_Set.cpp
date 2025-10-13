@@ -19,8 +19,8 @@
 #include <cstdlib>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <cassert>
-#include <sys/types.h>
 
 
 void BM_file_read(benchmark::State& state)
@@ -352,8 +352,53 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
     }
 
     std::cout << "\nSet size: " << S.size() << "\n";
+    std::ofstream os(ht_path, std::ios::out | std::ios::binary);
+    S.serialize(os);
+    os.close();
+
     if constexpr(track_stats_)
         S.report_stats();
+}
+
+
+void BM_set_query_positive_streaming(benchmark::State& state)
+{
+    std::ifstream is(ht_path, std::ios::in | std::ios::binary);
+    Streaming_Kmer_Hashset<k> S(is);
+
+    std::cerr << "Set size: " << S.size() << "\n";
+
+    for(auto _ : state)
+    {
+        uint64_t c = 0, n = 0;
+#ifndef QUIET
+        constexpr uint64_t log_step = 32768;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+#endif
+
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+
+            c += S.find(seq, len);
+
+            n += len - k + 1;
+#ifndef QUIET
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rQueried " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
+#endif
+        }
+
+        std::cerr << "Positive query: " << c << ".\n";
+    }
+
+    is.close();
 }
 
 

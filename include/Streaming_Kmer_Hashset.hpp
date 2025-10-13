@@ -99,9 +99,13 @@ public:
     // Clears the table.
     void clear();
 
-    // Tries to insert all the k-mers from the `l`-length sequence `S` into the
-    // table.
+    // Tries to insert all the k-mers from the `len`-length sequence `s` into
+    // the table.
     template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
+
+    // Returns the number of k-mer instances from the `len`-length sequence `s`
+    // present in the set.
+    std::size_t find(const char* s, std::size_t len) const;
 
     // Serializes the table to the stream `os`.
     void serialize(std::ofstream& os) const;
@@ -267,6 +271,53 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
         rh.advance(s[kmer_idx + k]);
         kmer_idx++;
     }
+}
+
+
+template <uint16_t k, uint16_t l>
+inline std::size_t  Streaming_Kmer_Hashset<k, l>::find(const char* const s, const std::size_t len) const
+{
+    Directed_Vertex<k> v(s);
+    std::size_t kmer_idx = 0;
+    std::size_t pos_q = 0;
+
+    Min_Iterator<k, l> min_it;
+    Rolling_Hash<k, true> rh(s);
+    min_it.reset(s);
+    while(true)
+    {
+        const auto key = v.canonical();
+        const auto h = min_it.hash();
+        const auto idx_mask = cap_ - 1;
+
+        const auto b = h & idx_mask;
+        const auto c = std::max(rh.template checksum<sizeof(checksum_t) * 8>(), uint64_t(1));   // Avoiding checksum 0 by overloading checksum 1.
+        if(find(key, c, b))
+            pos_q++;
+        else
+        {
+            // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
+            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+
+            const auto p = h_1 & idx_mask;
+            const auto q = h_2 & idx_mask;
+            if(find(key, c, p) || find(key, c, q))
+                pos_q++;
+            else if(bucket_size(p) == B && bucket_size(q) == B)
+                pos_q += overflow.contains(key);
+        }
+
+        if(kmer_idx + k == len)
+            break;
+
+        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+        min_it.advance(s[kmer_idx + k]);
+        rh.advance(s[kmer_idx + k]);
+        kmer_idx++;
+    }
+
+    return pos_q;
 }
 
 
