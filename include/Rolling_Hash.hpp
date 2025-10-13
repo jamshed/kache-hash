@@ -20,7 +20,11 @@ private:
     uint8_t base[k];    // Circular queue of the nucleobases in the current k-mer.
     std::size_t off;    // Index of the front of the queue.
 
+#ifdef DEVELOP
+    static constexpr auto t = "12:34:56";
+#else
     static constexpr auto t = __TIME__;
+#endif
     static constexpr auto atoi = [](const char ch){ return static_cast<uint64_t>(ch - '0'); };
 
     static constexpr uint64_t a = 6364136223846793005llu;   // Multiplier in LCG: from Knuth's MMIX.

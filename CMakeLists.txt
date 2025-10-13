@@ -114,6 +114,7 @@ endif()
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
 add_compile_definitions(${XXHASH_DEFS})
 add_compile_definitions(CMAKE_EXPORT_COMPILE_COMMANDS)  # Better `clangd` scan.
+add_compile_definitions(DEVELOP)
 
 
 # Required packages / libraries from the system.
