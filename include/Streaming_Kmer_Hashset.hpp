@@ -78,7 +78,7 @@ public:
     Streaming_Kmer_Hashset(std::size_t max_sz, double lf = lf_default);
 
     // Deserializes a streaming k-mer hashset from the stream `is`.
-    Streaming_Kmer_Hashset(std::ifstream& is) { deserialize(is); };
+    Streaming_Kmer_Hashset(std::ifstream& is);
 
     Streaming_Kmer_Hashset(const Streaming_Kmer_Hashset&) = delete;
     Streaming_Kmer_Hashset(Streaming_Kmer_Hashset&&) = delete;
@@ -122,6 +122,17 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t ma
     , sz(0)
 {
     clear();
+}
+
+
+template <uint16_t k, uint16_t l>
+inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(std::ifstream& is):
+      cap_(0)
+    , K(nullptr)
+    , C(nullptr)
+    , sz(0)
+{
+    deserialize(is);
 }
 
 
