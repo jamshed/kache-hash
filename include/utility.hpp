@@ -24,7 +24,8 @@ inline T_* allocate(const std::size_t size)
 template <typename T_>
 inline T_* aligned_allocate(const std::size_t size, const std::size_t alignment = 8)
 {
-    return static_cast<T_*>(std::aligned_alloc(alignment, size * sizeof(T_)));
+    const auto bytes = ((size * sizeof(T_) + alignment - 1) / alignment) * alignment;
+    return static_cast<T_*>(std::aligned_alloc(alignment, bytes));
 }
 
 
