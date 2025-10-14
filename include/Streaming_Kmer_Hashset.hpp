@@ -164,8 +164,8 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::bucket_size(const std::size_t b
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (b * B)));
     const auto cmp   = _mm256_cmpeq_epi8_mask(c_vec, zero);
 
-    assert(std::popcount(cmp) == std::countl_one(cmp)); // This must hold if no deletion is performed at the table.
-    return std::popcount(cmp);
+    assert(std::countr_zero(cmp) + std::countl_one(cmp) == 32);
+    return std::countr_zero(cmp);   // This must hold if no deletion is performed at the table.
 }
 
 
@@ -176,7 +176,7 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::size() const
     for(std::size_t b = 0; b < cap_; ++b)
         sz += bucket_size(b);
 
-    return sz;
+    return sz + overflow.size();
 }
 
 
@@ -269,9 +269,9 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
                 const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
                 const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
 
-                const auto sz_p = static_cast<std::size_t>(std::popcount(cmp_p));
-                const auto sz_q = static_cast<std::size_t>(std::popcount(cmp_q));
-                assert(sz_p == std::countl_one(cmp_p)), assert(sz_q == std::countl_one(cmp_q));
+                const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
+                const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
+                assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == 32), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == 32);
 
                 if(sz_p < sz_q)
                     place_at(key, c, p, std::countr_zero(cmp_p));
