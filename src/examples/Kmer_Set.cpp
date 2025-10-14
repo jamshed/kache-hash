@@ -13,6 +13,7 @@
 #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "benchmark/benchmark.h"
+#include "parlay/parallel.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -326,10 +327,6 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
         S.clear();
 
-        // std::vector<std::string> P; P.push_back(file_path);
-        // S.preprocess_skew_mins(P);
-        // S.preprocess_skew_mins_random(P);
-
         Parser input(file_path);
         while(input.read_next_seq())
         {
@@ -351,7 +348,8 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
         input.close();
     }
 
-    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "\nSet size: " << S.size<false>() << "\n";
+    std::cout << "Overflow-set size: " << S.overflow_size<false>() << "\n";
     std::ofstream os(ht_path, std::ios::out | std::ios::binary);
     S.serialize(os);
     os.close();
@@ -361,12 +359,61 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 }
 
 
+void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
+{
+    Streaming_Kmer_Hashset<k> S(final_sz);
+
+    for(auto _ : state)
+    {
+        std::atomic_uint64_t n = 0;
+#ifndef QUIET
+        constexpr uint64_t log_step = 32768;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+#endif
+
+        S.clear();
+
+        Parser input(file_path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+
+            const auto kmer_per_w = len / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+            {
+                const auto sz = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                S.insert_mt(seq + p_id * kmer_per_w, sz);
+                n += sz - k + 1;
+            }
+            , 1);
+
+#ifndef QUIET
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rInserted " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
+#endif
+        }
+
+        input.close();
+    }
+
+    std::cout << "\nSet size: " << S.size<true>() << "\n";
+    std::ofstream os(ht_path, std::ios::out | std::ios::binary);
+    S.serialize(os);
+    os.close();
+}
+
+
 void BM_set_query_positive_streaming(benchmark::State& state)
 {
     std::ifstream is(ht_path, std::ios::in | std::ios::binary);
     Streaming_Kmer_Hashset<k> S(is);
 
-    std::cerr << "Set size: " << S.size() << "\n";
+    std::cerr << "Set size: " << S.size<false>() << "\n";
 
     for(auto _ : state)
     {

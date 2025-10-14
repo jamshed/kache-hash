@@ -21,6 +21,8 @@ void BM_set_insert_streaming(benchmark::State&);
 template<bool track_stats_ = false> void BM_set_insert_streaming_blocked(benchmark::State&);
 
 template<bool track_stats_ = false> void BM_set_insert_streaming_bucketed(benchmark::State&);
+void BM_set_insert_streaming_bucketed_mt(benchmark::State&);
+
 void BM_set_query_positive_streaming(benchmark::State&);
 
 // BENCHMARK(BM_file_read)->Unit(benchmark::kMillisecond);
@@ -45,6 +47,8 @@ BENCHMARK(BM_set_insert_streaming_bucketed<false>)->Unit(benchmark::kMillisecond
 // BENCHMARK(BM_set_insert_streaming_bucketed<true>)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_set_query_positive_streaming)->Unit(benchmark::kMillisecond);
+
+BENCHMARK(BM_set_insert_streaming_bucketed_mt)->Unit(benchmark::kMillisecond);
 
 
 BENCHMARK_MAIN();
