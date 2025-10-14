@@ -145,7 +145,9 @@ ExternalProject_Add(prj_benchmark
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
     CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -D BENCHMARK_DOWNLOAD_DEPENDENCIES=on -D CMAKE_BUILD_TYPE=Release -D BENCHMARK_ENABLE_LIBPFM=ON -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -S . -B "build"
+                        cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+                        -D BENCHMARK_DOWNLOAD_DEPENDENCIES=on -D CMAKE_BUILD_TYPE=Release -D BENCHMARK_ENABLE_LIBPFM=ON
+                        -S . -B "build"
     BUILD_COMMAND       cmake --build "build" --config Release
     INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
                         cp -rf include/benchmark ${EXT_INCLUDE}
@@ -187,6 +189,47 @@ set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${MALLOC_LIB})
 if(NOT JEMALLOC_FOUND)
     add_dependencies(jemalloc prj_jemalloc)
 endif()
+
+
+# Prepare the `boost` library. It provides a scalable concurrent hashmap.
+set(BOOST_MIN_VERSION "1.89.0")
+find_package(Boost ${BOOST_MIN_VERSION} CONFIG)
+if(BOOST_FOUND)
+    message("Found boost (v${BOOST_VERSION}) in the system at ${BOOST_LIBRARIES}")
+else()
+    message("Build system will fetch and install required Boost libraries")
+    ExternalProject_Add(prj_boost
+        DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+        DOWNLOAD_COMMAND    curl -k -L https://github.com/boostorg/boost/releases/download/boost-${BOOST_MIN_VERSION}/boost-${BOOST_MIN_VERSION}-cmake.tar.gz -o boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
+                            tar -xzf boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
+                            rm boost-${BOOST_MIN_VERSION}-cmake.tar.gz
+
+        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}
+        BUILD_IN_SOURCE     TRUE
+        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+        CONFIGURE_COMMAND   mkdir -p build && cd build &&
+                            cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+                            -D BOOST_INCLUDE_LIBRARIES=unordered
+                            -D CMAKE_BUILD_TYPE=Release
+                            -D CMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}/build/ ..
+        BUILD_COMMAND       cd build && cmake --build . --target install --config Release
+        INSTALL_COMMAND     cp -rf build/include/boost ${EXT_INCLUDE}/
+    )
+endif()
+
+
+# Prepare the `parlay` library—a parallel algorithms programming toolkit.
+message("Build system will fetch and install parlaylib")
+ExternalProject_Add(prj_parlaylib
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    git clone https://github.com/cmuparlay/parlaylib.git
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/parlaylib
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   ""
+    BUILD_COMMAND       ""
+    INSTALL_COMMAND     cp -rf include/parlay ${EXT_INCLUDE}
+)
 
 
 set(NTHASH_LIB "")

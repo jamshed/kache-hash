@@ -21,7 +21,13 @@ add_executable(main main.cpp)
 
 
 # Dependencies
+add_dependencies(core prj_parlaylib)
+
 add_dependencies(core prj_benchmark)
+
+if(NOT BOOST_FOUND)
+    add_dependencies(core prj_boost)
+endif()
 
 
 # Configs for targets.
