@@ -61,7 +61,11 @@ private:
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
-    // Returns `true` iff the k-mer `key` with checksum `c` is present at the
+    // Returns `true` iff the k-mer `key` with checksum `c` is present in the
+    // `i`'th bucket, whose checksum-vector is `c_vec`.
+    bool find(Kmer<k> key, checksum_t c, std::size_t i, __m256i c_vec) const;
+
+    // Returns `true` iff the k-mer `key` with checksum `c` is present in the
     // `i`'th bucket.
     bool find(Kmer<k> key, checksum_t c, std::size_t i) const;
 
@@ -197,11 +201,10 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::size() const
 
 
 template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
+inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const checksum_t c, const std::size_t i, const __m256i c_vec) const
 {
     assert(i < cap_);
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
     auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
 
@@ -215,6 +218,14 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t 
     }
 
     return false;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const checksum_t c, const std::size_t i) const
+{
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
+    return find(key, c, i, c_vec);
 }
 
 
@@ -235,10 +246,11 @@ template <uint16_t k, uint16_t l>
 template <bool mt_>
 inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
 {
-    if(find(key, c, i))
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
+
+    if(find(key, c, i, c_vec))
         return true;
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (i * B)));
     const auto zero = _mm256_setzero_si256();
     const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
 
