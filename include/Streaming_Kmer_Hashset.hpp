@@ -49,6 +49,8 @@ private:
     {
         uint8_t cs[B];  // Checksums of the k-mers.
         uint8_t min_coord[B];   // Minimizer coordinates within the k-mers.
+
+        static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `min_coord[0]` used to lock the bucket.
     };
 
     Metadata* M;    // Metadata table of the buckets.
@@ -66,6 +68,12 @@ private:
 
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
+
+    // Locks the `b`'th bucket for exclusive-write access.
+    void lock(std::size_t b);
+
+    // Unlocks the `b`'th bucket from exclusive-write access.
+    void unlock(std::size_t b);
 
     // Returns `true` iff the k-mer `key` with checksum `c` is present in the
     // `i`'th bucket, whose checksum-vector is `c_vec`.
@@ -194,6 +202,26 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::bucket_size(const std::size_t b
 
 
 template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::lock(const std::size_t b)
+{
+    while(true)
+    {
+        const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
+        if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+            break;
+    }
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::unlock(const std::size_t b)
+{
+    assert(M[b].min_coord[0] & Metadata::lock_mask);
+    M[b].min_coord[0] &= ~Metadata::lock_mask;
+}
+
+
+template <uint16_t k, uint16_t l>
 template <bool mt_>
 inline std::size_t Streaming_Kmer_Hashset<k, l>::size() const
 {
@@ -251,32 +279,28 @@ template <uint16_t k, uint16_t l>
 template <bool mt_>
 inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
 {
+    if constexpr(mt_)   lock(i);
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
 
     if(find(key, c, i, c_vec))
+    {
+        if constexpr(mt_)   unlock(i);
         return true;
+    }
 
     const auto zero = _mm256_setzero_si256();
     const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
 
     const auto j = std::countr_zero(cmp);
     if(j == B)
+    {
+        if constexpr(mt_)   unlock(i);
         return false;
+    }
 
-    if constexpr(!mt_)
-    {
-        place_at(key, c, i, j);
-        return true;
-    }
-    else
-    {
-        // NB: this is guaranteed to be correct only if delete operations are absent:
-        // concurrent insertions into a bucket contend for the *same* slot.
-        if(try_place_at(key, c, i, j))
-            return true;
-        else
-            return try_insert_at<mt_>(key, c, i);   // Restart if some other thread already claimed the designated slot.
-    }
+    place_at(key, c, i, j);
+    if constexpr(mt_)   unlock(i);
+    return true;
 }
 
 
@@ -379,18 +403,24 @@ inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const char* const s, const s
             const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
             const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-            const auto p = h_1 & idx_mask;
-            const auto q = h_2 & idx_mask;
+            const auto s_1 = h_1 & idx_mask;
+            const auto s_2 = h_2 & idx_mask;
+            const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
+            assert(p != q);
+
+            lock(p), lock(q);
             while(true)
-            {
                 if(find(key, c, p) || find(key, c, q))
+                {
+                    unlock(q), unlock(p);
                     break;
+                }
                 else
                 {
                     const auto zero = _mm256_setzero_si256();
 
-                    const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (p * B)));
-                    const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(C + (q * B)));
+                    const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
+                    const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
 
                     const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
                     const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
@@ -401,20 +431,22 @@ inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const char* const s, const s
 
                     if(sz_p < sz_q)
                     {
-                        if(try_place_at(key, c, p, sz_p))
-                            break;
+                        place_at(key, c, p, sz_p);
+                        unlock(q), unlock(p);
+                        break;
                     }
                     else if(sz_q < B)
                     {
-                        if(try_place_at(key, c, q, sz_q))
-                            break;
+                        place_at(key, c, q, sz_q);
+                        unlock(q), unlock(p);
+                        break;
                     }
                     else
                     {
+                        unlock(q), unlock(p);
                         overflow_mt.insert(key);
                         break;
                     }
-                }
             }
         }
 

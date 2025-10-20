@@ -116,6 +116,14 @@ add_compile_definitions(${XXHASH_DEFS})
 add_compile_definitions(CMAKE_EXPORT_COMPILE_COMMANDS)  # Better `clangd` scan.
 add_compile_definitions(DEVELOP)
 
+execute_process(
+    COMMAND getconf LEVEL1_DCACHE_LINESIZE
+    COMMAND tr -d '\n'
+    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+)
+
+add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
+
 
 # Required packages / libraries from the system.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
