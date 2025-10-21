@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <bit>
+#include <fstream>
 
 
 // Hasher for objects of type `T_`.
@@ -29,7 +30,7 @@ class Hash_Set
 private:
 
     static constexpr double lf_default = 0.8;   // Default maximum load factor.
-    const double lf;    // Maximum load factor.
+    double lf;  // Maximum load factor.
 
     std::size_t cap;    // Capacity of the set.
     std::size_t resize_th;  // Threshold capacity of when to resize the table.
@@ -87,6 +88,12 @@ public:
 
     // Returns `true` iff the set contains `key`.
     bool contains(T_key_ key) const;
+
+    // Serializes the hash set to the stream `os`.
+    void serialize(std::ofstream& os) const;
+
+    // Deserializes the hash set from the stream `is`.
+    void deserialize(std::ifstream& is);
 };
 
 
@@ -231,6 +238,34 @@ inline bool Hash_Set<T_key_, T_hash_>::contains(const T_key_ key) const
             return true;
 
     return false;
+}
+
+
+template <typename T_key_, typename T_hash_>
+inline void Hash_Set<T_key_, T_hash_>::serialize(std::ofstream& os) const
+{
+    ::serialize(lf, os);
+    ::serialize(cap, os);
+    ::serialize(resize_th, os);
+
+    ::serialize(K, cap, os);
+    ::serialize(sz, os);
+}
+
+
+template <typename T_key_, typename T_hash_>
+inline void Hash_Set<T_key_, T_hash_>::deserialize(std::ifstream& is)
+{
+    ::deserialize(lf, is);
+    ::deserialize(cap, is);
+    ::deserialize(resize_th, is);
+
+    if(K)
+        deallocate(K);
+
+    K = allocate<T_key_>(cap);
+    ::deserialize(K, cap, is);
+    ::deserialize(sz, is);
 }
 
 

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
+#include <fstream>
 #include <cassert>
 
 
@@ -23,7 +24,8 @@ inline T_* allocate(const std::size_t size)
 template <typename T_>
 inline T_* aligned_allocate(const std::size_t size, const std::size_t alignment = 8)
 {
-    return static_cast<T_*>(std::aligned_alloc(alignment, size * sizeof(T_)));
+    const auto bytes = ((size * sizeof(T_) + alignment - 1) / alignment) * alignment;
+    return static_cast<T_*>(std::aligned_alloc(alignment, bytes));
 }
 
 
@@ -40,6 +42,38 @@ template <typename T_>
 inline void deallocate(T_* const ptr)
 {
     std::free(ptr);
+}
+
+
+// Serializes `x` to the stream `os`.
+template <typename T_>
+inline void serialize(const T_ x, std::ofstream& os)
+{
+    os.write(reinterpret_cast<const char*>(&x), sizeof(x));
+}
+
+
+// Serializes the array `A` of size `n` to the stream `os`.
+template <typename T_>
+inline void serialize(const T_* const A, const std::size_t n, std::ofstream& os)
+{
+    os.write(reinterpret_cast<const char*>(A), n * sizeof(T_));
+}
+
+
+// Deserializes `x` from the stream `is`.
+template <typename T_>
+inline void deserialize(T_& x, std::ifstream& is)
+{
+    is.read(reinterpret_cast<char*>(&x), sizeof(x));
+}
+
+
+// Deserializes the array `A` of size `n` from the stream `is`.
+template <typename T_>
+inline void deserialize(T_* const A, std::size_t n, std::ifstream& is)
+{
+    is.read(reinterpret_cast<char*>(A), n * sizeof(T_));
 }
 
 

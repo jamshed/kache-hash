@@ -4,10 +4,13 @@
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
+#include "globals.hpp"
 
 #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
+#include "parlay/parallel.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,6 +18,7 @@
 #include <iostream>
 #include <cmath>
 #include <cstdlib>
+#include <iostream>
 
 
 template <uint16_t k, uint16_t l>
@@ -60,15 +64,17 @@ void test_rolling_hash(const std::string& file_path)
     ankerl::unordered_dense::map<Kmer<k>, uint64_t, Kmer_Hasher<k>> kmer_hash;
     ankerl::unordered_dense::set<uint64_t> H;
 
+    uint64_t kmer_c = 0;
     Parser input(file_path);
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
         auto const len = input.seq_len();
+        assert(len >= k);
 
         Directed_Vertex<k> v(seq);
         Rolling_Hash<k, canonical> rh(seq);
-        std::size_t i = 0;
+        std::size_t kmer_idx = 0;
         while(true)
         {
             const Kmer<k>& kmer = canonical ? v.canonical() : v.kmer();
@@ -78,20 +84,22 @@ void test_rolling_hash(const std::string& file_path)
                 C[rh.checksum()]++;
             else if(kmer_hash[kmer] != rh.hash())
             {
-                std::cerr << "Hash mismatch for k-mer " << kmer << " at index " << i << ". Previously computed hash: " << kmer_hash[kmer] << ", newly computed hash: " << rh.hash() << "\n";
+                std::cerr << "Hash mismatch for k-mer " << kmer << " at index " << kmer_idx << ". Previously computed hash: " << kmer_hash[kmer] << ", newly computed hash: " << rh.hash() << "\n";
                 std::exit(EXIT_FAILURE);
             }
 
-            if(i + k >= len)
+            kmer_c++;
+            if(kmer_idx + k >= len)
                 break;
 
-            v.roll_forward(DNA_Utility::map_base(seq[i + k]));
-            rh.advance(seq[i + k]);
-            i++;
+            v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+            rh.advance(seq[kmer_idx + k]);
+            kmer_idx++;
         }
     }
 
     std::cerr << "\n======== Hash stats ========\n";
+    std::cerr << "#Inserted-k-mers: " << kmer_c << "\n";
     std::cerr << "#Unique-k-mers: " << kmer_hash.size() << "\n";
     std::cerr << "#Unique-hashes: " << H.size() << "\n";
     std::cerr << "Hash uniqueness ratio: " << ((H.size() * 100.0) / kmer_hash.size()) << "%.\n";
@@ -237,23 +245,71 @@ void bench_ntHash(const std::string& file_path)
 }
 
 
+template <uint16_t k, uint16_t l>
+void test_mt_insert()
+{
+    Streaming_Kmer_Hashset<k, l> S(final_sz);
+
+    std::atomic_uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    S.clear();
+
+    Parser input(file_path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = len / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto sz = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            S.insert_mt(seq + p_id * kmer_per_w, sz);
+            n += sz - k + 1;
+        }
+        , 1);
+
+        // n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+
+    std::cout << "\nSet size: " << S.template size<true>() << "\n";
+    std::cout << "Overflow-set size: " << S.template overflow_size<true>() << "\n";
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
 
     constexpr uint16_t k = 31, l = 19;
-    (void)k, (void)l;
+    // (void)k, (void)l;
 
-    std::string path(argv[1]);
+    // std::string path(argv[1]);
     // uint64_t final_sz(std::atoll(argv[2]));
 
     // benchmark_hash_set<k, l>(path, final_sz);
 
-    // test_rolling_hash<k, false>(path);
+    // test_rolling_hash<k, true>(path);
     // test_rolling_hash<k, true>(path);
     // check_rolling_hash_reverse<k>(path);
-    bench_rolling_hash<k>(path);
-    bench_ntHash<k>(path);
+    // bench_rolling_hash<k>(path);
+    // bench_ntHash<k>(path);
+
+    test_mt_insert<k, l>();
 
     return 0;
 }
