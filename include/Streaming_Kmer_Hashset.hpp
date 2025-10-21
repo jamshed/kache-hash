@@ -87,11 +87,6 @@ private:
     // bucket at index `j`.
     void place_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const std::size_t j) { K[i * B + j] = key, M[i].cs[j] = c; }
 
-    // Tries to place the k-mer `key` with checksum `c` into the `i`'th bucket
-    // at index `j`, returning `true` iff the insertion succeeds, i.e. the place
-    // was empty.
-    bool try_place_at(Kmer<k> key, uint8_t c, std::size_t i, std::size_t j);
-
     // Tries to insert the k-mer `key` with checksum `c` into the `i`'th bucket,
     // returning `true` iff `key` is present at the bucket after this operation.
     // `mt_` denotes whether multiple threads can access the table concurrently.
@@ -259,19 +254,6 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t 
 {
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     return find(key, c, i, c_vec);
-}
-
-
-template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::try_place_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const std::size_t j)
-{
-    if(__sync_bool_compare_and_swap(&M[i].cs[j], 0, c))
-    {
-        K[i * B + j] = key;
-        return true;
-    }
-
-    return false;
 }
 
 
@@ -506,89 +488,6 @@ inline std::size_t  Streaming_Kmer_Hashset<k, l>::find(const char* const s, cons
 
     return pos_q;
 }
-
-
-/*
-template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins(const std::vector<std::string>& file_paths)
-{
-    std::size_t scanned_kmer = 0;
-    constexpr std::size_t scan_th = 1'000'000;
-
-    Min_Iterator<k, l> min_it;
-    Hash_Map<uint64_t, uint64_t> min_freq;
-
-    for(const auto& path : file_paths)
-    {
-        Parser input(path);
-        while(scanned_kmer < scan_th && input.read_next_seq())
-        {
-            auto const seq = input.seq();
-            auto const len = input.seq_len();
-            if(len < k)
-                continue;
-
-            min_it.reset(seq);
-            std::size_t kmer_idx = 0;
-            while(scanned_kmer < scan_th)
-            {
-                min_freq[min_it.hash()]++;
-
-                if(kmer_idx + k == len)
-                    break;
-
-                min_it.advance(seq[kmer_idx + k]);
-                kmer_idx++;
-                scanned_kmer++;
-            }
-        }
-    }
-
-
-    for(auto [min, f] : min_freq)
-        if(f > skew_th)
-            skew_mins.insert(min);
-
-    std::cerr << "#skew-minimizers: " << skew_mins.size() << "\n";
-    std::cerr << "Minimizer-counting map size: " << min_freq.size() << "\n";
-    std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
-}
-
-
-template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::preprocess_skew_mins_random(const std::vector<std::string>& file_paths)
-{
-    constexpr std::size_t scan_th = 1'000'000;
-
-    std::string s;
-    for(const auto& path : file_paths)
-    {
-        Parser input(path);
-        while(input.read_next_seq())
-            s += input.seq();
-    }
-
-    Min_Iterator<k, l> min_it;
-    Hash_Map<uint64_t, uint64_t> min_freq;
-
-    std::mt19937 r(std::chrono::system_clock::now().time_since_epoch().count());
-    for(std::size_t i = 0; i < scan_th; ++i)
-    {
-        const auto idx = r() % (s.length() - k);
-        min_it.reset(s.c_str() + idx);
-        min_freq[min_it.hash()]++;
-    }
-
-
-    for(auto [min, f] : min_freq)
-        if(f > skew_th)
-            skew_mins.insert(min);
-
-    std::cerr << "#skew-minimizers: " << skew_mins.size() << "\n";
-    std::cerr << "Minimizer-counting map size: " << min_freq.size() << "\n";
-    std::cerr << "Minimizer-counting map cap:  " << min_freq.capacity() << "\n";
-}
-*/
 
 
 template <uint16_t k, uint16_t l>
