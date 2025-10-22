@@ -314,7 +314,7 @@ void BM_set_insert_streaming_blocked(benchmark::State& state)
 template <bool track_stats_>
 void BM_set_insert_streaming_bucketed(benchmark::State& state)
 {
-    Streaming_Kmer_Hashset<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k> S(final_sz);
 
     for(auto _ : state)
     {
@@ -372,7 +372,7 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
 void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 {
-    Streaming_Kmer_Hashset<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k> S(final_sz);
 
     for(auto _ : state)
     {
@@ -435,7 +435,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 void BM_set_query_positive_streaming(benchmark::State& state)
 {
     std::ifstream is(ht_path, std::ios::in | std::ios::binary);
-    Streaming_Kmer_Hashset<k> S(is);
+    Streaming_Kmer_Hash_Table<k> S(is);
 
     std::cerr << "Set size: " << S.size<false>() << "\n";
 

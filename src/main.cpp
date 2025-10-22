@@ -24,7 +24,7 @@
 template <uint16_t k, uint16_t l>
 void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 {
-    Streaming_Kmer_Hashset<k, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, l> S(final_sz);
 
     constexpr uint64_t log_step = 32768;
     uint64_t n = 0, checkpoint = log_step;
@@ -248,9 +248,9 @@ void bench_ntHash(const std::string& file_path)
 template <uint16_t k, uint16_t l>
 void test_mt_insert()
 {
-    Streaming_Kmer_Hashset<k, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, l> S(final_sz);
 
-    std::atomic_uint64_t n = 0;
+    std::size_t n = 0;
 #ifndef QUIET
     constexpr uint64_t log_step = 32768;
     uint64_t checkpoint = log_step;

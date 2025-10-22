@@ -34,7 +34,7 @@ template <uint16_t k, uint16_t l> class Kmer_Window;
 // NB: concurrent insertions are guaranteed to function correctly only if
 // deletions are not performed.
 template <uint16_t k, uint16_t l = 19>
-class Streaming_Kmer_Hashset
+class Streaming_Kmer_Hash_Table
 {
 private:
 
@@ -99,17 +99,17 @@ public:
 
     // Constructs a streaming k-mer hashset to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
-    Streaming_Kmer_Hashset(std::size_t max_sz, double lf = lf_default);
+    Streaming_Kmer_Hash_Table(std::size_t max_sz, double lf = lf_default);
 
     // Deserializes a streaming k-mer hashset from the stream `is`.
-    Streaming_Kmer_Hashset(std::ifstream& is);
+    Streaming_Kmer_Hash_Table(std::ifstream& is);
 
-    Streaming_Kmer_Hashset(const Streaming_Kmer_Hashset&) = delete;
-    Streaming_Kmer_Hashset(Streaming_Kmer_Hashset&&) = delete;
-    Streaming_Kmer_Hashset& operator=(const Streaming_Kmer_Hashset&) = delete;
-    Streaming_Kmer_Hashset& operator=(Streaming_Kmer_Hashset&&) = delete;
+    Streaming_Kmer_Hash_Table(const Streaming_Kmer_Hash_Table&) = delete;
+    Streaming_Kmer_Hash_Table(Streaming_Kmer_Hash_Table&&) = delete;
+    Streaming_Kmer_Hash_Table& operator=(const Streaming_Kmer_Hash_Table&) = delete;
+    Streaming_Kmer_Hash_Table& operator=(Streaming_Kmer_Hash_Table&&) = delete;
 
-    ~Streaming_Kmer_Hashset();
+    ~Streaming_Kmer_Hash_Table();
 
     // Returns the capacity (in terms of keys) of the table.
     auto capacity() const { return cap_ * B; }
@@ -151,7 +151,7 @@ public:
 template <uint16_t k, uint16_t l = 19>
 class Kmer_Window
 {
-    friend class Streaming_Kmer_Hashset<k, l>;
+    friend class Streaming_Kmer_Hash_Table<k, l>;
 
     Directed_Vertex<k> v;
     Rolling_Hash<k, true> rh;
@@ -180,7 +180,7 @@ public:
 
 
 template <uint16_t k, uint16_t l>
-inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t max_sz, const double lf):
+inline Streaming_Kmer_Hash_Table<k, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
       cap_(ceil_pow_2((max_sz / lf) / B))
     , K(aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
@@ -190,7 +190,7 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(const std::size_t ma
 
 
 template <uint16_t k, uint16_t l>
-inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(std::ifstream& is):
+inline Streaming_Kmer_Hash_Table<k, l>::Streaming_Kmer_Hash_Table(std::ifstream& is):
       cap_(0)
     , K(nullptr)
     , M(nullptr)
@@ -200,14 +200,14 @@ inline Streaming_Kmer_Hashset<k, l>::Streaming_Kmer_Hashset(std::ifstream& is):
 
 
 template <uint16_t k, uint16_t l>
-inline Streaming_Kmer_Hashset<k, l>::~Streaming_Kmer_Hashset()
+inline Streaming_Kmer_Hash_Table<k, l>::~Streaming_Kmer_Hash_Table()
 {
     deallocate(K), deallocate(M);
 }
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::clear()
+inline void Streaming_Kmer_Hash_Table<k, l>::clear()
 {
     sum_len = 0, sup_kmer_c = 0;
 
@@ -220,7 +220,7 @@ inline void Streaming_Kmer_Hashset<k, l>::clear()
 
 
 template <uint16_t k, uint16_t l>
-inline std::size_t Streaming_Kmer_Hashset<k, l>::bucket_size(const std::size_t b) const
+inline std::size_t Streaming_Kmer_Hash_Table<k, l>::bucket_size(const std::size_t b) const
 {
     const auto zero  = _mm256_setzero_si256();
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[b].cs));
@@ -232,7 +232,7 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::bucket_size(const std::size_t b
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::lock(const std::size_t b)
+inline void Streaming_Kmer_Hash_Table<k, l>::lock(const std::size_t b)
 {
     while(true)
     {
@@ -244,7 +244,7 @@ inline void Streaming_Kmer_Hashset<k, l>::lock(const std::size_t b)
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::unlock(const std::size_t b)
+inline void Streaming_Kmer_Hash_Table<k, l>::unlock(const std::size_t b)
 {
     assert(M[b].min_coord[0] & Metadata::lock_mask);
     M[b].min_coord[0] &= ~Metadata::lock_mask;
@@ -253,7 +253,7 @@ inline void Streaming_Kmer_Hashset<k, l>::unlock(const std::size_t b)
 
 template <uint16_t k, uint16_t l>
 template <bool mt_>
-inline std::size_t Streaming_Kmer_Hashset<k, l>::size() const
+inline std::size_t Streaming_Kmer_Hash_Table<k, l>::size() const
 {
     std::size_t sz = 0;
     for(std::size_t b = 0; b < cap_; ++b)
@@ -264,7 +264,7 @@ inline std::size_t Streaming_Kmer_Hashset<k, l>::size() const
 
 
 template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i, const __m256i c_vec) const
+inline bool Streaming_Kmer_Hash_Table<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i, const __m256i c_vec) const
 {
     assert(i < cap_);
 
@@ -285,7 +285,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t 
 
 
 template <uint16_t k, uint16_t l>
-inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
+inline bool Streaming_Kmer_Hash_Table<k, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
 {
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     return find(key, c, i, c_vec);
@@ -294,7 +294,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const uint8_t 
 
 template <uint16_t k, uint16_t l>
 template <bool mt_>
-inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
+inline bool Streaming_Kmer_Hash_Table<k, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
 {
     if constexpr(mt_)   lock(i);
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
@@ -323,7 +323,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const
 
 template <uint16_t k, uint16_t l>
 template <bool track_stats_>
-inline void Streaming_Kmer_Hashset<k, l>::insert(const Kmer_Window<k, l>& w)
+inline void Streaming_Kmer_Hash_Table<k, l>::insert(const Kmer_Window<k, l>& w)
 {
     const auto key = w.v.canonical();
     const auto h = w.min_it.hash();
@@ -368,7 +368,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const Kmer_Window<k, l>& w)
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const Kmer_Window<k, l>& w)
+inline void Streaming_Kmer_Hash_Table<k, l>::insert_mt(const Kmer_Window<k, l>& w)
 {
     const auto key = w.v.canonical();
     const auto h = w.min_it.hash();
@@ -425,7 +425,7 @@ inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const Kmer_Window<k, l>& w)
 
 
 template <uint16_t k, uint16_t l>
-inline std::size_t  Streaming_Kmer_Hashset<k, l>::find(const char* const s, const std::size_t len) const
+inline std::size_t  Streaming_Kmer_Hash_Table<k, l>::find(const char* const s, const std::size_t len) const
 {
     Directed_Vertex<k> v(s);
     std::size_t kmer_idx = 0;
@@ -472,7 +472,7 @@ inline std::size_t  Streaming_Kmer_Hashset<k, l>::find(const char* const s, cons
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::serialize(std::ofstream& os) const
+inline void Streaming_Kmer_Hash_Table<k, l>::serialize(std::ofstream& os) const
 {
     ::serialize(k, os), ::serialize(l, os), ::serialize(B, os);
 
@@ -486,7 +486,7 @@ inline void Streaming_Kmer_Hashset<k, l>::serialize(std::ofstream& os) const
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::deserialize(std::ifstream& is)
+inline void Streaming_Kmer_Hash_Table<k, l>::deserialize(std::ifstream& is)
 {
     uint16_t k_, l_;
     std::size_t B_;
@@ -512,7 +512,7 @@ inline void Streaming_Kmer_Hashset<k, l>::deserialize(std::ifstream& is)
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
+inline void Streaming_Kmer_Hash_Table<k, l>::report_stats() const
 {
     std::cerr   << "Table height: " << cap_ << ".\n";
     std::cerr   << "Table width:  " << B << ".\n";
