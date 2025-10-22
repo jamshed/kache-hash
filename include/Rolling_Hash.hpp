@@ -50,9 +50,17 @@ private:
 
 public:
 
+    // Constructs an empty rolling tabulation hasher. This must be initialized
+    // before use.
+    Rolling_Hash() {}
+
     // Constructs a rolling tabulation hasher for `k`-mers initialized at the
     // beginning of the sequence `seq`.
-    Rolling_Hash(const char* seq);
+    Rolling_Hash(const char* seq) { init(seq); }
+
+    // Initializes the hasher for `k`-mers initialized at the beginning of the
+    // sequence `seq`.
+    void init(const char* seq);
 
     // Advances the hasher in its underlying sequence by the nucleobase `ch` to
     // the right.
@@ -73,7 +81,7 @@ public:
 
 
 template <uint16_t k, bool canonical>
-inline Rolling_Hash<k, canonical>::Rolling_Hash(const char* const seq)
+inline void Rolling_Hash<k, canonical>::init(const char* const seq)
 {
     h_f = h_r = 0;
     off = 0;

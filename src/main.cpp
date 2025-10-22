@@ -265,16 +265,28 @@ void test_mt_insert()
         auto const seq = input.seq();
         auto const len = input.seq_len();
 
-        const auto kmer_per_w = len / parlay::num_workers();
-        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
         {
-            const auto sz = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
-            S.insert_mt(seq + p_id * kmer_per_w, sz);
-            n += sz - k + 1;
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            Kmer_Window<k> w;
+
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                S.insert_mt(w);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
         }
         , 1);
 
-        // n += len - k + 1;
+        n += len - k + 1;
 #ifndef QUIET
         if(n >= checkpoint)
         {

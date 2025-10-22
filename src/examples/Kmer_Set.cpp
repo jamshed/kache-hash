@@ -328,12 +328,23 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
         S.clear();
 
         Parser input(file_path);
+        Kmer_Window<k> w;
         while(input.read_next_seq())
         {
             auto const seq = input.seq();
             auto const len = input.seq_len();
 
-            S.template insert<track_stats_>(seq, len);
+            w.init(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                S.template insert<track_stats_>(w);
+                if(kmer_idx + k == len)
+                    break;
+
+                w.advance(seq[kmer_idx + k]);
+                kmer_idx++;
+            }
 
             n += len - k + 1;
 #ifndef QUIET
@@ -365,7 +376,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 
     for(auto _ : state)
     {
-        std::atomic_uint64_t n = 0;
+        std::size_t n = 0;
 #ifndef QUIET
         constexpr uint64_t log_step = 32768;
         uint64_t checkpoint = log_step;
@@ -383,12 +394,25 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
             const auto kmer_per_w = len / parlay::num_workers();
             parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
             {
-                const auto sz = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
-                S.insert_mt(seq + p_id * kmer_per_w, sz);
-                n += sz - k + 1;
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                Kmer_Window<k> w;
+
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    S.insert_mt(w);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
             }
             , 1);
 
+            n += len - k + 1;
 #ifndef QUIET
             if(n >= checkpoint)
             {

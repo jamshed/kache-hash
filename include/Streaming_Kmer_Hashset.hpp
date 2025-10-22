@@ -15,8 +15,6 @@
 #include "unordered_dense/unordered_dense.h"
 #include "boost/unordered/concurrent_flat_set.hpp"
 
-#include <immintrin.h>
-
 #include <cstdint>
 #include <cstddef>
 #include <bit>
@@ -25,6 +23,11 @@
 #include <fstream>
 #include <cstdlib>
 #include <cassert>
+
+#include <immintrin.h>
+
+
+template <uint16_t k, uint16_t l> class Kmer_Window;
 
 
 // Hashset particularly suited for streaming k-mer operations.
@@ -121,13 +124,12 @@ public:
     // Clears the table.
     void clear();
 
-    // Tries to insert all the k-mers from the `len`-length sequence `s` into
-    // the table.
-    template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
+    // Inserts the k-mer defined by the window `w` into the table.
+    template <bool track_stats_ = false> void insert(const Kmer_Window<k, l>& w);
 
-    // Tries to insert all the k-mers from the `len`-length sequence `s` into
-    // the table in a concurrent manner.
-    void insert_mt(const char* s, std::size_t len);
+    // Inserts the k-mer defined by the window `w` into the table in concurrent
+    // setting.
+    void insert_mt(const Kmer_Window<k, l>& w);
 
     // Returns the number of k-mer instances from the `len`-length sequence `s`
     // present in the set.
@@ -141,6 +143,39 @@ public:
 
     // Reports developer statistics about the table.
     void report_stats() const;
+};
+
+
+// A window definining a k-mer with its associated metadata: its hash and
+// minimizer.
+template <uint16_t k, uint16_t l = 19>
+class Kmer_Window
+{
+    friend class Streaming_Kmer_Hashset<k, l>;
+
+    Directed_Vertex<k> v;
+    Rolling_Hash<k, true> rh;
+    Min_Iterator<k, l> min_it;
+
+public:
+
+    // Initializes the k-mer window at the beginning of the sequence `s`.
+    void init(const char* const s)
+    {
+        v = Directed_Vertex<k>(Kmer<k>(s));
+        rh.init(s);
+        min_it.reset(s);
+    }
+
+    // Advances the window by one k-mer, by the character `ch`.
+    void advance(const char ch)
+    {
+        assert(!DNA_Utility::is_placeholder(ch));
+
+        v.roll_forward(DNA_Utility::map_base(ch));
+        min_it.advance(ch);
+        rh.advance(ch);
+    }
 };
 
 
@@ -288,157 +323,103 @@ inline bool Streaming_Kmer_Hashset<k, l>::try_insert_at(const Kmer<k> key, const
 
 template <uint16_t k, uint16_t l>
 template <bool track_stats_>
-inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std::size_t len)
+inline void Streaming_Kmer_Hashset<k, l>::insert(const Kmer_Window<k, l>& w)
 {
-    sum_len += len;
-    if(len < k)
-        return;
+    const auto key = w.v.canonical();
+    const auto h = w.min_it.hash();
+    const auto idx_mask = cap_ - 1;
 
-    Directed_Vertex<k> v(s);
-    std::size_t kmer_idx = 0;
+    if constexpr(track_stats_)
+        min_to_kmer[h].insert(key);
 
-    Min_Iterator<k, l> min_it;
-    Rolling_Hash<k, true> rh(s);
-    min_it.reset(s);
-    uint64_t last_min = 0;  // Undercounting the first super k-mer from `s` with probability 1 / 2^64.
-    while(true)
+    const auto b = h & idx_mask;
+    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
+    if(!try_insert_at<false>(key, c, b))
     {
-        const auto key = v.canonical();
-        const auto h = min_it.hash();
-        const auto idx_mask = cap_ - 1;
+        // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
+        const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+        const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-        if constexpr(track_stats_)
+        const auto p = h_1 & idx_mask;
+        const auto q = h_2 & idx_mask;
+        if(!find(key, c, p) && !find(key, c, q))
         {
-            sup_kmer_c += (last_min != h);
-            last_min = h;
-            min_to_kmer[h].insert(key);
+            const auto zero = _mm256_setzero_si256();
+
+            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
+            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
+
+            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
+            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
+
+            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
+            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
+            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
+
+            if(sz_p < sz_q)
+                place_at(key, c, p, sz_p);
+            else if(sz_q < B)
+                place_at(key, c, q, sz_q);
+            else
+                overflow.insert(key);
         }
-
-        const auto b = h & idx_mask;
-        const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-        if(!try_insert_at<false>(key, c, b))
-        {
-            // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
-            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
-
-            const auto p = h_1 & idx_mask;
-            const auto q = h_2 & idx_mask;
-            if(!find(key, c, p) && !find(key, c, q))
-            {
-                const auto zero = _mm256_setzero_si256();
-
-                const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
-                const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
-
-                const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
-                const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
-
-                const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
-                const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
-                assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
-
-                if(sz_p < sz_q)
-                    place_at(key, c, p, sz_p);
-                else if(sz_q < B)
-                    place_at(key, c, q, sz_q);
-                else
-                    overflow.insert(key);
-            }
-        }
-
-        if(kmer_idx + k == len)
-            break;
-
-        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
-        min_it.advance(s[kmer_idx + k]);
-        rh.advance(s[kmer_idx + k]);
-        kmer_idx++;
     }
 }
 
 
 template <uint16_t k, uint16_t l>
-inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const char* const s, const std::size_t len)
+inline void Streaming_Kmer_Hashset<k, l>::insert_mt(const Kmer_Window<k, l>& w)
 {
-    // sum_len += len;
-    if(len < k)
-        return;
+    const auto key = w.v.canonical();
+    const auto h = w.min_it.hash();
+    const auto idx_mask = cap_ - 1;
 
-    Directed_Vertex<k> v(s);
-    std::size_t kmer_idx = 0;
-
-    Min_Iterator<k, l> min_it;
-    Rolling_Hash<k, true> rh(s);
-    min_it.reset(s);
-    while(true)
+    const auto b = h & idx_mask;
+    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
+    if(!try_insert_at<true>(key, c, b))
     {
-        const auto key = v.canonical();
-        const auto h = min_it.hash();
-        const auto idx_mask = cap_ - 1;
+        // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
+        const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+        const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-        const auto b = h & idx_mask;
-        const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-        if(!try_insert_at<true>(key, c, b))
+        const auto s_1 = h_1 & idx_mask;
+        const auto s_2 = h_2 & idx_mask;
+        const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
+        assert(p != q);
+
+        lock(p), lock(q);
+        if(find(key, c, p) || find(key, c, q))
+            unlock(q), unlock(p);
+        else
         {
-            // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
-            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+            const auto zero = _mm256_setzero_si256();
 
-            const auto s_1 = h_1 & idx_mask;
-            const auto s_2 = h_2 & idx_mask;
-            const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
-            assert(p != q);
+            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
+            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
 
-            lock(p), lock(q);
-            while(true)
-                if(find(key, c, p) || find(key, c, q))
-                {
-                    unlock(q), unlock(p);
-                    break;
-                }
-                else
-                {
-                    const auto zero = _mm256_setzero_si256();
+            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
+            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
 
-                    const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
-                    const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
+            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
+            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
+            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
 
-                    const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
-                    const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
-
-                    const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
-                    const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
-                    assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
-
-                    if(sz_p < sz_q)
-                    {
-                        place_at(key, c, p, sz_p);
-                        unlock(q), unlock(p);
-                        break;
-                    }
-                    else if(sz_q < B)
-                    {
-                        place_at(key, c, q, sz_q);
-                        unlock(q), unlock(p);
-                        break;
-                    }
-                    else
-                    {
-                        unlock(q), unlock(p);
-                        overflow_mt.insert(key);
-                        break;
-                    }
+            if(sz_p < sz_q)
+            {
+                place_at(key, c, p, sz_p);
+                unlock(q), unlock(p);
+            }
+            else if(sz_q < B)
+            {
+                place_at(key, c, q, sz_q);
+                unlock(q), unlock(p);
+            }
+            else
+            {
+                unlock(q), unlock(p);
+                overflow_mt.insert(key);
             }
         }
-
-        if(kmer_idx + k == len)
-            break;
-
-        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
-        min_it.advance(s[kmer_idx + k]);
-        rh.advance(s[kmer_idx + k]);
-        kmer_idx++;
     }
 }
 
