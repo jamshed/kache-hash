@@ -87,10 +87,6 @@ private:
     void unlock(std::size_t b);
 
     // Returns `true` iff the k-mer `key` with checksum `c` is present in the
-    // `i`'th bucket, whose checksum-vector is `c_vec`.
-    bool find(Kmer<k> key, uint8_t c, std::size_t i, __m256i c_vec) const;
-
-    // Returns `true` iff the k-mer `key` with checksum `c` is present in the
     // `i`'th bucket.
     bool find(Kmer<k> key, uint8_t c, std::size_t i) const;
 
@@ -272,10 +268,11 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, T_, l>::size() const
 
 
 template <uint16_t k, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i, const __m256i c_vec) const
+inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
 {
     assert(i < cap_);
 
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
     auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
 
@@ -293,26 +290,18 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const u
 
 
 template <uint16_t k, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
-{
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
-    return find(key, c, i, c_vec);
-}
-
-
-template <uint16_t k, typename T_, uint16_t l>
 template <bool mt_>
 inline bool Streaming_Kmer_Hash_Table<k, T_, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
 {
     if constexpr(mt_)   lock(i);
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
 
-    if(find(key, c, i, c_vec))
+    if(find(key, c, i))
     {
         if constexpr(mt_)   unlock(i);
         return true;
     }
 
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto zero = _mm256_setzero_si256();
     const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
 
