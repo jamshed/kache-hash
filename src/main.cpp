@@ -4,13 +4,13 @@
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
+#include "utility.hpp"
 #include "globals.hpp"
 
 #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "parlay/parallel.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -303,6 +303,71 @@ void test_mt_insert()
 }
 
 
+template <uint16_t k, uint16_t l>
+void test_hash_map()
+{
+    Streaming_Kmer_Hash_Table<k, uint64_t, l> M(final_sz);
+
+    std::size_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    M.clear();
+
+    std::vector<Padded<uint64_t>> count(parlay::num_workers(), 0);
+
+    Parser input(file_path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            std::size_t c = 0;
+            Kmer_Window<k> w;
+
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                const auto r = M.find(w);
+                c += (r != std::nullopt);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+
+            count[parlay::worker_id()].unwrap() += c;
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rQueried " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+
+    std::cout << "\nSet size: " << M.template size<true>() << "\n";
+    std::cout << "Overflow-set size: " << M.template overflow_size<true>() << "\n";
+    std::cout << "Positive query: " << [&](){ uint64_t s = 0; std::for_each(count.cbegin(), count.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -321,7 +386,8 @@ int main(int argc, char* argv[])
     // bench_rolling_hash<k>(path);
     // bench_ntHash<k>(path);
 
-    test_mt_insert<k, l>();
+    // test_mt_insert<k, l>();
+    test_hash_map<k, l>();
 
     return 0;
 }
