@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <bit>
+#include <optional>
 #include <utility>
 #include <type_traits>
 #include <cstring>
@@ -46,8 +47,10 @@ private:
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
     static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
 
-    static constexpr bool is_map_ = !std::is_void_v<T_>;
-    typedef std::conditional_t<!is_map_, Kmer<k>, std::pair<Kmer<k>, T_>> flat_type;
+    static constexpr bool is_map_ = !std::is_void_v<T_>;    // Whether a hash-map or a -set.
+    typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_type; // Underlying data type in the flat table.
+    typedef std::conditional_t<is_map_, std::optional<T_>, bool> find_ret_t;    // Return type for find methods.
+    static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt; else return false; }();   // Marker for absent keys (also values).
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
@@ -77,6 +80,9 @@ private:
     ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
 
+    // Returns `true` iff `key` matches to the key in `x`.
+    static constexpr bool key_equals(const flat_type& x, const Kmer<k>& key) { if constexpr(is_map_) return x.first == key; else return x == key; }
+
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
@@ -88,7 +94,7 @@ private:
 
     // Returns `true` iff the k-mer `key` with checksum `c` is present in the
     // `i`'th bucket.
-    bool find(Kmer<k> key, uint8_t c, std::size_t i) const;
+    find_ret_t find(Kmer<k> key, uint8_t c, std::size_t i) const;
 
     // Directly places the k-mer `key` with checksum `c` into the `i`'th
     // bucket at index `j`.
@@ -137,7 +143,7 @@ public:
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
-    bool find(const Kmer_Window<k, l>& w) const;
+    find_ret_t find(const Kmer_Window<k, l>& w) const;
 
     // Serializes the table to the stream `os`.
     void serialize(std::ofstream& os) const;
@@ -268,7 +274,7 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, T_, l>::size() const
 
 
 template <uint16_t k, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const
+inline auto Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const -> find_ret_t
 {
     assert(i < cap_);
 
@@ -279,13 +285,16 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const u
     while(cmp)
     {
         const auto j = std::countr_zero(cmp);
-        if(T[i * B + j] == key)
-            return true;
+        if(key_equals(T[i * B + j], key))
+        {
+            if constexpr(is_map_)   return T[i * B + j].second;
+            else                    return true;
+        }
 
         cmp &= (cmp - 1);
     }
 
-    return false;
+    return null_val;
 }
 
 
@@ -422,7 +431,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert_mt(const Kmer_Window<k, 
 
 
 template <uint16_t k, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w) const
+inline auto Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w) const -> find_ret_t
 {
     const auto key = w.v.canonical();
     const auto h = w.min_it.hash();
@@ -430,8 +439,8 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w
 
     const auto b = h & idx_mask;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-    if(find(key, c, b))
-        return true;
+    if(const auto r = find(key, c, b))
+        return r;
 
     // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
     const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -439,13 +448,13 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w
 
     const auto p = h_1 & idx_mask;
     const auto q = h_2 & idx_mask;
-    if(find(key, c, p) || find(key, c, q))
-        return true;
+    if(const auto r_p = find(key, c, p))    return r_p;
+    if(const auto r_q = find(key, c, q))    return r_q;
 
     if(bucket_size(p) == B && bucket_size(q) == B)
-        return overflow.contains(key);
+        return overflow.find(key);
 
-    return false;
+    return null_val;
 }
 
 
