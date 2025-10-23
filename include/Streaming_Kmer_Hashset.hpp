@@ -14,10 +14,13 @@
 
 #include "unordered_dense/unordered_dense.h"
 #include "boost/unordered/concurrent_flat_set.hpp"
+#include "boost/unordered/concurrent_flat_map.hpp"
 
 #include <cstdint>
 #include <cstddef>
 #include <bit>
+#include <utility>
+#include <type_traits>
 #include <cstring>
 #include <iostream>
 #include <fstream>
@@ -30,7 +33,7 @@
 template <uint16_t k, uint16_t l> class Kmer_Window;
 
 
-// Hashset particularly suited for streaming k-mer operations.
+// Hash table particularly suited for streaming k-mer operations.
 // NB: concurrent insertions are guaranteed to function correctly only if
 // deletions are not performed.
 template <uint16_t k, typename T_ = void, uint16_t l = 19>
@@ -43,9 +46,12 @@ private:
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
     static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
 
+    static constexpr bool is_map_ = !std::is_void_v<T_>;
+    typedef std::conditional_t<!is_map_, Kmer<k>, std::pair<Kmer<k>, T_>> flat_type;
+
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
-    Kmer<k>* K; // Flat table of key-collection of size `cap x B`.
+    flat_type* T;   // Flat table of size `cap x B`.
 
     // Metadata of the k-mers in a bucket.
     struct Metadata
@@ -59,11 +65,13 @@ private:
     Metadata* M;    // Metadata table of the buckets.
 
     static constexpr uint64_t skew_th = B;
-    Hash_Set<Kmer<k>> overflow; // The overflow table.
-    boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> overflow_mt;  // The overflow table in multithreaded setting.
+    std::conditional_t<is_map_, Hash_Map<Kmer<k>, T_>, Hash_Set<Kmer<k>>> overflow; // The overflow table.
+    std::conditional_t<is_map_,
+        boost::unordered::concurrent_flat_map<Kmer<k>, T_, Hash<Kmer<k>>>,
+        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt;  // The overflow table in concurrent setting.
 
     uint64_t sum_len;   // Total sequence length provided.
-    uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
+    uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
 
     // Following are for used for developer stats.
     ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
@@ -88,7 +96,7 @@ private:
 
     // Directly places the k-mer `key` with checksum `c` into the `i`'th
     // bucket at index `j`.
-    void place_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const std::size_t j) { K[i * B + j] = key, M[i].cs[j] = c; }
+    void place_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = key, M[i].cs[j] = c; }
 
     // Tries to insert the k-mer `key` with checksum `c` into the `i`'th bucket,
     // returning `true` iff `key` is present at the bucket after this operation.
@@ -97,11 +105,11 @@ private:
 
 public:
 
-    // Constructs a streaming k-mer hashset to support up-to `max_sz` k-mers,
+    // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
     Streaming_Kmer_Hash_Table(std::size_t max_sz, double lf = lf_default);
 
-    // Deserializes a streaming k-mer hashset from the stream `is`.
+    // Deserializes a streaming k-mer hash table from the stream `is`.
     Streaming_Kmer_Hash_Table(std::ifstream& is);
 
     Streaming_Kmer_Hash_Table(const Streaming_Kmer_Hash_Table&) = delete;
@@ -132,7 +140,7 @@ public:
     void insert_mt(const Kmer_Window<k, l>& w);
 
     // Returns the number of k-mer instances from the `len`-length sequence `s`
-    // present in the set.
+    // present in the table.
     std::size_t find(const char* s, std::size_t len) const;
 
     // Serializes the table to the stream `os`.
@@ -182,7 +190,7 @@ public:
 template <uint16_t k, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
       cap_(ceil_pow_2((max_sz / lf) / B))
-    , K(aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE))
+    , T(aligned_allocate<flat_type>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
 {
     clear();
@@ -192,7 +200,7 @@ inline Streaming_Kmer_Hash_Table<k, T_, l>::Streaming_Kmer_Hash_Table(const std:
 template <uint16_t k, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, T_, l>::Streaming_Kmer_Hash_Table(std::ifstream& is):
       cap_(0)
-    , K(nullptr)
+    , T(nullptr)
     , M(nullptr)
 {
     deserialize(is);
@@ -202,7 +210,7 @@ inline Streaming_Kmer_Hash_Table<k, T_, l>::Streaming_Kmer_Hash_Table(std::ifstr
 template <uint16_t k, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, T_, l>::~Streaming_Kmer_Hash_Table()
 {
-    deallocate(K), deallocate(M);
+    deallocate(T), deallocate(M);
 }
 
 
@@ -274,7 +282,7 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer<k> key, const u
     while(cmp)
     {
         const auto j = std::countr_zero(cmp);
-        if(K[i * B + j] == key)
+        if(T[i * B + j] == key)
             return true;
 
         cmp &= (cmp - 1);
@@ -477,7 +485,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::serialize(std::ofstream& os) co
     ::serialize(k, os), ::serialize(l, os), ::serialize(B, os);
 
     ::serialize(cap_, os);
-    ::serialize(K, cap_ * B, os), ::serialize(M, cap_, os);
+    ::serialize(T, cap_ * B, os), ::serialize(M, cap_, os);
 
     overflow.serialize(os);
 
@@ -499,11 +507,11 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::deserialize(std::ifstream& is)
 
     ::deserialize(cap_, is);
 
-    if(K)
-        deallocate(K), deallocate(M);
+    if(T)
+        deallocate(T), deallocate(M);
 
-    K = aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE), M = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
-    ::deserialize(K, cap_ * B, is), ::deserialize(M, cap_, is);
+    T = aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE), M = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
+    ::deserialize(T, cap_ * B, is), ::deserialize(M, cap_, is);
 
     overflow.deserialize(is);
 
@@ -538,8 +546,8 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::report_stats() const
     // std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
     std::cerr   << "========================================\n";
 
-    std::cerr   << "Complete set size: " << sz << ".\n";
-    std::cerr   << "Overflow set size: " << overflow.size() << " ("
+    std::cerr   << "Complete table size: " << sz << ".\n";
+    std::cerr   << "Overflow table size: " << overflow.size() << " ("
                     << (overflow.size() * 100.0 / sz) << "%).\n";
     std::cerr   << "========================================\n";
 
