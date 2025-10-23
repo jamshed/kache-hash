@@ -139,9 +139,9 @@ public:
     // setting.
     void insert_mt(const Kmer_Window<k, l>& w);
 
-    // Returns the number of k-mer instances from the `len`-length sequence `s`
-    // present in the table.
-    std::size_t find(const char* s, std::size_t len) const;
+    // Returns `true` iff the k-mer defined by the window `w` is present in the
+    // table.
+    bool find(const Kmer_Window<k, l>& w) const;
 
     // Serializes the table to the stream `os`.
     void serialize(std::ofstream& os) const;
@@ -433,49 +433,30 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert_mt(const Kmer_Window<k, 
 
 
 template <uint16_t k, typename T_, uint16_t l>
-inline std::size_t  Streaming_Kmer_Hash_Table<k, T_, l>::find(const char* const s, const std::size_t len) const
+inline bool Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w) const
 {
-    Directed_Vertex<k> v(s);
-    std::size_t kmer_idx = 0;
-    std::size_t pos_q = 0;
+    const auto key = w.v.canonical();
+    const auto h = w.min_it.hash();
+    const auto idx_mask = cap_ - 1;
 
-    Min_Iterator<k, l> min_it;
-    Rolling_Hash<k, true> rh(s);
-    min_it.reset(s);
-    while(true)
-    {
-        const auto key = v.canonical();
-        const auto h = min_it.hash();
-        const auto idx_mask = cap_ - 1;
+    const auto b = h & idx_mask;
+    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
+    if(find(key, c, b))
+        return true;
 
-        const auto b = h & idx_mask;
-        const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-        if(find(key, c, b))
-            pos_q++;
-        else
-        {
-            // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
-            const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-            const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+    // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
+    const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+    const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-            const auto p = h_1 & idx_mask;
-            const auto q = h_2 & idx_mask;
-            if(find(key, c, p) || find(key, c, q))
-                pos_q++;
-            else if(bucket_size(p) == B && bucket_size(q) == B)
-                pos_q += overflow.contains(key);
-        }
+    const auto p = h_1 & idx_mask;
+    const auto q = h_2 & idx_mask;
+    if(find(key, c, p) || find(key, c, q))
+        return true;
 
-        if(kmer_idx + k == len)
-            break;
+    if(bucket_size(p) == B && bucket_size(q) == B)
+        return overflow.contains(key);
 
-        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
-        min_it.advance(s[kmer_idx + k]);
-        rh.advance(s[kmer_idx + k]);
-        kmer_idx++;
-    }
-
-    return pos_q;
+    return false;
 }
 
 

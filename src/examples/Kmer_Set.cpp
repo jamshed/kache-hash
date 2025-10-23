@@ -449,12 +449,23 @@ void BM_set_query_positive_streaming(benchmark::State& state)
 #endif
 
         Parser input(file_path);
+        Kmer_Window<k> w;
         while(input.read_next_seq())
         {
             auto const seq = input.seq();
             auto const len = input.seq_len();
 
-            c += S.find(seq, len);
+            w.init(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                c += S.find(w);
+                if(kmer_idx + k == len)
+                    break;
+
+                w.advance(seq[kmer_idx + k]);
+                kmer_idx++;
+            }
 
             n += len - k + 1;
 #ifndef QUIET
