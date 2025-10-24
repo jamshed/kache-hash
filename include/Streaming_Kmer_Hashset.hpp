@@ -68,10 +68,10 @@ private:
     Metadata* M;    // Metadata table of the buckets.
 
     static constexpr uint64_t skew_th = B;
-    std::conditional_t<is_map_, Hash_Map<Kmer<k>, T_>, Hash_Set<Kmer<k>>> overflow; // The overflow table.
+    std::conditional_t<is_map_, Hash_Map<Kmer<k>, T_>, Hash_Set<Kmer<k>>> overflow_;    // The overflow table in sequential setting.
     std::conditional_t<is_map_,
         boost::unordered::concurrent_flat_map<Kmer<k>, T_, Hash<Kmer<k>>>,
-        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt;  // The overflow table in concurrent setting.
+        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt_;   // The overflow table in concurrent setting.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -105,6 +105,10 @@ private:
     // `mt_` denotes whether multiple threads can access the table concurrently.
     template <bool mt_> bool try_insert_at(Kmer<k> key, uint8_t c, std::size_t i);
 
+    // Returns the overflow table. `mt_` denotes whether multiple threads can
+    // access the table concurrently.
+    template <bool mt_> constexpr auto& overflow() { if constexpr(mt_) return overflow_mt_; else return overflow_; }
+
 public:
 
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
@@ -129,17 +133,13 @@ public:
     template <bool mt_> std::size_t size() const;
 
     // Returns the size of the overflow table.
-    template <bool mt_> auto overflow_size() const { return !mt_ ? overflow.size() : overflow_mt.size();  }
+    template <bool mt_> auto overflow_size() const { return !mt_ ? overflow_.size() : overflow_mt_.size();  }
 
     // Clears the table.
     void clear();
 
     // Inserts the k-mer defined by the window `w` into the table.
-    void insert(const Kmer_Window<k, l>& w);
-
-    // Inserts the k-mer defined by the window `w` into the table in concurrent
-    // setting.
-    void insert_mt(const Kmer_Window<k, l>& w);
+    template <bool mt_ = false> void insert(const Kmer_Window<k, l>& w);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
@@ -223,7 +223,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::clear()
 
     std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
-    overflow.clear(), overflow_mt.clear();
+    overflow_.clear(), overflow_mt_.clear();
 
     min_to_kmer.clear();
 }
@@ -328,6 +328,7 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::try_insert_at(const Kmer<k> key
 
 
 template <uint16_t k, typename T_, uint16_t l>
+template <bool mt_>
 inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert(const Kmer_Window<k, l>& w)
 {
     const auto key = w.v.canonical();
@@ -336,49 +337,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert(const Kmer_Window<k, l>&
 
     const auto b = h & idx_mask;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
-    if(!try_insert_at<false>(key, c, b))
-    {
-        // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
-        const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
-        const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
-
-        const auto p = h_1 & idx_mask;
-        const auto q = h_2 & idx_mask;
-        if(!find(key, c, p) && !find(key, c, q))
-        {
-            const auto zero = _mm256_setzero_si256();
-
-            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
-            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
-
-            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
-            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
-
-            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
-            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
-            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
-
-            if(sz_p < sz_q)
-                place_at(key, c, p, sz_p);
-            else if(sz_q < B)
-                place_at(key, c, q, sz_q);
-            else
-                overflow.insert(key);
-        }
-    }
-}
-
-
-template <uint16_t k, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert_mt(const Kmer_Window<k, l>& w)
-{
-    const auto key = w.v.canonical();
-    const auto h = w.min_it.hash();
-    const auto idx_mask = cap_ - 1;
-
-    const auto b = h & idx_mask;
-    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
-    if(!try_insert_at<true>(key, c, b))
+    if(!try_insert_at<mt_>(key, c, b))
     {
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -389,9 +348,11 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert_mt(const Kmer_Window<k, 
         const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
         assert(p != q);
 
-        lock(p), lock(q);
+        if constexpr(mt_)   lock(p), lock(q);
         if(find(key, c, p) || find(key, c, q))
-            unlock(q), unlock(p);
+        {
+            if constexpr(mt_)   unlock(q), unlock(p);
+        }
         else
         {
             const auto zero = _mm256_setzero_si256();
@@ -409,17 +370,17 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert_mt(const Kmer_Window<k, 
             if(sz_p < sz_q)
             {
                 place_at(key, c, p, sz_p);
-                unlock(q), unlock(p);
+                if constexpr(mt_)   unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
                 place_at(key, c, q, sz_q);
-                unlock(q), unlock(p);
+                if constexpr(mt_)   unlock(q), unlock(p);
             }
             else
             {
-                unlock(q), unlock(p);
-                overflow_mt.insert(key);
+                if constexpr(mt_)   unlock(q), unlock(p);
+                overflow<mt_>().insert(key);
             }
         }
     }
@@ -448,7 +409,7 @@ inline auto Streaming_Kmer_Hash_Table<k, T_, l>::find(const Kmer_Window<k, l>& w
     if(const auto r_q = find(key, c, q))    return r_q;
 
     if(bucket_size(p) == B && bucket_size(q) == B)
-        return overflow.find(key);
+        return overflow_.find(key);
 
     return null_val;
 }
@@ -462,7 +423,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::serialize(std::ofstream& os) co
     ::serialize(cap_, os);
     ::serialize(T, cap_ * B, os), ::serialize(M, cap_, os);
 
-    overflow.serialize(os);
+    overflow_.serialize(os);
 
     ::serialize(sum_len, os), ::serialize(sup_kmer_c, os);
 }
@@ -488,7 +449,7 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::deserialize(std::ifstream& is)
     T = aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE), M = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
     ::deserialize(T, cap_ * B, is), ::deserialize(M, cap_, is);
 
-    overflow.deserialize(is);
+    overflow_.deserialize(is);
 
     ::deserialize(sum_len, is), ::deserialize(sup_kmer_c, is);
 }
@@ -522,8 +483,8 @@ inline void Streaming_Kmer_Hash_Table<k, T_, l>::report_stats() const
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete table size: " << sz << ".\n";
-    std::cerr   << "Overflow table size: " << overflow.size() << " ("
-                    << (overflow.size() * 100.0 / sz) << "%).\n";
+    std::cerr   << "Overflow table size: " << overflow_.size() << " ("
+                    << (overflow_.size() * 100.0 / sz) << "%).\n";
     std::cerr   << "========================================\n";
 
 

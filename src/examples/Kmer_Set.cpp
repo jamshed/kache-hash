@@ -395,7 +395,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
                 std::size_t kmer_idx = 0;
                 while(true)
                 {
-                    S.insert_mt(w);
+                    S.template insert<true>(w);
                     if(kmer_idx + k == s_len)
                         break;
 

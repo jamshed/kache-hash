@@ -276,7 +276,7 @@ void test_mt_insert()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert_mt(w);
+                S.template insert<true>(w);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -386,8 +386,8 @@ int main(int argc, char* argv[])
     // bench_rolling_hash<k>(path);
     // bench_ntHash<k>(path);
 
-    // test_mt_insert<k, l>();
-    test_hash_map<k, l>();
+    test_mt_insert<k, l>();
+    // test_hash_map<k, l>();
 
     return 0;
 }
