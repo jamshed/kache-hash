@@ -24,7 +24,7 @@
 template <uint16_t k, uint16_t l>
 void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, void, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, false, void, l> S(final_sz);
 
     constexpr uint64_t log_step = 32768;
     uint64_t n = 0, checkpoint = log_step;
@@ -248,7 +248,7 @@ void bench_ntHash(const std::string& file_path)
 template <uint16_t k, uint16_t l>
 void test_mt_insert()
 {
-    Streaming_Kmer_Hash_Table<k, void, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET
@@ -276,7 +276,7 @@ void test_mt_insert()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.template insert<true>(w);
+                S.insert(w);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -298,15 +298,15 @@ void test_mt_insert()
 
     input.close();
 
-    std::cout << "\nSet size: " << S.template size<true>() << "\n";
-    std::cout << "Overflow-set size: " << S.template overflow_size<true>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Overflow-set size: " << S.overflow_size() << "\n";
 }
 
 
 template <uint16_t k, uint16_t l>
 void test_hash_map()
 {
-    Streaming_Kmer_Hash_Table<k, uint64_t, l> M(final_sz);
+    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET

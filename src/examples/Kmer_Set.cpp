@@ -310,7 +310,7 @@ void BM_set_insert_streaming_blocked(benchmark::State& state)
 
 void BM_set_insert_streaming_bucketed(benchmark::State& state)
 {
-    Streaming_Kmer_Hash_Table<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, false> S(final_sz);
 
     for(auto _ : state)
     {
@@ -355,8 +355,8 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
         input.close();
     }
 
-    std::cout << "\nSet size: " << S.size<false>() << "\n";
-    std::cout << "Overflow-set size: " << S.overflow_size<false>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Overflow-set size: " << S.overflow_size() << "\n";
     std::ofstream os(ht_path, std::ios::out | std::ios::binary);
     S.serialize(os);
     os.close();
@@ -365,7 +365,7 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
 
 void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 {
-    Streaming_Kmer_Hash_Table<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
 
     for(auto _ : state)
     {
@@ -395,7 +395,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
                 std::size_t kmer_idx = 0;
                 while(true)
                 {
-                    S.template insert<true>(w);
+                    S.insert(w);
                     if(kmer_idx + k == s_len)
                         break;
 
@@ -418,7 +418,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
         input.close();
     }
 
-    std::cout << "\nSet size: " << S.size<true>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
     std::ofstream os(ht_path, std::ios::out | std::ios::binary);
     S.serialize(os);
     os.close();
@@ -428,9 +428,9 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 void BM_set_query_positive_streaming(benchmark::State& state)
 {
     std::ifstream is(ht_path, std::ios::in | std::ios::binary);
-    Streaming_Kmer_Hash_Table<k> S(is);
+    Streaming_Kmer_Hash_Table<k, false> S(is);
 
-    std::cerr << "Set size: " << S.size<false>() << "\n";
+    std::cerr << "Set size: " << S.size() << "\n";
 
     for(auto _ : state)
     {
