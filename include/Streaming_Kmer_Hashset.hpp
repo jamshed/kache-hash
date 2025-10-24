@@ -135,7 +135,7 @@ public:
     void clear();
 
     // Inserts the k-mer defined by the window `w` into the table.
-    template <bool track_stats_ = false> void insert(const Kmer_Window<k, l>& w);
+    void insert(const Kmer_Window<k, l>& w);
 
     // Inserts the k-mer defined by the window `w` into the table in concurrent
     // setting.
@@ -328,15 +328,11 @@ inline bool Streaming_Kmer_Hash_Table<k, T_, l>::try_insert_at(const Kmer<k> key
 
 
 template <uint16_t k, typename T_, uint16_t l>
-template <bool track_stats_>
 inline void Streaming_Kmer_Hash_Table<k, T_, l>::insert(const Kmer_Window<k, l>& w)
 {
     const auto key = w.v.canonical();
     const auto h = w.min_it.hash();
     const auto idx_mask = cap_ - 1;
-
-    if constexpr(track_stats_)
-        min_to_kmer[h].insert(key);
 
     const auto b = h & idx_mask;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
