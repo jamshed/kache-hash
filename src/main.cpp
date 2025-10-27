@@ -337,8 +337,8 @@ void test_hash_map()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                const auto r = M.find(w);
-                c += (r != std::nullopt);
+                // c += (M.find(w) != std::nullopt);
+                c += !M.insert(w, 0);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -354,7 +354,7 @@ void test_hash_map()
 #ifndef QUIET
         if(n >= checkpoint)
         {
-            std::cerr << "\rQueried " << n << " k-mers.";
+            std::cerr << "\rInserted " << n << " k-mers.";
             checkpoint = n + log_step;
         }
 #endif
@@ -362,9 +362,9 @@ void test_hash_map()
 
     input.close();
 
-    std::cout << "\nSet size: " << M.template size<true>() << "\n";
-    std::cout << "Overflow-set size: " << M.template overflow_size<true>() << "\n";
-    std::cout << "Positive query: " << [&](){ uint64_t s = 0; std::for_each(count.cbegin(), count.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+    std::cout << "\nSet size: " << M.size() << "\n";
+    std::cout << "Overflow-set size:  " << M.overflow_size() << "\n";
+    std::cout << "Positive insertion: " << [&](){ uint64_t s = 0; std::for_each(count.cbegin(), count.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
 }
 
 
@@ -386,8 +386,8 @@ int main(int argc, char* argv[])
     // bench_rolling_hash<k>(path);
     // bench_ntHash<k>(path);
 
-    test_mt_insert<k, l>();
-    // test_hash_map<k, l>();
+    // test_mt_insert<k, l>();
+    test_hash_map<k, l>();
 
     return 0;
 }

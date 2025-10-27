@@ -50,13 +50,16 @@ private:
     static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
 
     static constexpr bool is_map_ = !std::is_void_v<T_>;    // Whether a hash-map or a -set.
-    typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_type; // Underlying data type in the flat table.
-    typedef std::conditional_t<is_map_, std::optional<T_>, bool> find_ret_t;    // Return type for find methods.
-    static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt; else return false; }();   // Marker for absent keys (also values).
+    typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_t;    // Underlying data type in the flat table.
+    typedef std::conditional_t<is_map_, std::optional<T_>, bool> find_ret_t;    // Return type for find / insert methods.
+    static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt;   else return false; }(); // Marker for absent keys (also values).
+
+    static constexpr auto& key(const flat_t& e) { if constexpr(is_map_) return e.first; else return e; }    // Returns the key from a table-element `e`.
+    static constexpr auto& val(const flat_t& e) { if constexpr(is_map_) return e.second; else return e; }   // Returns the value from a table-element `e`.
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
-    flat_type* T;   // Flat table of size `cap x B`.
+    flat_t* T;  // Flat table of size `cap x B`.
 
     // Metadata of the k-mers in a bucket.
     struct Metadata
@@ -82,29 +85,39 @@ private:
     ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
 
-    // Returns `true` iff `key` matches to the key in `x`.
-    static constexpr bool key_equals(const flat_type& x, const Kmer<k>& key) { if constexpr(is_map_) return x.first == key; else return x == key; }
+    // Returns `true` iff `key` matches to the key of the element `e`.
+    static constexpr bool key_equals(const flat_t& e, const Kmer<k>& key) { return Streaming_Kmer_Hash_Table::key(e) == key; }
 
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
-    // Locks the `b`'th bucket for exclusive-write access.
+    // Locks the `b`'th bucket for exclusive-write access in concurrent settings.
     void lock(std::size_t b);
 
-    // Unlocks the `b`'th bucket from exclusive-write access.
+    // Unlocks the `b`'th bucket from exclusive-write access in concurrent
+    // settings.
     void unlock(std::size_t b);
 
-    // Returns `true` iff the k-mer `key` with checksum `c` is present in the
+    // Returns the associated value iff the k-mer `key` with checksum `c` is present in the
     // `i`'th bucket.
     find_ret_t find(Kmer<k> key, uint8_t c, std::size_t i) const;
 
-    // Directly places the k-mer `key` with checksum `c` into the `i`'th
-    // bucket at index `j`.
-    void place_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = key, M[i].cs[j] = c; }
+    // Directly places the element `e` with checksum `c` into the `i`'th bucket
+    // at index `j`.
+    void place_at(const flat_t& e, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = e, M[i].cs[j] = c; }
 
-    // Tries to insert the k-mer `key` with checksum `c` into the `i`'th bucket,
-    // returning `true` iff `key` is present at the bucket after this operation.
-    bool try_insert_at(Kmer<k> key, uint8_t c, std::size_t i);
+    // Tries to insert the element `e` with checksum `c` into the `i`'th bucket.
+    // It succeeds iff the key was absent in the bucket beforehand and there was
+    // empty space, returning `true` in that case. Returns `false` otherwise; in
+    // this case if the key was already in the bucket, it puts the associated
+    // value at `val`, or else puts `null_val` at `val`.
+    bool try_insert_at(const flat_t& e, uint8_t c, std::size_t i, find_ret_t& val);
+
+    // Tries to insert the element `e` with rolling hash `rh` and minimizer-
+    // iterator `min_it` into the table. It succeeds iff the key was absent in
+    // the table beforehand, and returns `null_val` in that case. Otherwise it
+    // returns the currently associated value.
+    find_ret_t insert(const flat_t& e, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it);
 
     // Returns the overflow table. `mt_` denotes whether multiple threads can
     // access the table concurrently.
@@ -138,8 +151,16 @@ public:
     // Clears the table.
     void clear();
 
-    // Inserts the k-mer defined by the window `w` into the table.
-    void insert(const Kmer_Window<k, l>& w);
+    // Inserts the k-mer defined by the window `w` into the table iff it is not
+    // already present in the table, returning `false` in that case. Returns
+    // `true` otherwise; i.e. returns the presence-status before the insertion.
+    find_ret_t insert(const Kmer_Window<k, l>& w) requires (!is_map_);
+
+    // Inserts the k-mer defined by the window `w` and associated value `val`
+    // into the table iff the key is not already present in the table, returning
+    // `null_opt` in that case. Returns the associated current value otherwise;
+    // i.e. returns the associated value pre-insertion.
+    template <typename V = T_> find_ret_t insert(const Kmer_Window<k, l>& w, const V& val) requires (is_map_);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
@@ -192,7 +213,7 @@ public:
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
       cap_(ceil_pow_2((max_sz / lf) / B))
-    , T(aligned_allocate<flat_type>(cap_ * B, L1_CACHE_LINE_SIZE))
+    , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
 {
     clear();
@@ -244,20 +265,24 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const s
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
 {
-    while(true)
-    {
-        const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
-        if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
-            break;
-    }
+    if constexpr(mt_)
+        while(true)
+        {
+            const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
+            if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                break;
+        }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b)
 {
-    assert(M[b].min_coord[0] & Metadata::lock_mask);
-    M[b].min_coord[0] &= ~Metadata::lock_mask;
+    if constexpr(mt_)
+    {
+        assert(M[b].min_coord[0] & Metadata::lock_mask);
+        M[b].min_coord[0] &= ~Metadata::lock_mask;
+    }
 }
 
 
@@ -298,14 +323,16 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const Kmer<k> key, const uint8_t c, const std::size_t i)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const uint8_t c, const std::size_t i, find_ret_t& val)
 {
-    if constexpr(mt_)   lock(i);
+    lock(i);
 
-    if(find(key, c, i))
+    const auto& key = this->key(e);
+    if(const auto r = find(key, c, i))
     {
-        if constexpr(mt_)   unlock(i);
-        return true;
+        unlock(i);
+        val = r;
+        return false;
     }
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
@@ -315,26 +342,46 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const Kmer<k
     const auto j = std::countr_zero(cmp);
     if(j == B)
     {
-        if constexpr(mt_)   unlock(i);
+        unlock(i);
+        val = null_val;
         return false;
     }
 
-    place_at(key, c, i, j);
-    if constexpr(mt_)   unlock(i);
+    place_at(e, c, i, j);
+    unlock(i);
     return true;
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) -> find_ret_t requires (!is_map_)
 {
-    const auto key = w.v.canonical();
-    const auto h = w.min_it.hash();
+    return insert(w.v.canonical(), w.rh, w.min_it);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename V>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> find_ret_t requires (is_map_)
+{
+    return insert(std::make_pair(w.v.canonical(), val), w.rh, w.min_it);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it) -> find_ret_t
+{
+    const auto h = min_it.hash();
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
-    if(!try_insert_at(key, c, b))
+    const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
+    find_ret_t v;
+    if(const auto r = try_insert_at(x, c, b, v))
+        return null_val;
+    else if(v)
+        return v;
+    else
     {
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -345,10 +392,18 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
         const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
         assert(p != q);
 
-        if constexpr(mt_)   lock(p), lock(q);
-        if(find(key, c, p) || find(key, c, q))
+        const auto key = this->key(x);
+
+        lock(p), lock(q);
+        if(const auto r_p = find(key, c, p))
         {
-            if constexpr(mt_)   unlock(q), unlock(p);
+            unlock(q), unlock(p);
+            return r_p;
+        }
+        else if(const auto r_q = find(key, c, q))
+        {
+            unlock(q), unlock(p);
+            return r_q;
         }
         else
         {
@@ -366,19 +421,21 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
 
             if(sz_p < sz_q)
             {
-                place_at(key, c, p, sz_p);
-                if constexpr(mt_)   unlock(q), unlock(p);
+                place_at(x, c, p, sz_p);
+                unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(key, c, q, sz_q);
-                if constexpr(mt_)   unlock(q), unlock(p);
+                place_at(x, c, q, sz_q);
+                unlock(q), unlock(p);
             }
             else
             {
-                if constexpr(mt_)   unlock(q), unlock(p);
-                overflow().insert(key);
+                unlock(q), unlock(p);
+                return overflow().insert(x) ? null_val : find_ret_t(true);  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
             }
+
+            return null_val;
         }
     }
 }
