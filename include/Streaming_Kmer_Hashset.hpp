@@ -103,6 +103,12 @@ private:
     // `i`'th bucket.
     find_ret_t find(Kmer<k> key, uint8_t c, std::size_t i) const;
 
+    // Updates the associated value of the k-mer `key` with checksum `c` in the
+    // `i`'th bucket through `f` iff it is present there, returning the earlier
+    // value. Returns `null_opt` otherwise.
+    template <typename F, typename V = T_>
+    val_t find_and_update(Kmer<k> key, uint8_t c, std::size_t i, const F& f) requires (is_map_);
+
     // Directly places the element `e` with checksum `c` into the `i`'th bucket
     // at index `j`.
     void place_at(const flat_t& e, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = e, M[i].cs[j] = c; }
@@ -114,11 +120,24 @@ private:
     // value at `val`, or else puts `null_val` at `val`.
     bool try_insert_at(const flat_t& e, uint8_t c, std::size_t i, find_ret_t& val);
 
+    // Tries to update the associated value of the k-mer `key` with checksum `c`
+    // at the `i`'th bucket through `f` iff it is present there. Otherwise if
+    // the bucket has space, puts `key` with value `val` into it. Returns `true`
+    // iff the upsert succeeds.
+    template <typename F, typename V = T_>
+    bool try_upsert_at(Kmer<k> key, uint8_t c, std::size_t i, const F& f, const V& val) requires (is_map_);
+
     // Tries to insert the element `e` with rolling hash `rh` and minimizer-
     // iterator `min_it` into the table. It succeeds iff the key was absent in
     // the table beforehand, and returns `null_val` in that case. Otherwise it
     // returns the currently associated value.
     find_ret_t insert(const flat_t& e, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it);
+
+    // Inserts the k-mer `key` with rolling hash `rh` and minimizer-iterator
+    // `min_it` into the table with associated value `val` iff it is not already
+    // present. Otherwise updates the current associated value through `f`.
+    template <typename F, typename V = T_>
+    void upsert(const Kmer<k> key, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_);
 
     // Returns the overflow table. `mt_` denotes whether multiple threads can
     // access the table concurrently.
@@ -162,6 +181,12 @@ public:
     // `null_opt` in that case. Returns the associated current value otherwise;
     // i.e. returns the associated value pre-insert.
     template <typename V = T_> val_t insert(const Kmer_Window<k, l>& w, const V& val) requires (is_map_);
+
+    // Updates the associated value of the k-mer defined by `w` in the table
+    // through `f`, iff it is present there. Otherwise inserts it into the table
+    // with associated value `val`.
+    template <typename F, typename V = T_>
+    void upsert(const Kmer_Window<k, l>& w, const F& f, const V& val) requires (is_map_);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
@@ -324,6 +349,33 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F, typename V>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f) -> val_t requires (is_map_)
+{
+    assert(i < cap_);
+
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
+    const auto query = _mm256_set1_epi8(static_cast<char>(c));
+    auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
+
+    while(cmp)
+    {
+        const auto j = std::countr_zero(cmp);
+        if(key_equals(T[i * B + j], key))
+        {
+            const auto prev_val = T[i * B + j].second;
+            T[i * B + j].second = f(prev_val);
+            return prev_val;
+        }
+
+        cmp &= (cmp - 1);
+    }
+
+    return null_val;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const uint8_t c, const std::size_t i, find_ret_t& val)
 {
     lock(i);
@@ -355,6 +407,35 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F, typename V>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f, const V& val) requires (is_map_)
+{
+    lock(i);
+
+    if(find_and_update(key, c, i, f))
+    {
+        unlock(i);
+        return true;
+    }
+
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
+    const auto zero = _mm256_setzero_si256();
+    const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
+
+    const auto j = std::countr_zero(cmp);
+    if(j == B)
+    {
+        unlock(i);
+        return false;
+    }
+
+    place_at(std::make_pair(key, val), c, i, j);
+    unlock(i);
+    return true;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) requires (!is_map_)
 {
     return insert(w.v.canonical(), w.rh, w.min_it);
@@ -366,6 +447,14 @@ template <typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> val_t requires (is_map_)
 {
     return insert(std::make_pair(w.v.canonical(), val), w.rh, w.min_it);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F, typename V>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val) requires (is_map_)
+{
+    upsert(w.v.canonical(), w.rh, w.min_it, f, val);
 }
 
 
@@ -437,6 +526,63 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             }
 
             return null_val;
+        }
+    }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F, typename V>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_)
+{
+    const auto h = min_it.hash();
+    const auto idx_mask = cap_ - 1;
+
+    const auto b = h & idx_mask;
+    const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
+    if(!try_upsert_at(key, c, b, f, val))
+    {
+        // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
+        const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+        const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+
+        const auto s_1 = h_1 & idx_mask;
+        const auto s_2 = h_2 & idx_mask;
+        const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
+        assert(p != q);
+
+        lock(p), lock(q);
+        if(find_and_update(key, c, p, f) || find_and_update(key, c, q, f))
+            unlock(q), unlock(p);
+        else
+        {
+            const auto zero = _mm256_setzero_si256();
+
+            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
+            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
+
+            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
+            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
+
+            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
+            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
+            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
+
+            if(sz_p < sz_q)
+            {
+                place_at(std::make_pair(key, val), c, p, sz_p);
+                unlock(q), unlock(p);
+            }
+            else if(sz_q < B)
+            {
+                place_at(std::make_pair(key, val), c, q, sz_q);
+                unlock(q), unlock(p);
+            }
+            else
+            {
+                unlock(q), unlock(p);
+                overflow().emplace(key, val);
+            }
         }
     }
 }
