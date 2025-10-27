@@ -51,7 +51,8 @@ private:
 
     static constexpr bool is_map_ = !std::is_void_v<T_>;    // Whether a hash-map or a -set.
     typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_t;    // Underlying data type in the flat table.
-    typedef std::conditional_t<is_map_, std::optional<T_>, bool> find_ret_t;    // Return type for find / insert methods.
+    typedef std::optional<T_> val_t;    // Type of values returned by hash-map operations.
+    typedef std::conditional_t<is_map_, val_t, bool> find_ret_t;    // Return type for find / insert methods.
     static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt;   else return false; }(); // Marker for absent keys (also values).
 
     static constexpr auto& key(const flat_t& e) { if constexpr(is_map_) return e.first; else return e; }    // Returns the key from a table-element `e`.
@@ -154,13 +155,13 @@ public:
     // Inserts the k-mer defined by the window `w` into the table iff it is not
     // already present in the table, returning `false` in that case. Returns
     // `true` otherwise; i.e. returns the presence-status before the insertion.
-    find_ret_t insert(const Kmer_Window<k, l>& w) requires (!is_map_);
+    bool insert(const Kmer_Window<k, l>& w) requires (!is_map_);
 
     // Inserts the k-mer defined by the window `w` and associated value `val`
     // into the table iff the key is not already present in the table, returning
     // `null_opt` in that case. Returns the associated current value otherwise;
-    // i.e. returns the associated value pre-insertion.
-    template <typename V = T_> find_ret_t insert(const Kmer_Window<k, l>& w, const V& val) requires (is_map_);
+    // i.e. returns the associated value pre-insert.
+    template <typename V = T_> val_t insert(const Kmer_Window<k, l>& w, const V& val) requires (is_map_);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
@@ -354,7 +355,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) -> find_ret_t requires (!is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) requires (!is_map_)
 {
     return insert(w.v.canonical(), w.rh, w.min_it);
 }
@@ -362,7 +363,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename V>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> find_ret_t requires (is_map_)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> val_t requires (is_map_)
 {
     return insert(std::make_pair(w.v.canonical(), val), w.rh, w.min_it);
 }
