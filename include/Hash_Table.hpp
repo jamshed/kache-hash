@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <bit>
+#include <optional>
 #include <fstream>
 
 
@@ -88,6 +89,9 @@ public:
 
     // Returns `true` iff the set contains `key`.
     bool contains(T_key_ key) const;
+
+    // Returns `true` iff the set contains `key`.
+    bool find(T_key_ key) const { return contains(key); }
 
     // Serializes the hash set to the stream `os`.
     void serialize(std::ofstream& os) const;
@@ -167,6 +171,10 @@ public:
     // if `key` was not present in the map beforehand. Returns `true` iff the
     // insertion succeeds.
     bool insert(T_key_ key, T_val_ val);
+
+    // Returns the value associated to `key` if it is present in the table, and
+    // returns `nullopt` otherwise.
+    std::optional<T_val_> find(T_key_ key) const;
 
     // Inserts the key `key` into the map with the associated value `T_val()`
     // only if `key` was not present in the map beforehand. Returns a reference
@@ -321,6 +329,20 @@ inline bool Hash_Map<T_key_, T_val_, T_hash_>::insert(const T_key_ key, const T_
             break;
 
     return false;
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hash_>
+inline auto Hash_Map<T_key_, T_val_, T_hash_>::find(const T_key_ key) const -> std::optional<T_val_>
+{
+    std::size_t i = map_to_idx(hash(key));
+    for(; ; i = map_to_idx(i + 1))
+        if(KV[i].key == empty)
+            return std::nullopt;
+        else if(KV[i].key == key)
+            break;
+
+    return KV[i].val;
 }
 
 

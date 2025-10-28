@@ -4,13 +4,13 @@
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
+#include "utility.hpp"
 #include "globals.hpp"
 
 #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "parlay/parallel.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -24,7 +24,7 @@
 template <uint16_t k, uint16_t l>
 void benchmark_hash_set(const std::string& file_path, const uint64_t final_sz)
 {
-    Streaming_Kmer_Hashset<k, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, false, void, l> S(final_sz);
 
     constexpr uint64_t log_step = 32768;
     uint64_t n = 0, checkpoint = log_step;
@@ -248,9 +248,9 @@ void bench_ntHash(const std::string& file_path)
 template <uint16_t k, uint16_t l>
 void test_mt_insert()
 {
-    Streaming_Kmer_Hashset<k, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
 
-    std::atomic_uint64_t n = 0;
+    std::size_t n = 0;
 #ifndef QUIET
     constexpr uint64_t log_step = 32768;
     uint64_t checkpoint = log_step;
@@ -276,7 +276,7 @@ void test_mt_insert()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert_mt(w);
+                S.insert(w);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -298,8 +298,79 @@ void test_mt_insert()
 
     input.close();
 
-    std::cout << "\nSet size: " << S.template size<true>() << "\n";
-    std::cout << "Overflow-set size: " << S.template overflow_size<true>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Overflow-set size: " << S.overflow_size() << "\n";
+}
+
+
+template <uint16_t k, uint16_t l>
+void test_hash_table_insert()
+{
+    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
+
+    std::size_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    M.clear();
+
+    std::vector<Padded<uint64_t>> count_s(parlay::num_workers(), 0);
+    // std::vector<Padded<uint64_t>> count_m(parlay::num_workers(), 0);
+
+    Parser input(file_path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            std::size_t c_s = 0;
+            Kmer_Window<k> w;
+
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                c_s += !S.insert(w);
+                M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+
+            // count_m[parlay::worker_id()].unwrap() += c_m;
+            count_s[parlay::worker_id()].unwrap() += c_s;
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Map size: " << M.size() << "\n";
+    std::cout << "Overflow-set size:  " << S.overflow_size() << " and " << M.overflow_size() << "\n";
+    std::cout << "Positive insertions: \n";
+    std::cout << "\tinto set: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+    // std::cout << "\tinto map: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
 }
 
 
@@ -321,7 +392,8 @@ int main(int argc, char* argv[])
     // bench_rolling_hash<k>(path);
     // bench_ntHash<k>(path);
 
-    test_mt_insert<k, l>();
+    // test_mt_insert<k, l>();
+    test_hash_table_insert<k, l>();
 
     return 0;
 }

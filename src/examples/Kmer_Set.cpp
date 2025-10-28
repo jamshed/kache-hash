@@ -283,7 +283,6 @@ void BM_set_insert_streaming(benchmark::State& state)
 }
 
 
-template <bool track_stats_>
 void BM_set_insert_streaming_blocked(benchmark::State& state)
 {
     Streaming_Hash_Set<k> S(final_sz);
@@ -299,22 +298,19 @@ void BM_set_insert_streaming_blocked(benchmark::State& state)
             auto const len = input.seq_len();
             assert(len >= k);
 
-            S.template insert<track_stats_>(seq, len);
+            S.insert(seq, len);
         }
 
         input.close();
     }
 
     std::cout << "Set size: " << S.size() << "\n";
-    if constexpr(track_stats_)
-        S.print_stats();
 }
 
 
-template <bool track_stats_>
 void BM_set_insert_streaming_bucketed(benchmark::State& state)
 {
-    Streaming_Kmer_Hashset<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, false> S(final_sz);
 
     for(auto _ : state)
     {
@@ -338,7 +334,7 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.template insert<track_stats_>(w);
+                S.insert(w);
                 if(kmer_idx + k == len)
                     break;
 
@@ -359,20 +355,17 @@ void BM_set_insert_streaming_bucketed(benchmark::State& state)
         input.close();
     }
 
-    std::cout << "\nSet size: " << S.size<false>() << "\n";
-    std::cout << "Overflow-set size: " << S.overflow_size<false>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Overflow-set size: " << S.overflow_size() << "\n";
     std::ofstream os(ht_path, std::ios::out | std::ios::binary);
     S.serialize(os);
     os.close();
-
-    if constexpr(track_stats_)
-        S.report_stats();
 }
 
 
 void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 {
-    Streaming_Kmer_Hashset<k> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
 
     for(auto _ : state)
     {
@@ -402,7 +395,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
                 std::size_t kmer_idx = 0;
                 while(true)
                 {
-                    S.insert_mt(w);
+                    S.insert(w);
                     if(kmer_idx + k == s_len)
                         break;
 
@@ -425,7 +418,7 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
         input.close();
     }
 
-    std::cout << "\nSet size: " << S.size<true>() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
     std::ofstream os(ht_path, std::ios::out | std::ios::binary);
     S.serialize(os);
     os.close();
@@ -435,9 +428,9 @@ void BM_set_insert_streaming_bucketed_mt(benchmark::State& state)
 void BM_set_query_positive_streaming(benchmark::State& state)
 {
     std::ifstream is(ht_path, std::ios::in | std::ios::binary);
-    Streaming_Kmer_Hashset<k> S(is);
+    Streaming_Kmer_Hash_Table<k, false> S(is);
 
-    std::cerr << "Set size: " << S.size<false>() << "\n";
+    std::cerr << "Set size: " << S.size() << "\n";
 
     for(auto _ : state)
     {
@@ -449,12 +442,23 @@ void BM_set_query_positive_streaming(benchmark::State& state)
 #endif
 
         Parser input(file_path);
+        Kmer_Window<k> w;
         while(input.read_next_seq())
         {
             auto const seq = input.seq();
             auto const len = input.seq_len();
 
-            c += S.find(seq, len);
+            w.init(seq);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                c += S.find(w);
+                if(kmer_idx + k == len)
+                    break;
+
+                w.advance(seq[kmer_idx + k]);
+                kmer_idx++;
+            }
 
             n += len - k + 1;
 #ifndef QUIET
@@ -474,7 +478,5 @@ void BM_set_query_positive_streaming(benchmark::State& state)
 
 
 
-template void BM_set_insert_streaming_blocked<false>(benchmark::State& state);
-template void BM_set_insert_streaming_blocked<true>(benchmark::State& state);
-template void BM_set_insert_streaming_bucketed<true>(benchmark::State& state);
-template void BM_set_insert_streaming_bucketed<false>(benchmark::State& state);
+void BM_set_insert_streaming_blocked(benchmark::State& state);
+void BM_set_insert_streaming_bucketed(benchmark::State& state);
