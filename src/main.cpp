@@ -304,8 +304,9 @@ void test_mt_insert()
 
 
 template <uint16_t k, uint16_t l>
-void test_hash_map()
+void test_hash_table_insert()
 {
+    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
     Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
 
     std::size_t n = 0;
@@ -317,7 +318,8 @@ void test_hash_map()
 
     M.clear();
 
-    std::vector<Padded<uint64_t>> count(parlay::num_workers(), 0);
+    std::vector<Padded<uint64_t>> count_s(parlay::num_workers(), 0);
+    // std::vector<Padded<uint64_t>> count_m(parlay::num_workers(), 0);
 
     Parser input(file_path);
     while(input.read_next_seq())
@@ -330,15 +332,15 @@ void test_hash_map()
         {
             const auto s = seq + w_id * kmer_per_w;
             const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
-            std::size_t c = 0;
+            std::size_t c_s = 0;
             Kmer_Window<k> w;
 
             w.init(s);
             std::size_t kmer_idx = 0;
             while(true)
             {
-                // c += (M.find(w) != std::nullopt);
-                c += !M.insert(w, 0);
+                c_s += !S.insert(w);
+                M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -346,7 +348,8 @@ void test_hash_map()
                 kmer_idx++;
             }
 
-            count[parlay::worker_id()].unwrap() += c;
+            // count_m[parlay::worker_id()].unwrap() += c_m;
+            count_s[parlay::worker_id()].unwrap() += c_s;
         }
         , 1);
 
@@ -362,9 +365,12 @@ void test_hash_map()
 
     input.close();
 
-    std::cout << "\nSet size: " << M.size() << "\n";
-    std::cout << "Overflow-set size:  " << M.overflow_size() << "\n";
-    std::cout << "Positive insertion: " << [&](){ uint64_t s = 0; std::for_each(count.cbegin(), count.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+    std::cout << "\nSet size: " << S.size() << "\n";
+    std::cout << "Map size: " << M.size() << "\n";
+    std::cout << "Overflow-set size:  " << S.overflow_size() << " and " << M.overflow_size() << "\n";
+    std::cout << "Positive insertions: \n";
+    std::cout << "\tinto set: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+    // std::cout << "\tinto map: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
 }
 
 
@@ -387,7 +393,7 @@ int main(int argc, char* argv[])
     // bench_ntHash<k>(path);
 
     // test_mt_insert<k, l>();
-    test_hash_map<k, l>();
+    test_hash_table_insert<k, l>();
 
     return 0;
 }
