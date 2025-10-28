@@ -43,11 +43,11 @@ private:
     uint64_t H[2][w + 1];   // The hashes of the l-mers in a k-mer window. The l-mers sit at `H[0..k - l]`, and is conceptually broken into two sub-windows:
                             // a prefix and a suffix one.
 
-    uint64_t M_pre[w + 1];  // Suffix-mins of the prefix window.
-    uint64_t M_suf; // Min of the suffix window.
+    uint64_t M_pre[2][w + 1];   // Suffix-mins of the prefix window.
+    uint64_t M_suf[2];  // Min of the suffix window.
 
-    uint16_t P_pre[w + 1];  // Positions (absolute) of the suffix-mins at the prefix window.
-    uint16_t P_suf; // Position (absolute) of the min at the suffix window.
+    uint16_t P_pre[2][w + 1];   // Positions (absolute) of the suffix-mins at the prefix window.
+    uint16_t P_suf[2];  // Position (absolute) of the min at the suffix window.
 
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
 
@@ -150,17 +150,19 @@ inline void Min_Iterator<k, l>::reset_windows()
 
     // TODO: try vectorization, if not already done by the compiler.
 
-    M_pre[w] = std::numeric_limits<uint64_t>::max();
-    P_pre[w] = w;
+    M_pre[fwd][w] = M_pre[rev][w] = std::numeric_limits<uint64_t>::max();
+    P_pre[fwd][w] = P_pre[rev][w] = w;
     for(int16_t i = w - 1; i >= 0; --i)
     {
-        const auto h = min(H[fwd][i], H[rev][i]);
-        M_pre[i] = min(M_pre[i + 1], h),
-        P_pre[i] = cmov(M_pre[i + 1] <= h, P_pre[i + 1], i);
+        M_pre[fwd][i] = min(M_pre[fwd][i + 1], H[fwd][i]),
+        P_pre[fwd][i] = cmov(M_pre[fwd][i + 1] <= H[fwd][i], P_pre[fwd][i + 1], i);
+
+        M_pre[rev][i] = min(M_pre[rev][i + 1], H[rev][i]),
+        P_pre[rev][i] = cmov(M_pre[rev][i + 1] <= H[rev][i], P_pre[rev][i + 1], i);
     }
 
-    M_suf = std::numeric_limits<uint64_t>::max();
-    P_suf = w;
+    M_suf[fwd] = M_suf[rev] = std::numeric_limits<uint64_t>::max();
+    P_suf[fwd] = P_suf[rev] = w;
     pivot = 0;
 }
 
@@ -168,16 +170,22 @@ inline void Min_Iterator<k, l>::reset_windows()
 template <uint16_t k, uint16_t l>
 inline uint64_t Min_Iterator<k, l>::hash() const
 {
-    return min(M_pre[pivot], M_suf);
+    return min(min(M_pre[fwd][pivot], M_suf[fwd]), min(M_pre[rev][pivot], M_suf[rev]));
 }
 
 
 template <uint16_t k, uint16_t l>
 inline int16_t Min_Iterator<k, l>::hash_pos() const
 {
-    return cmov(M_pre[pivot] < M_suf,
-                    P_pre[pivot] - pivot,
-                    w - pivot + P_suf);
+    const auto h_fwd = min(M_pre[fwd][pivot], M_suf[fwd]);
+    const auto h_rev = min(M_pre[rev][pivot], M_suf[rev]);
+    return  h_fwd <= h_rev ?
+                cmov(M_pre[fwd][pivot] < M_suf[fwd],
+                    P_pre[fwd][pivot] - pivot,
+                    w - pivot + P_suf[fwd]) :
+                cmov(M_pre[rev][pivot] < M_suf[rev],
+                    P_pre[rev][pivot] - pivot,
+                    w - pivot + P_suf[rev]);
 }
 
 
@@ -193,9 +201,12 @@ inline void Min_Iterator<k, l>::advance(const char ch)
 
     H[fwd][pivot] = lmer_hash(last_lmer[fwd]);
     H[rev][pivot] = lmer_hash(last_lmer[rev]);
-    const auto h = min(H[fwd][pivot], H[rev][pivot]);
-    P_suf = cmov(M_suf < h, P_suf, pivot);
-    M_suf = min(M_suf, h);
+
+    P_suf[fwd] = cmov(M_suf[fwd] < H[fwd][pivot], P_suf[fwd], pivot);
+    M_suf[fwd] = min(M_suf[fwd], H[fwd][pivot]);
+
+    P_suf[rev] = cmov(M_suf[rev] < H[rev][pivot], P_suf[rev], pivot);
+    M_suf[rev] = min(M_suf[rev], H[rev][pivot]);
 
     if(pivot < static_cast<std::size_t>(k - l))
         pivot++;
