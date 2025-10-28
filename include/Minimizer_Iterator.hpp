@@ -24,17 +24,26 @@ class Min_Iterator
 {
 private:
 
-    const uint16_t lmer_byte_c; // Number of bytes in an `l`-mer.
-    const int16_t w;    // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
+    // Returns the minimum of `x` and `y`.
+    static constexpr auto min = [](const uint64_t x, const uint64_t y){ return x < y ? x : y; };
+
+    // Returns the 64-bit equivalent of `val`.
+    template <typename T_> static constexpr uint64_t as_u64(const T_ val) { return static_cast<uint64_t>(val); }
+
+    static constexpr auto cmov = [](const bool cond, const int16_t x, const int16_t y) { return cond ? x : y; };
+
+
+    // static constexpr auto lmer_byte_c = (2 * l + 7) / 8;    // Number of bytes in an `l`-mer.
+    static constexpr int16_t w = k - l + 1; // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
 
     uint64_t last_lmer; // The last l-mer processed from the sequence.
     uint64_t last_lmer_bar; // Reverse complement of the last l-mer processed.
-    const uint64_t clear_MSN_mask;  // Bitmask to clear the most-significant nucleotide bits of l-mers.
+    static constexpr uint64_t clear_MSN_mask = ~(as_u64(0b11) << (2 * (l - 1)));    // Bitmask to clear the most-significant nucleotide bits of l-mers.
 
     // The hashes of the l-mers in a k-mer window. The l-mers sit at
     // `H[0..k - l]`, and is conceptually broken into two sub-windows: a prefix
     // and a suffix one.
-    uint64_t H[k];
+    uint64_t H[w + 1];
 
     uint64_t M_pre[k];  // Suffix-mins of the prefix window.
     uint64_t M_suf; // Min of the suffix window.
@@ -43,15 +52,6 @@ private:
     int16_t P_suf;  // Position (absolute) of the min at the suffix window.
 
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
-
-
-    // Returns the minimum of `x` and `y`.
-    static constexpr auto min = [](const uint64_t x, const uint64_t y){ return x < y ? x : y; };
-
-    // Returns the 64-bit equivalent of `val`.
-    template <typename T_> static constexpr uint64_t as_u64(const T_ val) { return static_cast<uint64_t>(val); }
-
-    static constexpr auto cmov = [](const bool cond, const int16_t x, const int16_t y) { return cond ? x : y; };
 
     // Returns the 64-bit hash value of the canonically equivalent l-mer pair
     // `(lmer, lmer_bar)`.
@@ -67,7 +67,7 @@ public:
 
     // Constructs a minimizer iterator to iterate over `l`-minimizers of
     // the `k`-mers of a given sequence in a streaming manner.
-    Min_Iterator();
+    Min_Iterator() {}
 
     Min_Iterator(const Min_Iterator&) = delete;
     Min_Iterator(Min_Iterator&&) = delete;
@@ -91,14 +91,6 @@ public:
     // TODO: rename.
     int16_t hash_pos() const;
 };
-
-
-template <uint16_t k, uint16_t l>
-inline Min_Iterator<k, l>::Min_Iterator():
-      lmer_byte_c((2 * l + 7) / 8)
-    , w(k - l + 1)
-    , clear_MSN_mask(~(as_u64(0b11) << (2 * (l - 1))))
-{}
 
 
 template <uint16_t k, uint16_t l>
@@ -147,7 +139,6 @@ inline void Min_Iterator<k, l>::reset(const char* const seq)
 
         H[++pivot] = lmer_hash(last_lmer, last_lmer_bar);
     }
-
 
     reset_windows();
 }
