@@ -32,18 +32,16 @@ private:
 
     static constexpr auto cmov = [](const bool cond, const int16_t x, const int16_t y) { return cond ? x : y; };
 
+    static constexpr std::size_t fwd = 0;   // Marker for data in the forward-strand.
+    static constexpr std::size_t rev = 1;   // Marker for data in the reverse-strand.
 
-    // static constexpr auto lmer_byte_c = (2 * l + 7) / 8;    // Number of bytes in an `l`-mer.
     static constexpr uint16_t w = k - l + 1;    // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
 
-    uint64_t last_lmer; // The last l-mer processed from the sequence.
-    uint64_t last_lmer_bar; // Reverse complement of the last l-mer processed.
+    uint64_t last_lmer[2];  // The last l-mer processed from the sequence, in the forward- and in the reverse-strand.
     static constexpr uint64_t clear_MSN_mask = ~(as_u64(0b11) << (2 * (l - 1)));    // Bitmask to clear the most-significant nucleotide bits of l-mers.
 
-    // The hashes of the l-mers in a k-mer window. The l-mers sit at
-    // `H[0..k - l]`, and is conceptually broken into two sub-windows: a prefix
-    // and a suffix one.
-    uint64_t H[w + 1];
+    uint64_t H[2][w + 1];   // The hashes of the l-mers in a k-mer window. The l-mers sit at `H[0..k - l]`, and is conceptually broken into two sub-windows:
+                            // a prefix and a suffix one.
 
     uint64_t M_pre[w + 1];  // Suffix-mins of the prefix window.
     uint64_t M_suf; // Min of the suffix window.
@@ -53,9 +51,8 @@ private:
 
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
 
-    // Returns the 64-bit hash value of the canonically equivalent l-mer pair
-    // `(lmer, lmer_bar)`.
-    uint64_t lmer_hash(uint64_t lmer, uint64_t lmer_bar);
+    // Returns the 64-bit hash value of the `l`-mer `lmer`.
+    uint64_t lmer_hash(uint64_t lmer);
 
     // Moves the suffix window to the prefix window, and empties it—resetting
     // them to their default condition. Also recomputes the aggregate minimum
@@ -94,7 +91,7 @@ public:
 
 
 template <uint16_t k, uint16_t l>
-inline uint64_t Min_Iterator<k, l>::lmer_hash(const uint64_t lmer, const uint64_t lmer_bar)
+inline uint64_t Min_Iterator<k, l>::lmer_hash(const uint64_t lmer)
 {
     const auto h = [&](const uint64_t lmer)
         {
@@ -105,15 +102,14 @@ inline uint64_t Min_Iterator<k, l>::lmer_hash(const uint64_t lmer, const uint64_
             return XXH3_64bits_withSeed(&lmer, sizeof(lmer), min_seed); // TODO: replace with rolling hash: `xxHash` is too costly in this context.
         };
 
-    return min(h(lmer), h(lmer_bar));
+    return h(lmer);
 }
 
 
 template <uint16_t k, uint16_t l>
 inline void Min_Iterator<k, l>::reset(const char* const seq)
 {
-    last_lmer = 0;
-    last_lmer_bar = 0;
+    last_lmer[fwd] = last_lmer[rev] = 0;
 
     for(std::size_t idx = 0; idx < l; ++idx)
     {
@@ -121,12 +117,13 @@ inline void Min_Iterator<k, l>::reset(const char* const seq)
 
         const auto b = DNA_Utility::map_base(seq[idx]);
         assert(b != DNA::N);
-        last_lmer |= (as_u64(b) << (2 * (l - 1 - idx)));
-        last_lmer_bar |= (as_u64(DNA_Utility::complement(b)) << (2 * idx));
+        last_lmer[fwd] |= (as_u64(b) << (2 * (l - 1 - idx)));
+        last_lmer[rev] |= (as_u64(DNA_Utility::complement(b)) << (2 * idx));
     }
 
     pivot = 0;
-    H[pivot] = lmer_hash(last_lmer, last_lmer_bar);
+    H[fwd][pivot] = lmer_hash(last_lmer[fwd]);
+    H[rev][pivot] = lmer_hash(last_lmer[rev]);
 
     for(std::size_t idx = l; idx < k; ++idx)
     {
@@ -134,10 +131,12 @@ inline void Min_Iterator<k, l>::reset(const char* const seq)
 
         const DNA::Base b = DNA_Utility::map_base(seq[idx]);
         assert(b != DNA::N);
-        last_lmer = ((last_lmer & clear_MSN_mask) << 2) | b;
-        last_lmer_bar = (last_lmer_bar >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
+        last_lmer[fwd] = ((last_lmer[fwd] & clear_MSN_mask) << 2) | b;
+        last_lmer[rev] = (last_lmer[rev] >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
 
-        H[++pivot] = lmer_hash(last_lmer, last_lmer_bar);
+        pivot++;
+        H[fwd][pivot] = lmer_hash(last_lmer[fwd]);
+        H[rev][pivot] = lmer_hash(last_lmer[rev]);
     }
 
     reset_windows();
@@ -154,8 +153,11 @@ inline void Min_Iterator<k, l>::reset_windows()
     M_pre[w] = std::numeric_limits<uint64_t>::max();
     P_pre[w] = w;
     for(int16_t i = w - 1; i >= 0; --i)
-        M_pre[i] = min(M_pre[i + 1], H[i]),
-        P_pre[i] = cmov(M_pre[i + 1] <= H[i], P_pre[i + 1], i);
+    {
+        const auto h = min(H[fwd][i], H[rev][i]);
+        M_pre[i] = min(M_pre[i + 1], h),
+        P_pre[i] = cmov(M_pre[i + 1] <= h, P_pre[i + 1], i);
+    }
 
     M_suf = std::numeric_limits<uint64_t>::max();
     P_suf = w;
@@ -186,12 +188,14 @@ inline void Min_Iterator<k, l>::advance(const char ch)
 
     const DNA::Base b = DNA_Utility::map_base(ch);
     assert(b != DNA::N);
-    last_lmer = ((last_lmer & clear_MSN_mask) << 2) | b;
-    last_lmer_bar = (last_lmer_bar >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
+    last_lmer[fwd] = ((last_lmer[fwd] & clear_MSN_mask) << 2) | b;
+    last_lmer[rev] = (last_lmer[rev] >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
 
-    H[pivot] = lmer_hash(last_lmer, last_lmer_bar);
-    P_suf = cmov(M_suf < H[pivot], P_suf, pivot);
-    M_suf = min(M_suf, H[pivot]);
+    H[fwd][pivot] = lmer_hash(last_lmer[fwd]);
+    H[rev][pivot] = lmer_hash(last_lmer[rev]);
+    const auto h = min(H[fwd][pivot], H[rev][pivot]);
+    P_suf = cmov(M_suf < h, P_suf, pivot);
+    M_suf = min(M_suf, h);
 
     if(pivot < static_cast<std::size_t>(k - l))
         pivot++;
