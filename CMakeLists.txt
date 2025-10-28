@@ -130,7 +130,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-find_package(PFM REQUIRED)
+# find_package(PFM REQUIRED)
 
 # Required external projects.
 include(ExternalProject)
@@ -140,7 +140,7 @@ set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
-
+#[[
 set(BENCHMARK_MIN_VERSION "v1.9.4")
 message("Build system will fetch and install Google Benchmark.")
 ExternalProject_Add(prj_benchmark
@@ -166,6 +166,7 @@ set(BENCHMARK_LIB ${EXT_LIB}/libbenchmark.a)
 add_library(benchmark STATIC IMPORTED)
 set_target_properties(benchmark PROPERTIES IMPORTED_LOCATION ${BENCHMARK_LIB})
 add_dependencies(benchmark prj_benchmark)
+#]]
 
 
 set(MALLOC_LIB "")
