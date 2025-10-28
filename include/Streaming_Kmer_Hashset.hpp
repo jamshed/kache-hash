@@ -192,6 +192,14 @@ public:
     // table.
     find_ret_t find(const Kmer_Window<k, l>& w) const;
 
+    class Iterator;
+
+    // Returns an iterator to the beginning of the table.
+    Iterator cbegin() const { return Iterator(*this, 0, 0); }
+
+    // Returns an iterator to the (exclusive-)end of the table.
+    Iterator cend() const { return Iterator(*this, cap_, -1); };
+
     // Serializes the table to the stream `os`.
     void serialize(std::ofstream& os) const;
 
@@ -233,6 +241,49 @@ public:
         min_it.advance(ch);
         rh.advance(ch);
     }
+};
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+class Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Iterator
+{
+    friend class Streaming_Kmer_Hash_Table<k, mt_, T_, l>;
+    typedef Streaming_Kmer_Hash_Table<k, mt_, T_, l> ht_t;
+
+private:
+
+    const ht_t& ht; // Associated hash table.
+    std::size_t b;  // Index of the bucket in the table where the iterator sits.
+    int8_t slot;    // Index of the slot in the bucket where the iterator sits.
+
+    // Constructs an iterator for the hash table `ht` that sits in bucket `b` at
+    // slot `s`.
+    Iterator(const ht_t& ht, const std::size_t b, const int8_t s): ht(ht), b(b), slot(s)
+    {
+        assert(b == 0 || b == ht.cap_);
+        if(b < ht.cap_ && s >= 0 && s < static_cast<int8_t>(B) && !ht.M[b].cs[s])
+            operator++();
+    }
+
+public:
+
+    // Repositions the iterator to the next successive element in the map, or to
+    // its end if there are no more elements.
+    void operator++()
+    {
+        for(; b < ht.cap_; ++b)
+        {
+            for(slot++; slot < static_cast<int8_t>(B); ++slot)
+                if(ht.M[b].cs[slot])
+                    return;
+
+            slot = -1;
+        }
+    }
+
+    const ht_t::flat_t& operator*() { assert(b < ht.cap_ && 0 <= slot && slot < B); return ht.T[b * B + slot]; }
+
+    bool operator==(const Iterator& rhs) const { return &ht == &rhs.ht && b == rhs.b && slot == rhs.slot; }
 };
 
 
