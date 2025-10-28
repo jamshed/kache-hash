@@ -34,7 +34,7 @@ private:
 
 
     // static constexpr auto lmer_byte_c = (2 * l + 7) / 8;    // Number of bytes in an `l`-mer.
-    static constexpr int16_t w = k - l + 1; // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
+    static constexpr uint16_t w = k - l + 1;    // `l`-mer window width in a `k`-mer, i.e. number of `l`-mers in a `k`-mer.
 
     uint64_t last_lmer; // The last l-mer processed from the sequence.
     uint64_t last_lmer_bar; // Reverse complement of the last l-mer processed.
@@ -45,11 +45,11 @@ private:
     // and a suffix one.
     uint64_t H[w + 1];
 
-    uint64_t M_pre[k];  // Suffix-mins of the prefix window.
+    uint64_t M_pre[w + 1];  // Suffix-mins of the prefix window.
     uint64_t M_suf; // Min of the suffix window.
 
-    int16_t P_pre[k];   // Positions (absolute) of the suffix-mins at the prefix window.
-    int16_t P_suf;  // Position (absolute) of the min at the suffix window.
+    uint16_t P_pre[w + 1];  // Positions (absolute) of the suffix-mins at the prefix window.
+    uint16_t P_suf; // Position (absolute) of the min at the suffix window.
 
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
 
@@ -152,13 +152,13 @@ inline void Min_Iterator<k, l>::reset_windows()
     // TODO: try vectorization, if not already done by the compiler.
 
     M_pre[w] = std::numeric_limits<uint64_t>::max();
-    P_pre[w] = -w;
+    P_pre[w] = w;
     for(int16_t i = w - 1; i >= 0; --i)
         M_pre[i] = min(M_pre[i + 1], H[i]),
-        P_pre[i] = cmov(M_pre[i + 1] < H[i], P_pre[i + 1], cmov(M_pre[i + 1] > H[i], i, -w));
+        P_pre[i] = cmov(M_pre[i + 1] <= H[i], P_pre[i + 1], i);
 
     M_suf = std::numeric_limits<uint64_t>::max();
-    P_suf = -w;
+    P_suf = w;
     pivot = 0;
 }
 
@@ -173,11 +173,9 @@ inline uint64_t Min_Iterator<k, l>::hash() const
 template <uint16_t k, uint16_t l>
 inline int16_t Min_Iterator<k, l>::hash_pos() const
 {
-    // TODO: fix ominous UBs from type mismatches.
     return cmov(M_pre[pivot] < M_suf,
                     P_pre[pivot] - pivot,
-                    cmov(M_pre[pivot] > M_suf,
-                        w - pivot + P_suf, -w));
+                    w - pivot + P_suf);
 }
 
 
@@ -192,7 +190,7 @@ inline void Min_Iterator<k, l>::advance(const char ch)
     last_lmer_bar = (last_lmer_bar >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
 
     H[pivot] = lmer_hash(last_lmer, last_lmer_bar);
-    P_suf = cmov(M_suf < H[pivot], P_suf, cmov(M_suf > H[pivot], pivot, -w));
+    P_suf = cmov(M_suf < H[pivot], P_suf, pivot);
     M_suf = min(M_suf, H[pivot]);
 
     if(pivot < static_cast<std::size_t>(k - l))
