@@ -7,7 +7,7 @@
 #include "Kmer_Hashset.hpp"
 #include "Streaming_Double_Probe_Hashset.hpp"
 #include "Streaming_Hashset.hpp"
-#include "Streaming_Kmer_Hashset.hpp"
+#include "Streaming_Kmer_Hash_Table.hpp"
 #include "globals.hpp"
 
 #include "nthash/nthash.hpp"
