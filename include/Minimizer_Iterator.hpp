@@ -78,6 +78,11 @@ public:
     // Returns the minimizer's 64-bit hash value.
     uint64_t hash() const;
 
+    // Returns the minimizer's 64-bit hash value, and sets `in_fwd` to `true`
+    // iff the minimizer comes from the forward strand. It also places the
+    // position of the minimizer `l`-mer, in its corresponding strand, at `idx`.
+    uint64_t hash(std::size_t& idx, bool& in_fwd) const;
+
     // Moves the iterator to a next k-mer extending it with the character `ch`.
     void advance(char ch);
 
@@ -175,6 +180,25 @@ inline uint64_t Min_Iterator<k, l>::hash() const
 
 
 template <uint16_t k, uint16_t l>
+inline uint64_t Min_Iterator<k, l>::hash(std::size_t& idx, bool& in_fwd) const
+{
+    const auto h_fwd = min(M_pre[fwd][pivot], M_suf[fwd]);
+    const auto h_rev = min(M_pre[rev][pivot], M_suf[rev]);
+
+    if(h_fwd <= h_rev)
+    {
+        idx = cmov(M_pre[fwd][pivot] < M_suf[fwd], P_pre[fwd][pivot] - pivot, w - pivot + P_suf[fwd]), in_fwd = true;
+        return h_fwd;
+    }
+    else
+    {
+        idx = cmov(M_pre[rev][pivot] < M_suf[rev], P_pre[rev][pivot] - pivot, w - pivot + P_suf[rev]) + l - 1, in_fwd = false;
+        return h_rev;
+    }
+}
+
+
+template <uint16_t k, uint16_t l>
 inline int16_t Min_Iterator<k, l>::hash_pos() const
 {
     const auto h_fwd = min(M_pre[fwd][pivot], M_suf[fwd]);
@@ -185,7 +209,7 @@ inline int16_t Min_Iterator<k, l>::hash_pos() const
                     w - pivot + P_suf[fwd]) :
                 cmov(M_pre[rev][pivot] < M_suf[rev],
                     P_pre[rev][pivot] - pivot,
-                    w - pivot + P_suf[rev]);
+                    w - pivot + P_suf[rev]) + l - 1;
 }
 
 
