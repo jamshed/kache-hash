@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
+#include <fstream>
+#include <chrono>
 #include <cassert>
 
 
@@ -69,6 +71,42 @@ inline constexpr uint64_t bits(uint64_t x, uint64_t l, uint64_t h)
     assert(l <= h && h < 64);
     return (x << (63 - h)) >> ((63 - h) + l);
 }
+
+
+// Fields for profiling time.
+typedef std::chrono::high_resolution_clock::time_point time_point_t;
+constexpr static auto now = std::chrono::high_resolution_clock::now;
+constexpr static auto duration = [](const std::chrono::nanoseconds& d) { return std::chrono::duration_cast<std::chrono::duration<double>>(d).count(); };
+
+
+// Wrapper class for a data element of type `T_` to ensure that in a linear
+// collection of `T_`'s, each element is aligned to a cache-line boundary.
+template <typename T_>
+class alignas(64)
+    Padded
+{
+private:
+
+    T_ data_;
+
+
+public:
+
+    Padded()
+    {}
+
+    Padded(const T_& data):
+      data_(data)
+    {}
+
+    Padded(T_&& data):
+        data_(std::move(data))
+    {}
+
+    T_& unwrap() { return data_; }
+
+    const T_& unwrap() const { return data_; }
+};
 
 
 

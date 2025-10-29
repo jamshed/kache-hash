@@ -1,6 +1,7 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "Kmer.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
@@ -237,6 +238,100 @@ void bench_ntHash(const std::string& file_path)
 }
 
 
+template <uint16_t k, typename T_ht_>
+uint64_t benchmark_set_insert_generic_sequential_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    T_ht_ S(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        Directed_Vertex<k> v(seq);
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            S.insert(v.canonical());
+
+            if(kmer_idx + k == len)
+                break;
+
+            v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+            kmer_idx++;
+        }
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return S.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hashset<k> S(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        S.insert(seq, len);
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return S.size();
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -245,15 +340,17 @@ int main(int argc, char* argv[])
     (void)k, (void)l;
 
     std::string path(argv[1]);
-    // uint64_t final_sz(std::atoll(argv[2]));
+    uint64_t final_sz(std::atoll(argv[2]));
 
     // benchmark_hash_set<k, l>(path, final_sz);
 
     // test_rolling_hash<k, false>(path);
     // test_rolling_hash<k, true>(path);
     // check_rolling_hash_reverse<k>(path);
-    bench_rolling_hash<k>(path);
-    bench_ntHash<k>(path);
+    // bench_rolling_hash<k>(path);
+    // bench_ntHash<k>(path);
+    benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz);
+    benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz);
 
     return 0;
 }
