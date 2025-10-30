@@ -2,7 +2,7 @@
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
 #include "Rolling_Hash.hpp"
-#include "Streaming_Kmer_Hashset.hpp"
+#include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
 #include "utility.hpp"
 #include "globals.hpp"
