@@ -128,6 +128,7 @@ set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 
+#[[
 set(BENCHMARK_MIN_VERSION "v1.9.4")
 message("Build system will fetch and install Google Benchmark.")
 ExternalProject_Add(prj_benchmark
@@ -151,6 +152,7 @@ set(BENCHMARK_LIB ${EXT_LIB}/libbenchmark.a)
 add_library(benchmark STATIC IMPORTED)
 set_target_properties(benchmark PROPERTIES IMPORTED_LOCATION ${BENCHMARK_LIB})
 add_dependencies(benchmark prj_benchmark)
+#]]
 
 
 set(MALLOC_LIB "")
@@ -184,6 +186,7 @@ if(NOT JEMALLOC_FOUND)
 endif()
 
 
+#[[
 set(NTHASH_LIB "")
 set(NTHASH_MIN_VERSION "v2.3.0")
 message("Build system will fetch and install ntHash for benchmarking.")
@@ -203,6 +206,7 @@ set(NTHASH_LIB ${EXT_LIB}/libnthash.a)
 add_library(nthash STATIC IMPORTED)
 set_target_properties(nthash PROPERTIES IMPORTED_LOCATION ${NTHASH_LIB})
 add_dependencies(nthash prj_nthash)
+#]]
 
 
 # Build type.

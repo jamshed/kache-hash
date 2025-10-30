@@ -6,7 +6,7 @@
 #include "Streaming_Kmer_Hashset.hpp"
 #include "Parser.hpp"
 
-#include "nthash/nthash.hpp"
+// #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 
 #include <cstddef>
@@ -205,6 +205,7 @@ void bench_rolling_hash(const std::string& file_path)
 }
 
 
+/*
 template <uint16_t k>
 void bench_ntHash(const std::string& file_path)
 {
@@ -236,6 +237,7 @@ void bench_ntHash(const std::string& file_path)
 
     input.close();
 }
+*/
 
 
 template <uint16_t k, typename T_ht_>
