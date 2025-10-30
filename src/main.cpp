@@ -7,7 +7,7 @@
 #include "utility.hpp"
 #include "globals.hpp"
 
-#include "nthash/nthash.hpp"
+// #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 #include "parlay/parallel.h"
 
@@ -212,6 +212,7 @@ void bench_rolling_hash(const std::string& file_path)
 }
 
 
+/*
 template <uint16_t k>
 void bench_ntHash(const std::string& file_path)
 {
@@ -243,6 +244,7 @@ void bench_ntHash(const std::string& file_path)
 
     input.close();
 }
+*/
 
 
 template <uint16_t k, uint16_t l>

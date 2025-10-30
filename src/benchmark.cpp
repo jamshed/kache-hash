@@ -6,7 +6,7 @@
 #include "Streaming_Kmer_Hash_Table.hpp"
 #include "utility.hpp"
 
-#include "nthash/nthash.hpp"
+// #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
 
 #include <cstdint>
@@ -109,6 +109,7 @@ uint64_t benchmark_rolling_hash(const std::string& path)
 }
 
 
+/*
 template <uint16_t k>
 uint64_t benchmark_ntHash(const std::string& path)
 {
@@ -130,6 +131,7 @@ uint64_t benchmark_ntHash(const std::string& path)
     input.close();
     return h;
 }
+*/
 
 
 template <uint16_t k, typename T_ht_>

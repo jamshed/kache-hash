@@ -245,6 +245,7 @@ ExternalProject_Add(prj_parlaylib
 )
 
 
+#[[
 set(NTHASH_LIB "")
 set(NTHASH_MIN_VERSION "v2.3.0")
 message("Build system will fetch and install ntHash for benchmarking.")
@@ -264,6 +265,7 @@ set(NTHASH_LIB ${EXT_LIB}/libnthash.a)
 add_library(nthash STATIC IMPORTED)
 set_target_properties(nthash PROPERTIES IMPORTED_LOCATION ${NTHASH_LIB})
 add_dependencies(nthash prj_nthash)
+#]]
 
 
 # Build type.
