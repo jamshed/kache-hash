@@ -109,6 +109,10 @@ if(QUIET)
     add_compile_definitions(QUIET)
 endif()
 
+if(AVX_512)
+    add_compile_definitions(AVX_512)
+endif()
+
 
 # Required preprocessor definitions.
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)

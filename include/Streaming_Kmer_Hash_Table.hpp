@@ -89,6 +89,9 @@ private:
     // Returns `true` iff `key` matches to the key of the element `e`.
     static constexpr bool key_equals(const flat_t& e, const Kmer<k>& key) { return Streaming_Kmer_Hash_Table::key(e) == key; }
 
+    // Returns the 32-bit equality mask of the vectors `x` and `y`.
+    static uint32_t eq_mask(__m256i x, __m256i y);
+
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
@@ -328,11 +331,23 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::eq_mask(const __m256i x, const __m256i y)
+{
+#ifdef AVX_512
+    return _mm256_cmpeq_epi8_mask(x, y);
+#else
+    const auto cmp = _mm256_cmpeq_epi8(x, y);
+    return static_cast<uint32_t>(_mm256_movemask_epi8(cmp));
+#endif
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const std::size_t b) const
 {
     const auto zero  = _mm256_setzero_si256();
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[b].cs));
-    const auto cmp   = _mm256_cmpeq_epi8_mask(c_vec, zero);
+    const auto cmp   = eq_mask(c_vec, zero);
 
     assert(std::countr_zero(cmp) + std::countl_one(cmp) == B);
     return std::countr_zero(cmp);   // This must hold if no deletion is performed at the table.
@@ -381,7 +396,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
-    auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
+    auto cmp = eq_mask(c_vec, query);
 
     while(cmp)
     {
@@ -407,7 +422,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
-    auto cmp = _mm256_cmpeq_epi8_mask(c_vec, query);
+    auto cmp = eq_mask(c_vec, query);
 
     while(cmp)
     {
@@ -441,7 +456,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto zero = _mm256_setzero_si256();
-    const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
+    const auto cmp = eq_mask(c_vec, zero);
 
     const auto j = std::countr_zero(cmp);
     if(j == B)
@@ -471,7 +486,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto zero = _mm256_setzero_si256();
-    const auto cmp = _mm256_cmpeq_epi8_mask(c_vec, zero);
+    const auto cmp = eq_mask(c_vec, zero);
 
     const auto j = std::countr_zero(cmp);
     if(j == B)
@@ -553,8 +568,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
             const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
 
-            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
-            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
+            const auto cmp_p = eq_mask(c_vec_p, zero);
+            const auto cmp_q = eq_mask(c_vec_q, zero);
 
             const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
             const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
@@ -612,8 +627,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
             const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
 
-            const auto cmp_p = _mm256_cmpeq_epi8_mask(c_vec_p, zero);
-            const auto cmp_q = _mm256_cmpeq_epi8_mask(c_vec_q, zero);
+            const auto cmp_p = eq_mask(c_vec_p, zero);
+            const auto cmp_q = eq_mask(c_vec_q, zero);
 
             const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
             const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
