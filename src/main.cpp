@@ -349,8 +349,8 @@ int main(int argc, char* argv[])
     // check_rolling_hash_reverse<k>(path);
     // bench_rolling_hash<k>(path);
     // bench_ntHash<k>(path);
-    benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz);
-    benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz);
+    // benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz);
+    std::cerr << "Set size: " << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
 
     return 0;
 }
