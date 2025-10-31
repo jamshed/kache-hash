@@ -12,6 +12,7 @@
 #include "utility.hpp"
 
 #include "unordered_dense/unordered_dense.h"
+#include "boost/unordered/concurrent_flat_set.hpp"
 
 #include <immintrin.h>
 
@@ -39,7 +40,8 @@ private:
     uint8_t* S; // Size of each bucket.
 
     static constexpr uint64_t skew_th = B;
-    Hash_Set<Kmer<k>> overflow; // The overflow table.
+    // Hash_Set<Kmer<k>> overflow; // The overflow table.
+    boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> overflow;
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
