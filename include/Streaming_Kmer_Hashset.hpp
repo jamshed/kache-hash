@@ -44,9 +44,14 @@ private:
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the set.
 
+    static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of size-counter used to lock the bucket.
+
     // Following are for used for developer stats.
     ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
+
+    // Returns the size of the `b`'th bucket.
+    std::size_t size(const std::size_t b) const { return S[b] & ~lock_mask; }
 
     // Tries to insert the k-mer `key` into the bucket `b`, returning `true` iff
     // `key` is absent at bucket `b` after this operation.
@@ -57,6 +62,12 @@ private:
 
     // Returns `true` iff the k-mer `key` is present at the bucket `b`.
     bool find_512(Kmer<k> key, std::size_t b) const;
+
+    // Locks the `b`'th bucket for exclusive write-access.
+    void lock(std::size_t b);
+
+    // Unlocks the `b`'th bucket from exclusive write-access.
+    void unlock(std::size_t b);
 
 public:
 
@@ -168,11 +179,12 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
 
             const auto p = h_1 & idx_mask;
             const auto q = h_2 & idx_mask;
+            const auto s_p = size(p), s_q = size(q);
             if(!find(key, p) && !find(key, q))
             {
-                if(S[p] < S[q])
+                if(s_p < s_q)
                     K[p * B + S[p]++] = key;
-                else if(S[q] < B)
+                else if(s_q < B)
                     K[q * B + S[q]++] = key;
                 else
                     overflow.insert(key);
@@ -209,23 +221,44 @@ inline bool Streaming_Kmer_Hashset<k, l>::find(const Kmer<k> key, const std::siz
 template <uint16_t k, uint16_t l>
 inline bool Streaming_Kmer_Hashset<k, l>::find_512(const Kmer<k> key, const std::size_t b) const
 {
-    assert(b < cap_);   assert(S[b] <= B);
+    assert(b < cap_);   assert(size(b) <= B);
 
     const auto query = _mm512_set1_epi64(key.as_int());
 
     std::size_t j = 0;
-    for(; j < S[b] && j + 8 <= B; j += 8)
+    const auto sz = size(b);
+    for(; j < sz && j + 8 <= B; j += 8)
     {
         const auto v = _mm512_load_si512(static_cast<const void*>(K + (b * B + j)));
         const auto cmp = _mm512_cmpeq_epi64_mask(v, query);
         if(cmp)
         {
             const auto off = __builtin_ctz(static_cast<uint8_t>(cmp));
-            return off < S[b];
+            return static_cast<std::size_t>(off) < sz;
         }
     }
 
     return false;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::lock(const std::size_t b)
+{
+    while(true)
+    {
+        const uint8_t exp_unlocked = S[b] & ~lock_mask;
+        if(__sync_bool_compare_and_swap(S + b, exp_unlocked, exp_unlocked | lock_mask))
+            break;
+    }
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Streaming_Kmer_Hashset<k, l>::unlock(const std::size_t b)
+{
+    assert(S[b] & lock_mask);
+    S[b] &= ~lock_mask;
 }
 
 
@@ -235,7 +268,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::insert_at(const Kmer<k> key, const std
     if(find(key, b))
         return true;
 
-    if(S[b] == B)
+    if(size(b) == B)
         return false;
 
     K[b * B + S[b]] = key;
@@ -363,7 +396,7 @@ inline void Streaming_Kmer_Hashset<k, l>::report_stats() const
 
     uint64_t full = 0, empty = 0;
     for(std::size_t b = 0; b < cap_; ++b)
-        full += (S[b] == B), empty += (S[b] == 0);
+        full += (size(b) == B), empty += (size(b) == 0);
 
     std::cerr   << "#Blocks:       " << cap_ << ".\n";
     std::cerr   << "#Full-blocks:  " << full << "(" << (full * 100.0 / cap_) << "%).\n";
