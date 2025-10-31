@@ -177,17 +177,31 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
             const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
             const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-            const auto p = h_1 & idx_mask;
-            const auto q = h_2 & idx_mask;
+            const auto s_1 = h_1 & idx_mask;
+            const auto s_2 = h_2 & idx_mask;
+            assert(s_1 != s_2);
+            const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
+            lock(p), lock(q);
             const auto s_p = size(p), s_q = size(q);
-            if(!find(key, p) && !find(key, q))
+            if(find(key, p) || find(key, q))
+                unlock(q), unlock(p);
+            else
             {
                 if(s_p < s_q)
-                    K[p * B + S[p]++] = key;
+                {
+                    K[p * B + s_p] = key, S[p]++;
+                    unlock(q), unlock(p);
+                }
                 else if(s_q < B)
-                    K[q * B + S[q]++] = key;
+                {
+                    K[q * B + s_q] = key, S[q]++;
+                    unlock(q), unlock(p);
+                }
                 else
-                    overflow.insert(key);
+                {
+                    unlock(q), unlock(p);
+                    overflow.insert(key);   // TODO: fix.
+                }
             }
         }
 
@@ -265,14 +279,24 @@ inline void Streaming_Kmer_Hashset<k, l>::unlock(const std::size_t b)
 template <uint16_t k, uint16_t l>
 inline bool Streaming_Kmer_Hashset<k, l>::insert_at(const Kmer<k> key, const std::size_t b)
 {
+    lock(b);
+
     if(find(key, b))
+    {
+        unlock(b);
         return true;
+    }
 
-    if(size(b) == B)
+    const auto sz = size(b);
+    if(sz == B)
+    {
+        unlock(b);
         return false;
+    }
 
-    K[b * B + S[b]] = key;
+    K[b * B + sz] = key;
     S[b]++;
+    unlock(b);
     return true;
 }
 
