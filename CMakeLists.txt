@@ -213,6 +213,20 @@ else()
 endif()
 
 
+# Prepare the `parlay` library—a parallel algorithms programming toolkit.
+message("Build system will fetch and install parlaylib")
+ExternalProject_Add(prj_parlaylib
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    git clone https://github.com/cmuparlay/parlaylib.git
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/parlaylib
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   ""
+    BUILD_COMMAND       ""
+    INSTALL_COMMAND     cp -rf include/parlay ${EXT_INCLUDE}
+)
+
+
 #[[
 set(NTHASH_LIB "")
 set(NTHASH_MIN_VERSION "v2.3.0")

@@ -27,6 +27,8 @@ if(NOT BOOST_FOUND)
     add_dependencies(core prj_boost)
 endif()
 
+add_dependencies(core prj_parlaylib)
+
 
 # Configs for targets.
 
