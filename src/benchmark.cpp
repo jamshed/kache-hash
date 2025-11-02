@@ -4,7 +4,9 @@
 #include "Directed_Vertex.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
+
 #include "boost/unordered/concurrent_flat_set.hpp"
+#include "icebergHT/iceberg_table.h"
 #include "utility.hpp"
 
 // #include "nthash/nthash.hpp"
@@ -304,10 +306,10 @@ uint64_t benchmark_set_insert_generic_concurrent_no_resize(const std::string& pa
 }
 
 
-template <uint16_t k, typename T_ht_>
-uint64_t benchmark_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+template <uint16_t k>
+uint64_t benchmark_boost_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    T_ht_ M(final_sz);
+    boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(final_sz);
 
     const auto t_s = now();
 
@@ -366,6 +368,71 @@ uint64_t benchmark_map_insert_generic_concurrent_no_resize(const std::string& pa
     std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
 
     return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    iceberg_table M;
+    (void)final_sz;
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                std::cerr << "Inserting k-mer from index " << kmer_idx << "\n";
+                iceberg_insert(&M, v.canonical().as_int(), 1, parlay::worker_id());
+                std::cerr << "Inserted k-mer from index " << kmer_idx << "\n";
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return 0; //M.size();
 }
 
 
@@ -522,8 +589,9 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_map_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
 
 
     return EXIT_SUCCESS;
