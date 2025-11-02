@@ -102,9 +102,13 @@ private:
     // settings.
     void unlock(std::size_t b);
 
-    // Returns the associated value iff the k-mer `key` with checksum `c` is present in the
-    // `i`'th bucket.
+    // Returns the associated value iff the k-mer `key` with checksum `c` is
+    // present in the `i`'th bucket.
     find_ret_t find(Kmer<k> key, uint8_t c, std::size_t i) const;
+
+    // Returns the associated value iff the k-mer `key` is present in the
+    // overflow table.
+    find_ret_t find_in_overflow(Kmer<k> key) const;
 
     // Updates the associated value of the k-mer `key` with checksum `c` in the
     // `i`'th bucket through `f` iff it is present there, returning the earlier
@@ -145,6 +149,10 @@ private:
     // Returns the overflow table. `mt_` denotes whether multiple threads can
     // access the table concurrently.
     constexpr auto& overflow() { if constexpr(mt_) return overflow_mt_; else return overflow_; }
+
+    // Returns the overflow table. `mt_` denotes whether multiple threads can
+    // access the table concurrently.
+    constexpr const auto& overflow() const { if constexpr(mt_) return overflow_mt_; else return overflow_; }
 
 public:
 
@@ -415,6 +423,20 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
+{
+    if constexpr(!is_map_)
+        return overflow().count(key);
+    else
+    {
+        auto val = null_val;
+        overflow().cvisit(key, [&](const auto& kv){ val = kv.second; });
+        return val;
+    }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f) -> val_t requires (is_map_)
 {
@@ -676,7 +698,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
     if(const auto r_q = find(key, c, q))    return r_q;
 
     if(bucket_size(p) == B && bucket_size(q) == B)
-        return overflow_.find(key);
+        return find_in_overflow(key);
 
     return null_val;
 }
