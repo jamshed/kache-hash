@@ -688,6 +688,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
     if(const auto r = find(key, c, b))
         return r;
 
+    if(bucket_size(b) < B)
+        return null_val;
+
     // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
     const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
     const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
