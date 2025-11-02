@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <atomic>
 #include <string>
 #include <iostream>
 #include <cmath>
@@ -388,6 +389,87 @@ uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& 
 }
 
 
+template <uint16_t k>
+uint64_t benchmark_set_query_streaming_concurrent(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hashset<k> S(final_sz);
+
+    {
+        Parser input(path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            if(len < k)
+                continue;
+
+            const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                S.insert(s, s_len);
+            }
+            , 1);
+        }
+
+        input.close();
+    }
+
+    std::cerr << "Set size: " << S.size() << "\n";
+
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    std::atomic_uint64_t c = 0;
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            c += S.find(s, s_len);
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rQueried " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return c;
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -407,7 +489,8 @@ int main(int argc, char* argv[])
     // bench_ntHash<k>(path);
     // benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz);
     // std::cerr << "Set size: " << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
-    std::cerr << "Set size: " << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << "Set size: " << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_query_streaming_concurrent<k>(path, final_sz) << "\n";
 
     return 0;
 }
