@@ -100,6 +100,10 @@ public:
     // table.
     template <bool track_stats_ = false> void insert(const char* s, std::size_t len);
 
+    // Returns the number of k-mer instances from the `l`-length sequence `s`
+    // found in the table.
+    std::size_t find(const char* s, std::size_t len) const;
+
 /*
     // Preprocesses a prefix of sequences from the files at `file_path` to
     // populate a collection of skew-minimizers.
@@ -214,6 +218,46 @@ inline void Streaming_Kmer_Hashset<k, l>::insert(const char* const s, const std:
         v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
         kmer_idx++;
     }
+}
+
+
+template <uint16_t k, uint16_t l>
+inline std::size_t Streaming_Kmer_Hashset<k, l>::find(const char* const s, const std::size_t len) const
+{
+    Directed_Vertex<k> v(s);
+    std::size_t kmer_idx = 0;
+    std::size_t c = 0;
+
+    Min_Iterator<k, l> min_it;
+    min_it.reset(s);
+    while(true)
+    {
+        const auto key = v.canonical();
+        const auto h = min_it.hash();
+        const auto idx_mask = cap_ - 1;
+
+        const auto b = h & idx_mask;
+        if(find(key, b))
+            c++;
+        else if(size(b) == B)
+        {
+            const auto p = XXH3_64bits_withSeed(&h, sizeof(h), 0) & idx_mask;
+            const auto q = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63) & idx_mask;
+            if(find(key, p) || find(key, q))
+                c++;
+            else if(size(p) == B && size(q) == B)
+                c += overflow.count(key);
+        }
+
+        if(kmer_idx + k == len)
+            break;
+
+        min_it.advance(s[kmer_idx + k]);
+        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+        kmer_idx++;
+    }
+
+    return c;
 }
 
 
