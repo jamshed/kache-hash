@@ -13,7 +13,15 @@ set(SRC
         # examples/Minimizer_Scan.cpp
 )
 
+file(GLOB ICEBERG_HT_SRC
+        "icebergHT/*"
+)
+
 add_library(core STATIC ${SRC})
+
+add_library(iceberg_ht STATIC ${ICEBERG_HT_SRC})
+set(ICEBERG_INCLUDE ${INCLUDE_DIR}/icebergHT)
+
 
 # Executables.
 # add_executable(bench bench.cpp)
@@ -34,14 +42,17 @@ endif()
 # Configs for targets.
 
 target_include_directories(core PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(iceberg_ht PRIVATE ${ICEBERG_INCLUDE})
 target_include_directories(bench PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(main PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 target_compile_options(core PRIVATE ${COMPILE_FLAGS})
+target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench PRIVATE ${COMPILE_FLAGS})
 target_compile_options(main PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(core PRIVATE ${LINK_FLAGS})
+target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench PRIVATE ${LINK_FLAGS})
 target_link_libraries(main PRIVATE ${LINK_FLAGS})
 
@@ -49,16 +60,16 @@ target_link_libraries(main PRIVATE ${LINK_FLAGS})
 # Target-links.
 target_link_libraries(core PRIVATE jemalloc)
 target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
-
 target_link_libraries(core PRIVATE ZLIB::ZLIB)
-
 target_link_libraries(core PRIVATE Threads::Threads)
-
 # target_link_libraries(core PRIVATE benchmark)
-
 # target_link_libraries(core PRIVATE pfm)
 
+target_link_libraries(iceberg_ht PRIVATE jemalloc)
+target_link_libraries(iceberg_ht PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
+
 target_link_libraries(bench PRIVATE core)
+target_link_libraries(bench PRIVATE iceberg_ht)
 # target_link_libraries(bench PRIVATE benchmark)
 # target_link_libraries(bench PRIVATE nthash)
 
