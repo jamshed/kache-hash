@@ -1,6 +1,8 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "Minimizer_Iterator.hpp"
+#include "Minimizer_Iterator_Baseline.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
@@ -455,6 +457,71 @@ void test_hash_table_iterator()
 }
 
 
+template <uint16_t k, uint16_t l>
+void test_minimizer_iterator(const std::string& path)
+{
+    Parser input(path);
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Min_Iterator<k, l> min_it;
+            Minimizer_Iterator<const char*, k, true> min_it_base(l);
+
+            Directed_Vertex<k> v(s);
+            min_it.reset(s), min_it_base.reset(s, s_len);
+            std::size_t kmer_idx = 0;
+            std::size_t min_idx;
+            bool in_fwd;
+            while(true)
+            {
+                const auto h = min_it.hash(min_idx, in_fwd);
+                const auto h_base = min_it_base.hash();
+
+                if(h != h_base)
+                {
+                    std::cerr << "Mismatching minimizer hash\n";
+                    std::exit(EXIT_FAILURE);
+                }
+
+                const auto min = in_fwd ?
+                    v.kmer().template lmer_at<l>(min_idx) :
+                    v.kmer_bar().template lmer_at<l>(min_idx);
+
+                if(min_it.lmer_hash(min) != h)
+                {
+                    std::cerr   << "Positional hash " << min_it.lmer_hash(min) << " does not match minimizer hash " << h
+                                << " at k-mer index " << kmer_idx << "\n";
+
+                    std::exit(EXIT_FAILURE);
+                }
+
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                min_it.advance(s[kmer_idx + k]);
+                min_it_base.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+        }
+        , 1);
+    }
+
+    input.close();
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -462,7 +529,7 @@ int main(int argc, char* argv[])
     constexpr uint16_t k = 31, l = 19;
     // (void)k, (void)l;
 
-    // std::string path(argv[1]);
+    std::string path(argv[1]);
     // uint64_t final_sz(std::atoll(argv[2]));
 
     // benchmark_hash_set<k, l>(path, final_sz);
@@ -474,7 +541,9 @@ int main(int argc, char* argv[])
     // bench_ntHash<k>(path);
 
     // test_mt_insert<k, l>();
-    test_hash_table_iterator<k, l>();
+    // test_hash_table_iterator<k, l>();
+
+    test_minimizer_iterator<k, l>(path);
 
     return 0;
 }
