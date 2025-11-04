@@ -51,9 +51,6 @@ private:
 
     std::size_t pivot;  // Pivot-index, inclusive to the prefix window, breaking the window into the two sub-windows.
 
-    // Returns the 64-bit hash value of the `l`-mer `lmer`.
-    uint64_t lmer_hash(uint64_t lmer);
-
     // Moves the suffix window to the prefix window, and empties it—resetting
     // them to their default condition. Also recomputes the aggregate minimum
     // results of the windows.
@@ -70,6 +67,9 @@ public:
     Min_Iterator(Min_Iterator&&) = delete;
     Min_Iterator& operator=(const Min_Iterator&) = delete;
     Min_Iterator& operator=(Min_Iterator&&) = delete;
+
+    // Returns the 64-bit hash value of the `l`-mer `lmer`.
+    uint64_t lmer_hash(uint64_t lmer);
 
     // Resets the iterator to the sequence `seq`. The iterator sits at the
     // first `k`-mer after the construction.
@@ -151,7 +151,7 @@ inline void Min_Iterator<k, l>::reset(const char* const seq)
 template <uint16_t k, uint16_t l>
 inline void Min_Iterator<k, l>::reset_windows()
 {
-    assert(pivot == k - l);
+    assert(pivot == w - 1);
 
     // TODO: try vectorization, if not already done by the compiler.
 
@@ -192,7 +192,7 @@ inline uint64_t Min_Iterator<k, l>::hash(std::size_t& idx, bool& in_fwd) const
     }
     else
     {
-        idx = cmov(M_pre[rev][pivot] < M_suf[rev], P_pre[rev][pivot] - pivot, w - pivot + P_suf[rev]) + l - 1, in_fwd = false;
+        idx = k - 1 - (cmov(M_pre[rev][pivot] < M_suf[rev], P_pre[rev][pivot] - pivot, w - pivot + P_suf[rev]) + l - 1), in_fwd = false;
         return h_rev;
     }
 }
@@ -232,7 +232,7 @@ inline void Min_Iterator<k, l>::advance(const char ch)
     P_suf[rev] = cmov(M_suf[rev] < H[rev][pivot], P_suf[rev], pivot);
     M_suf[rev] = min(M_suf[rev], H[rev][pivot]);
 
-    if(pivot < static_cast<std::size_t>(k - l))
+    if(pivot < w - 1)
         pivot++;
     else
         reset_windows();
