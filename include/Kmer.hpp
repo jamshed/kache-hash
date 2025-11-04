@@ -188,6 +188,9 @@ public:
     // canonical form.
     static const Kmer<k>* canonical(const Kmer<k>& kmer, const Kmer<k>& rev_compl);
 
+    // Returns the `l`-mer situated at the `idx`'th base of the k-mer `kmer`.
+    template <uint16_t l> uint64_t lmer_at(std::size_t idx) const;
+
     // Gets the string label of the k-mer into the container `label`.
     template <typename T_container_>
     void get_label(T_container_& label) const;
@@ -604,6 +607,16 @@ template <uint16_t k>
 inline const Kmer<k>* Kmer<k>::canonical(const Kmer<k>& kmer, const Kmer<k>& rev_compl)
 {
     return kmer < rev_compl ? &kmer : &rev_compl;
+}
+
+
+template <uint16_t k>
+template <uint16_t l>
+inline uint64_t Kmer<k>::lmer_at(const std::size_t idx) const
+{
+    static_assert(k <= 32, "k-mer must fit in a machine word.");
+    constexpr uint64_t lmer_mask = (uint64_t(1) << (2 * l)) - 1;
+    return (kmer_data[0] >> (2 * (k - idx - l))) & lmer_mask;
 }
 
 
