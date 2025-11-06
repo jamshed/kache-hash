@@ -294,7 +294,7 @@ inline bool Streaming_Kmer_Hashset<k, l>::find_512(const Kmer<k> key, const std:
         if(cmp)
         {
             const auto off = __builtin_ctz(static_cast<uint8_t>(cmp));
-            return static_cast<std::size_t>(off) < sz;
+            return j + off < sz;
         }
     }
 
