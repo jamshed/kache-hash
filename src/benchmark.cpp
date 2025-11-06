@@ -707,7 +707,6 @@ uint64_t benchmark_set_query_positive_streaming(const std::string& path, const s
     }
 
     std::cerr << "Set size: " << S.size() << "\n";
-    std::cerr << "overflow: " << S.overflow_size() << "\n";
 
     const auto t_s = now();
 
@@ -796,10 +795,10 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
-    std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
 
     // std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
 
 
     return EXIT_SUCCESS;

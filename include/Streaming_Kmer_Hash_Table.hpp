@@ -404,18 +404,26 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
-    auto cmp = eq_mask(c_vec, query);
+    const auto cmp = eq_mask(c_vec, query);
 
-    while(cmp)
+    const auto j = cmp ? std::countr_zero(cmp) : 0;
+    if(M[i].cs[j] && key_equals(T[i * B + j], key))
     {
-        const auto j = std::countr_zero(cmp);
+        if constexpr(is_map_)   return T[i * B + j].second;
+        else                    return true;
+    }
+
+    auto cmp_rem = cmp & (cmp - 1);
+    while(cmp_rem)
+    {
+        const auto j = std::countr_zero(cmp_rem);
         if(key_equals(T[i * B + j], key))
         {
             if constexpr(is_map_)   return T[i * B + j].second;
             else                    return true;
         }
 
-        cmp &= (cmp - 1);
+        cmp_rem &= (cmp_rem - 1);
     }
 
     return null_val;
