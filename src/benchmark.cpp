@@ -15,8 +15,9 @@
 
 #include <cstdint>
 #include <atomic>
-#include <cstdlib>
 #include <iostream>
+#include <cmath>
+#include <cstdlib>
 
 
 uint64_t benchmark_file_read(const std::string& path)
@@ -376,7 +377,7 @@ template <uint16_t k>
 uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
     iceberg_table M;
-    (void)final_sz;
+    iceberg_init(&M, std::ceil(std::log2(final_sz)));
 
     const auto t_s = now();
 
@@ -407,9 +408,7 @@ uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::st
             std::size_t kmer_idx = 0;
             while(true)
             {
-                std::cerr << "Inserting k-mer from index " << kmer_idx << "\n";
                 iceberg_insert(&M, v.canonical().as_int(), 1, parlay::worker_id());
-                std::cerr << "Inserted k-mer from index " << kmer_idx << "\n";
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -433,7 +432,7 @@ uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::st
     const auto t_e = now();
     std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
 
-    return 0; //M.size();
+    return tot_balls(&M);
 }
 
 
@@ -797,9 +796,9 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
 
-    std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
 
 
