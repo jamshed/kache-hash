@@ -677,7 +677,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             else
             {
                 unlock(q), unlock(p);
-                overflow().emplace(key, val);
+                if constexpr(mt_)
+                    overflow().insert(flat_t(key, val));
+                else
+                    overflow().insert(key, val);
             }
         }
     }
