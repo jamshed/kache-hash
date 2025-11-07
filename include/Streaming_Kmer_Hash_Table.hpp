@@ -65,10 +65,9 @@ private:
     // Metadata of the k-mers in a bucket.
     struct Metadata
     {
-        uint8_t cs[B];  // Checksums of the k-mers.
-        uint8_t min_coord[B];   // Minimizer coordinates within the k-mers.
+        uint8_t sz; // Size of the bucket.
 
-        static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `min_coord[0]` used to lock the bucket.
+        static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `sz` used to lock the bucket.
     };
 
     Metadata* M;    // Metadata table of the buckets.
@@ -89,9 +88,6 @@ private:
     // Returns `true` iff `key` matches to the key of the element `e`.
     static constexpr bool key_equals(const flat_t& e, const Kmer<k>& key) { return Streaming_Kmer_Hash_Table::key(e) == key; }
 
-    // Returns the 32-bit equality mask of the vectors `x` and `y`.
-    static uint32_t eq_mask(__m256i x, __m256i y);
-
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
@@ -102,49 +98,49 @@ private:
     // settings.
     void unlock(std::size_t b);
 
-    // Returns the associated value iff the k-mer `key` with checksum `c` is
-    // present in the `i`'th bucket.
-    find_ret_t find(Kmer<k> key, uint8_t c, std::size_t i) const;
+    // Returns the associated value iff the k-mer `key` is present in the `i`'th
+    // bucket.
+    find_ret_t find(Kmer<k> key, std::size_t i) const;
 
     // Returns the associated value iff the k-mer `key` is present in the
     // overflow table.
     find_ret_t find_in_overflow(Kmer<k> key) const;
 
-    // Updates the associated value of the k-mer `key` with checksum `c` in the
-    // `i`'th bucket through `f` iff it is present there, returning the earlier
-    // value. Returns `null_opt` otherwise.
+    // Updates the associated value of the k-mer `key` in the `i`'th bucket
+    // through `f` iff it is present there, returning the earlier value. Returns
+    // `null_opt` otherwise.
     template <typename F, typename V = T_>
-    val_t find_and_update(Kmer<k> key, uint8_t c, std::size_t i, const F& f) requires (is_map_);
+    val_t find_and_update(Kmer<k> key, std::size_t i, const F& f) requires (is_map_);
 
-    // Directly places the element `e` with checksum `c` into the `i`'th bucket
-    // at index `j`.
-    void place_at(const flat_t& e, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = e, M[i].cs[j] = c; }
+    // Directly places the element `e` in the `i`'th bucket at index `j`,
+    // updating its size.
+    void place_at(const flat_t& e, const std::size_t i, const std::size_t j) { T[i * B + j] = e; M[i].sz++; }
 
-    // Tries to insert the element `e` with checksum `c` into the `i`'th bucket.
-    // It succeeds iff the key was absent in the bucket beforehand and there was
-    // empty space, returning `true` in that case. Returns `false` otherwise; in
-    // this case if the key was already in the bucket, it puts the associated
-    // value at `val`, or else puts `null_val` at `val`.
-    bool try_insert_at(const flat_t& e, uint8_t c, std::size_t i, find_ret_t& val);
+    // Tries to insert the element `e` into the `i`'th bucket. It succeeds iff
+    // the key was absent in the bucket beforehand and there was empty space,
+    // returning `true` in that case. Returns `false` otherwise; in this case if
+    // the key was already in the bucket, it puts the associated value at `val`,
+    // or else puts `null_val` at `val`.
+    bool try_insert_at(const flat_t& e, std::size_t i, find_ret_t& val);
 
     // Tries to update the associated value of the k-mer `key` with checksum `c`
     // at the `i`'th bucket through `f` iff it is present there. Otherwise if
     // the bucket has space, puts `key` with value `val` into it. Returns `true`
     // iff the upsert succeeds.
     template <typename F, typename V = T_>
-    bool try_upsert_at(Kmer<k> key, uint8_t c, std::size_t i, const F& f, const V& val) requires (is_map_);
+    bool try_upsert_at(Kmer<k> key, std::size_t i, const F& f, const V& val) requires (is_map_);
 
-    // Tries to insert the element `e` with rolling hash `rh` and minimizer-
-    // iterator `min_it` into the table. It succeeds iff the key was absent in
-    // the table beforehand, and returns `null_val` in that case. Otherwise it
-    // returns the currently associated value.
-    find_ret_t insert(const flat_t& e, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it);
+    // Tries to insert the element `e` with minimizer-iterator `min_it` into the
+    // table. It succeeds iff the key was absent in the table beforehand, and
+    // returns `null_val` in that case. Otherwise it returns the currently
+    // associated value.
+    find_ret_t insert(const flat_t& e, const Min_Iterator<k, l>& min_it);
 
-    // Inserts the k-mer `key` with rolling hash `rh` and minimizer-iterator
-    // `min_it` into the table with associated value `val` iff it is not already
-    // present. Otherwise updates the current associated value through `f`.
+    // Inserts the k-mer `key` with minimizer-iterator `min_it` into the table
+    // with associated value `val` iff it is not already present. Otherwise
+    // updates the current associated value through `f`.
     template <typename F, typename V = T_>
-    void upsert(const Kmer<k> key, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_);
+    void upsert(const Kmer<k> key, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_);
 
     // Returns the overflow table. `mt_` denotes whether multiple threads can
     // access the table concurrently.
@@ -230,7 +226,6 @@ class Kmer_Window
     template <uint16_t k_, bool mt_, typename T_, uint16_t l_> friend class Streaming_Kmer_Hash_Table;
 
     Directed_Vertex<k> v;
-    Rolling_Hash<k, true> rh;
     Min_Iterator<k, l> min_it;
 
 public:
@@ -239,7 +234,6 @@ public:
     void init(const char* const s)
     {
         v = Directed_Vertex<k>(Kmer<k>(s));
-        rh.init(s);
         min_it.reset(s);
     }
 
@@ -250,7 +244,6 @@ public:
 
         v.roll_forward(DNA_Utility::map_base(ch));
         min_it.advance(ch);
-        rh.advance(ch);
     }
 };
 
@@ -272,7 +265,7 @@ private:
     Iterator(const ht_t& ht, const std::size_t b, const int8_t s): ht(ht), b(b), slot(s)
     {
         assert(b == 0 || b == ht.cap_);
-        if(b < ht.cap_ && s >= 0 && s < static_cast<int8_t>(B) && !ht.M[b].cs[s])
+        if(b < ht.cap_ && s >= 0 && s >= ht.M[b].sz)
             operator++();
     }
 
@@ -284,9 +277,9 @@ public:
     {
         for(; b < ht.cap_; ++b)
         {
-            for(slot++; slot < static_cast<int8_t>(B); ++slot)
-                if(ht.M[b].cs[slot])
-                    return;
+            slot++;
+            if(slot < ht.M[b].sz)
+                return;
 
             slot = -1;
         }
@@ -330,7 +323,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
 {
     sum_len = 0, sup_kmer_c = 0;
 
-    std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
+    std::memset(M, 0, cap_ * sizeof(Metadata));
 
     overflow_.clear(), overflow_mt_.clear();
 
@@ -339,26 +332,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::eq_mask(const __m256i x, const __m256i y)
-{
-#ifdef AVX_512
-    return _mm256_cmpeq_epi8_mask(x, y);
-#else
-    const auto cmp = _mm256_cmpeq_epi8(x, y);
-    return static_cast<uint32_t>(_mm256_movemask_epi8(cmp));
-#endif
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const std::size_t b) const
 {
-    const auto zero  = _mm256_setzero_si256();
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[b].cs));
-    const auto cmp   = eq_mask(c_vec, zero);
-
-    assert(std::countr_zero(cmp) + std::countl_one(cmp) == B);
-    return std::countr_zero(cmp);   // This must hold if no deletion is performed at the table.
+    if constexpr(mt_)
+        return M[b].sz & ~Metadata::lock_mask;
+    else
+        return M[b].sz;
 }
 
 
@@ -368,8 +347,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
     if constexpr(mt_)
         while(true)
         {
-            const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
-            if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+            const uint8_t exp_unlocked = M[b].sz & ~Metadata::lock_mask;
+            if(__sync_bool_compare_and_swap(&M[b].sz, exp_unlocked, exp_unlocked | Metadata::lock_mask))
                 break;
         }
 }
@@ -380,8 +359,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b
 {
     if constexpr(mt_)
     {
-        assert(M[b].min_coord[0] & Metadata::lock_mask);
-        M[b].min_coord[0] &= ~Metadata::lock_mask;
+        assert(M[b].sz & Metadata::lock_mask);
+        M[b].sz &= ~Metadata::lock_mask;
     }
 }
 
@@ -398,32 +377,35 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::size() const
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const -> find_ret_t
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, const std::size_t i) const -> find_ret_t
 {
-    assert(i < cap_);
+    assert(i < cap_);   assert(size(i) <= B);
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
-    const auto query = _mm256_set1_epi8(static_cast<char>(c));
-    const auto cmp = eq_mask(c_vec, query);
+    constexpr std::size_t stride = is_map_ ? 4 : 8;
+    constexpr __mmask8 key_mask = 0b01'01'01'01;
 
-    const auto j = cmp ? __builtin_ctz(cmp) : 0;
-    if(M[i].cs[j] && key_equals(T[i * B + j], key))
+    const auto query = _mm512_set1_epi64(key.as_int());
+
+    std::size_t j = 0;
+    const auto sz = bucket_size(i);
+    for(; j < sz && j + stride <= B; j += stride)
     {
-        if constexpr(is_map_)   return T[i * B + j].second;
-        else                    return true;
-    }
+        const auto v = _mm512_load_si512(static_cast<const void*>(T + (i * B + j)));
+        auto cmp = _mm512_cmpeq_epi64_mask(v, query);
+        if constexpr(is_map_)
+            cmp &= key_mask;
 
-    auto cmp_rem = cmp & (cmp - 1);
-    while(cmp_rem)
-    {
-        const auto j = __builtin_ctz(cmp_rem);
-        if(key_equals(T[i * B + j], key))
+        if(cmp)
         {
-            if constexpr(is_map_)   return T[i * B + j].second;
-            else                    return true;
+            auto off = __builtin_ctz(static_cast<uint8_t>(cmp));
+            if constexpr(is_map_)
+            {
+                off >>= 1;
+                return j + off < sz ? T[i * B + j + off].second : null_val;
+            }
+            else
+                return j + off < sz;
         }
-
-        cmp_rem &= (cmp_rem - 1);
     }
 
     return null_val;
@@ -446,25 +428,34 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kme
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f) -> val_t requires (is_map_)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer<k> key, const std::size_t i, const F& f) -> val_t requires (is_map_)
 {
-    assert(i < cap_);
+    assert(i < cap_);   assert(size(i) <= B);
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
-    const auto query = _mm256_set1_epi8(static_cast<char>(c));
-    auto cmp = eq_mask(c_vec, query);
+    constexpr std::size_t stride = 4;
+    constexpr __mmask8 key_mask = 0b01'01'01'01;
 
-    while(cmp)
+    const auto query = _mm512_set1_epi64(key.as_int());
+
+    std::size_t j = 0;
+    const auto sz = bucket_size(i);
+    for(; j < sz && j + stride <= B; j += stride)
     {
-        const auto j = __builtin_ctz(cmp);
-        if(key_equals(T[i * B + j], key))
-        {
-            const auto prev_val = T[i * B + j].second;
-            T[i * B + j].second = f(prev_val);
-            return prev_val;
-        }
+        const auto v = _mm512_load_si512(static_cast<const void*>(T + (i * B + j)));
+        const auto cmp = _mm512_cmpeq_epi64_mask(v, query) & key_mask;
 
-        cmp &= (cmp - 1);
+        if(cmp)
+        {
+            const auto off = __builtin_ctz(static_cast<uint8_t>(cmp)) >> 1;
+            if(j + off < sz)
+            {
+                const auto prev_val = T[i * B + j + off].second;
+                T[i * B + j + off].second = f(prev_val);
+                return prev_val;
+            }
+            else
+                return null_val;
+        }
     }
 
     return null_val;
@@ -472,31 +463,27 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const uint8_t c, const std::size_t i, find_ret_t& val)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const std::size_t i, find_ret_t& val)
 {
     lock(i);
 
     const auto& key = this->key(e);
-    if(const auto r = find(key, c, i))
+    if(const auto r = find(key, i))
     {
         unlock(i);
         val = r;
         return false;
     }
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
-    const auto zero = _mm256_setzero_si256();
-    const auto cmp = eq_mask(c_vec, zero);
-
-    const auto j = std::countr_zero(cmp);
-    if(j == B)
+    const auto sz = bucket_size(i);
+    if(sz == B)
     {
         unlock(i);
         val = null_val;
         return false;
     }
 
-    place_at(e, c, i, j);
+    place_at(e, i, sz);
     unlock(i);
     return true;
 }
@@ -504,28 +491,24 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f, const V& val) requires (is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const std::size_t i, const F& f, const V& val) requires (is_map_)
 {
     lock(i);
 
-    if(find_and_update(key, c, i, f))
+    if(find_and_update(key, i, f))
     {
         unlock(i);
         return true;
     }
 
-    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
-    const auto zero = _mm256_setzero_si256();
-    const auto cmp = eq_mask(c_vec, zero);
-
-    const auto j = std::countr_zero(cmp);
+    const auto j = bucket_size(i);
     if(j == B)
     {
         unlock(i);
         return false;
     }
 
-    place_at(std::make_pair(key, val), c, i, j);
+    place_at(std::make_pair(key, val), i, j);
     unlock(i);
     return true;
 }
@@ -534,7 +517,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) requires (!is_map_)
 {
-    return insert(w.v.canonical(), w.rh, w.min_it);
+    return insert(w.v.canonical(), w.min_it);
 }
 
 
@@ -542,7 +525,7 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> val_t requires (is_map_)
 {
-    return insert(std::make_pair(w.v.canonical(), val), w.rh, w.min_it);
+    return insert(std::make_pair(w.v.canonical(), val), w.min_it);
 }
 
 
@@ -550,20 +533,19 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val) requires (is_map_)
 {
-    upsert(w.v.canonical(), w.rh, w.min_it, f, val);
+    upsert(w.v.canonical(), w.min_it, f, val);
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it) -> find_ret_t
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, const Min_Iterator<k, l>& min_it) -> find_ret_t
 {
     const auto h = min_it.hash();
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
     find_ret_t v;
-    if(const auto r = try_insert_at(x, c, b, v))
+    if(const auto r = try_insert_at(x, b, v))
         return null_val;
     else if(v)
         return v;
@@ -581,38 +563,29 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
         const auto key = this->key(x);
 
         lock(p), lock(q);
-        if(const auto r_p = find(key, c, p))
+        if(const auto r_p = find(key, p))
         {
             unlock(q), unlock(p);
             return r_p;
         }
-        else if(const auto r_q = find(key, c, q))
+        else if(const auto r_q = find(key, q))
         {
             unlock(q), unlock(p);
             return r_q;
         }
         else
         {
-            const auto zero = _mm256_setzero_si256();
-
-            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
-            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
-
-            const auto cmp_p = eq_mask(c_vec_p, zero);
-            const auto cmp_q = eq_mask(c_vec_q, zero);
-
-            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
-            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
-            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
+            const auto sz_p = bucket_size(p);
+            const auto sz_q = bucket_size(q);
 
             if(sz_p < sz_q)
             {
-                place_at(x, c, p, sz_p);
+                place_at(x, p, sz_p);
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(x, c, q, sz_q);
+                place_at(x, q, sz_q);
                 unlock(q), unlock(p);
             }
             else
@@ -629,14 +602,13 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_)
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_)
 {
     const auto h = min_it.hash();
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-    if(!try_upsert_at(key, c, b, f, val))
+    if(!try_upsert_at(key, b, f, val))
     {
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -648,30 +620,21 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
         assert(p != q);
 
         lock(p), lock(q);
-        if(find_and_update(key, c, p, f) || find_and_update(key, c, q, f))
+        if(find_and_update(key, p, f) || find_and_update(key, q, f))
             unlock(q), unlock(p);
         else
         {
-            const auto zero = _mm256_setzero_si256();
-
-            const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[p].cs));
-            const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[q].cs));
-
-            const auto cmp_p = eq_mask(c_vec_p, zero);
-            const auto cmp_q = eq_mask(c_vec_q, zero);
-
-            const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
-            const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
-            assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
+            const auto sz_p = bucket_size(p);
+            const auto sz_q = bucket_size(q);
 
             if(sz_p < sz_q)
             {
-                place_at(std::make_pair(key, val), c, p, sz_p);
+                place_at(std::make_pair(key, val), p, sz_p);
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(std::make_pair(key, val), c, q, sz_q);
+                place_at(std::make_pair(key, val), q, sz_q);
                 unlock(q), unlock(p);
             }
             else
@@ -692,8 +655,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-    if(const auto r = find(key, c, b))
+    if(const auto r = find(key, b))
         return r;
 
     if(bucket_size(b) < B)
@@ -705,8 +667,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
 
     const auto p = h_1 & idx_mask;
     const auto q = h_2 & idx_mask;
-    if(const auto r_p = find(key, c, p))    return r_p;
-    if(const auto r_q = find(key, c, q))    return r_q;
+    if(const auto r_p = find(key, p))    return r_p;
+    if(const auto r_q = find(key, q))    return r_q;
 
     if(bucket_size(p) == B && bucket_size(q) == B)
         return find_in_overflow(key);

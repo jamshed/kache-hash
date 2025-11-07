@@ -792,13 +792,13 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
 
     // std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
-    std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
 
 
     return EXIT_SUCCESS;
