@@ -1,4 +1,5 @@
 
+#include "DNA_Utility.hpp"
 #include "Parser.hpp"
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
@@ -500,6 +501,58 @@ uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& 
 
 
 template <uint16_t k>
+uint64_t benchmark_map_insert_generic_sequential_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    ankerl::unordered_dense::map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        Directed_Vertex<k>v(seq);
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            M[v.canonical()]++;
+            if(kmer_idx + k == len)
+                break;
+
+            v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+            kmer_idx++;
+        }
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
 uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
 {
     Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz);
@@ -851,8 +904,9 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
 
+    std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
-    std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
 
