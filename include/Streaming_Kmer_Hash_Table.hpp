@@ -245,6 +245,9 @@ public:
         v.roll_forward(DNA_Utility::map_base(ch));
         min_it.advance(ch);
     }
+
+    // Returns the minimizer-hash.
+    auto minimizer_hash() const { return min_it.hash(); }
 };
 
 
