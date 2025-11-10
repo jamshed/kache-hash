@@ -252,6 +252,9 @@ public:
         min_it.advance(ch);
         rh.advance(ch);
     }
+
+    // Returns the minimizer-hash.
+    auto minimizer_hash() const { return min_it.hash(); }
 };
 
 
