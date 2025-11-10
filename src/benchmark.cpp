@@ -1,17 +1,24 @@
 
+#include "DNA_Utility.hpp"
 #include "Parser.hpp"
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
+
+#include "boost/unordered/concurrent_flat_set.hpp"
+#include "icebergHT/iceberg_table.h"
 #include "utility.hpp"
 
-#include "nthash/nthash.hpp"
+// #include "nthash/nthash.hpp"
 #include "unordered_dense/unordered_dense.h"
+#include "parlay/parallel.h"
 
 #include <cstdint>
-#include <cstdlib>
+#include <atomic>
 #include <iostream>
+#include <cmath>
+#include <cstdlib>
 
 
 uint64_t benchmark_file_read(const std::string& path)
@@ -109,6 +116,7 @@ uint64_t benchmark_rolling_hash(const std::string& path)
 }
 
 
+/*
 template <uint16_t k>
 uint64_t benchmark_ntHash(const std::string& path)
 {
@@ -130,6 +138,7 @@ uint64_t benchmark_ntHash(const std::string& path)
     input.close();
     return h;
 }
+*/
 
 
 template <uint16_t k, typename T_ht_>
@@ -238,6 +247,638 @@ uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& 
 }
 
 
+template <uint16_t k, typename T_ht_>
+uint64_t benchmark_set_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    T_ht_ S(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                S.insert(v.canonical());
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return S.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_boost_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.emplace_or_visit(v.canonical(), 1, [](auto& kv)
+                {
+                    kv.second++;
+                });
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    iceberg_table M;
+    iceberg_init(&M, std::ceil(std::log2(final_sz)));
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                iceberg_insert(&M, v.canonical().as_int(), 1, parlay::worker_id());
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return tot_balls(&M);
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Kmer_Window<k> w;
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                S.insert(w);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return S.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_map_insert_generic_sequential_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    ankerl::unordered_dense::map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        Directed_Vertex<k>v(seq);
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            M[v.canonical()]++;
+            if(kmer_idx + k == len)
+                break;
+
+            v.roll_forward(DNA_Utility::map_base(seq[kmer_idx + k]));
+            kmer_idx++;
+        }
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        Kmer_Window<k> w;
+        w.init(seq);
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            M.upsert(w, [](const uint64_t v)
+            {
+                return v + 1;
+            }, 1);
+
+            if(kmer_idx + k == len)
+                break;
+
+            w.advance(seq[kmer_idx + k]);
+            kmer_idx++;
+        }
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hash_Table<k, true, uint64_t> M(final_sz);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Kmer_Window<k> w;
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.upsert(w, [](const uint64_t v)
+                {
+                    return v + 1;
+                }, 1);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time: " << duration(t_e - t_s) << "s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_boost_set_query_positive(const std::string& path, const std::size_t final_sz)
+{
+    boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>> S(final_sz);
+
+    {
+        Parser input(path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            if(len < k)
+                continue;
+
+            const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    S.insert(v.canonical());
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+            }
+            , 1);
+        }
+
+        input.close();
+    }
+
+    std::cerr << "Set size: " << S.size() << "\n";
+
+    const auto t_s = now();
+
+    std::atomic_uint64_t c = 0;
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            std::size_t found = 0;
+            while(true)
+            {
+                found += S.count(v.canonical());
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+
+            c += found;
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rQueried " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    const auto t_e = now();
+    std::cerr << "\n\tTime: " << duration(t_e - t_s) << "s.\n";
+
+    return c;
+}
+
+
+template <uint16_t k>
+uint64_t benchmark_set_query_positive_streaming(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
+
+    {
+        Parser input(path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+            if(len < k)
+                continue;
+
+            const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Kmer_Window<k> w;
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    S.insert(w);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
+            }
+            , 1);
+        }
+    }
+
+    std::cerr << "Set size: " << S.size() << "\n";
+
+    const auto t_s = now();
+
+    std::atomic_uint64_t c = 0;
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Kmer_Window<k> w;
+            w.init(s);
+            std::size_t kmer_idx = 0, found = 0;
+            while(true)
+            {
+                const auto r = S.find(w); assert(r);
+                found += r;
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+
+            c += found;
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rQueried " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    const auto t_e = now();
+    std::cerr << "\n\tTime: " << duration(t_e - t_s) << "s.\n";
+
+    return c;
+}
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
@@ -259,7 +900,18 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_rolling_hash<k>(path) << "\n";
     // std::cerr << benchmark_ntHash<k>(path) << "\n";
     // std::cerr << benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
+    // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+
+    std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+
+    // std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
 
 
     return EXIT_SUCCESS;
