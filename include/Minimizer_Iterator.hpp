@@ -81,7 +81,7 @@ public:
     // Returns the minimizer's 64-bit hash value, and sets `in_fwd` to `true`
     // iff the minimizer comes from the forward strand. It also places the
     // position of the minimizer `l`-mer, in its corresponding strand, at `idx`.
-    uint64_t hash(std::size_t& idx, bool& in_fwd) const;
+    uint64_t hash(uint8_t& idx, bool& in_fwd) const;
 
     // Moves the iterator to a next k-mer extending it with the character `ch`.
     void advance(char ch);
@@ -180,7 +180,7 @@ inline uint64_t Min_Iterator<k, l>::hash() const
 
 
 template <uint16_t k, uint16_t l>
-inline uint64_t Min_Iterator<k, l>::hash(std::size_t& idx, bool& in_fwd) const
+inline uint64_t Min_Iterator<k, l>::hash(uint8_t& idx, bool& in_fwd) const
 {
     const auto h_fwd = min(M_pre[fwd][pivot], M_suf[fwd]);
     const auto h_rev = min(M_pre[rev][pivot], M_suf[rev]);
