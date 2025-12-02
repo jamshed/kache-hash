@@ -66,6 +66,7 @@ private:
     struct Metadata
     {
         uint8_t sz; // Size of the bucket.
+        uint8_t min_pos[B]; // Position of the minimizers in the k-mers.
 
         static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `sz` used to lock the bucket.
     };
