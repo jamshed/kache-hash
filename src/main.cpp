@@ -483,12 +483,13 @@ void test_minimizer_iterator(const std::string& path)
             Directed_Vertex<k> v(s);
             min_it.reset(s), min_it_base.reset(s, s_len);
             std::size_t kmer_idx = 0;
-            uint8_t min_idx;
-            bool in_fwd;
+            uint8_t min_coord;
             while(true)
             {
-                const auto h = min_it.hash(min_idx, in_fwd);
+                const auto h = min_it.hash(min_coord);
                 const auto h_base = min_it_base.hash();
+                const uint8_t min_idx = min_coord & 0b0111'1111;
+                const bool in_fwd = min_coord & 0b1000'0000;
 
                 if(h != h_base)
                 {

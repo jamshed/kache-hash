@@ -78,10 +78,11 @@ public:
     // Returns the minimizer's 64-bit hash value.
     uint64_t hash() const;
 
-    // Returns the minimizer's 64-bit hash value, and sets `in_fwd` to `true`
-    // iff the minimizer comes from the forward strand. It also places the
-    // position of the minimizer `l`-mer, in its corresponding strand, at `idx`.
-    uint64_t hash(uint8_t& idx, bool& in_fwd) const;
+    // Returns the minimizer's 64-bit hash value, and sets the highest bit of
+    // `min_coord` to `1` iff the minimizer comes from the forward strand, and
+    // places the position of the minimizer `l`-mer in its corresponding strand
+    // at `min_coord`'s lowest 7 bits.
+    uint64_t hash(uint8_t& min_coord) const;
 
     // Moves the iterator to a next k-mer extending it with the character `ch`.
     void advance(char ch);
@@ -180,19 +181,19 @@ inline uint64_t Min_Iterator<k, l>::hash() const
 
 
 template <uint16_t k, uint16_t l>
-inline uint64_t Min_Iterator<k, l>::hash(uint8_t& idx, bool& in_fwd) const
+inline uint64_t Min_Iterator<k, l>::hash(uint8_t& min_coord) const
 {
     const auto h_fwd = min(M_pre[fwd][pivot], M_suf[fwd]);
     const auto h_rev = min(M_pre[rev][pivot], M_suf[rev]);
 
     if(h_fwd <= h_rev)
     {
-        idx = cmov(M_pre[fwd][pivot] < M_suf[fwd], P_pre[fwd][pivot] - pivot, w - pivot + P_suf[fwd]), in_fwd = true;
+        min_coord = cmov(M_pre[fwd][pivot] < M_suf[fwd], P_pre[fwd][pivot] - pivot, w - pivot + P_suf[fwd]) | 0b1000'0000;
         return h_fwd;
     }
     else
     {
-        idx = k - 1 - (cmov(M_pre[rev][pivot] < M_suf[rev], P_pre[rev][pivot] - pivot, w - pivot + P_suf[rev]) + l - 1), in_fwd = false;
+        min_coord = k - 1 - (cmov(M_pre[rev][pivot] < M_suf[rev], P_pre[rev][pivot] - pivot, w - pivot + P_suf[rev]) + l - 1);
         return h_rev;
     }
 }
