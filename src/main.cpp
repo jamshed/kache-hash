@@ -483,7 +483,7 @@ void test_minimizer_iterator(const std::string& path)
             Directed_Vertex<k> v(s);
             min_it.reset(s), min_it_base.reset(s, s_len);
             std::size_t kmer_idx = 0;
-            std::size_t min_idx;
+            uint8_t min_idx;
             bool in_fwd;
             while(true)
             {
@@ -519,6 +519,8 @@ void test_minimizer_iterator(const std::string& path)
         }
         , 1);
     }
+
+    std::cerr << "All minimizers computed correctly.\n";
 
     input.close();
 }
