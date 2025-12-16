@@ -116,9 +116,10 @@ private:
     template <typename F, typename V = T_>
     val_t find_and_update(Kmer<k> key, uint8_t c, std::size_t i, const F& f) requires (is_map_);
 
-    // Directly places the element `e` with checksum `c` into the `i`'th bucket
-    // at index `j`.
-    void place_at(const flat_t& e, const uint8_t c, const std::size_t i, const std::size_t j) { T[i * B + j] = e, M[i].cs[j] = c; }
+    // Directly places the element `e` with checksum `c` and minimizer-
+    // coordinate `m` into the `i`'th bucket at index `j`.
+    void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
+    { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m; }
 
     // Tries to insert the element `e` with checksum `c` into the `i`'th bucket.
     // It succeeds iff the key was absent in the bucket beforehand and there was
@@ -496,7 +497,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
         return false;
     }
 
-    place_at(e, c, i, j);
+    place_at(e, c, 0, i, j);    // TODO: min-offset.
     unlock(i);
     return true;
 }
@@ -525,7 +526,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
         return false;
     }
 
-    place_at(std::make_pair(key, val), c, i, j);
+    place_at(std::make_pair(key, val), c, 0, i, j); // TODO: min-offset.
     unlock(i);
     return true;
 }
@@ -607,12 +608,12 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
             if(sz_p < sz_q)
             {
-                place_at(x, c, p, sz_p);
+                place_at(x, c, 0, p, sz_p); // TODO: min-offset.
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(x, c, q, sz_q);
+                place_at(x, c, 0, q, sz_q); // TODO: min-offset.
                 unlock(q), unlock(p);
             }
             else
@@ -666,12 +667,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
 
             if(sz_p < sz_q)
             {
-                place_at(std::make_pair(key, val), c, p, sz_p);
+                place_at(std::make_pair(key, val), c, 0, p, sz_p);  // TODO: min-offset.
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(std::make_pair(key, val), c, q, sz_q);
+                place_at(std::make_pair(key, val), c, 0, q, sz_q);  // TODO: min-offset.
                 unlock(q), unlock(p);
             }
             else
