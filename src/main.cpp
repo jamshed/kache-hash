@@ -460,6 +460,51 @@ void test_hash_table_iterator()
 
 
 template <uint16_t k, uint16_t l>
+void test_kmer_base(const std::string& path)
+{
+    Parser input(path);
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                for(uint16_t i = 0; i < k; ++i)
+                    if(v.kmer().base_at(i) != DNA_Utility::map_base(s[kmer_idx + k - 1 - i]))
+                    {
+                        std::cerr << "Mismatching k-mer base encoding.\n";
+                        std::exit(EXIT_FAILURE);
+                    }
+
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+    }
+
+    std::cerr << "All k-mer bases are encoded / decoded correctly.\n";
+
+    input.close();
+}
+
+
+template <uint16_t k, uint16_t l>
 void test_minimizer_iterator(const std::string& path)
 {
     Parser input(path);

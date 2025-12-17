@@ -128,6 +128,10 @@ public:
     // `n_{k - 1} ... n_1 n_0`, this is the base `n_0`.
     DNA::Base back() const;
 
+    // Returns the `DNA::Base` (2-bit) encoding of the character at the `idx`'th
+    // index of the k-mer. The k-mer representation is `n_{k - 1} ... n_1 n_0`.
+    DNA::Base base_at(uint16_t idx) const;
+
     // Returns the binary data of the k-mer.
     const uint64_t* data() const;
 
@@ -467,7 +471,7 @@ inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
 template <uint16_t k>
 inline DNA::Base Kmer<k>::front() const
 {
-    // Relative index of the most significant nucleotide in it's 64-bit word.
+    // Relative index of the most significant nucleotide in its 64-bit word.
     constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
 
     // Mask to extract the most significant nucleotide.
@@ -484,6 +488,16 @@ inline DNA::Base Kmer<k>::back() const
     constexpr uint64_t mask_LSN = static_cast<uint64_t>(0b11);
 
     return DNA::Base(kmer_data[0] & mask_LSN);
+}
+
+
+template <uint16_t k>
+inline DNA::Base Kmer<k>::base_at(const uint16_t idx) const
+{
+    const uint16_t wrd_idx = idx / 32;  // Index of the word containing the nucleotide.
+    const uint16_t rel_idx = 2 * (idx & 31);    // Relative index of the nucleotide in its 64-bit word.
+
+    return DNA::Base((kmer_data[wrd_idx] & (uint64_t(0b11) << rel_idx)) >> rel_idx);
 }
 
 
