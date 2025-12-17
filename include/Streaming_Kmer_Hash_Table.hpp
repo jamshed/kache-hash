@@ -121,12 +121,13 @@ private:
     void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
     { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m; }
 
-    // Tries to insert the element `e` with checksum `c` into the `i`'th bucket.
-    // It succeeds iff the key was absent in the bucket beforehand and there was
-    // empty space, returning `true` in that case. Returns `false` otherwise; in
-    // this case if the key was already in the bucket, it puts the associated
-    // value at `val`, or else puts `null_val` at `val`.
-    bool try_insert_at(const flat_t& e, uint8_t c, std::size_t i, find_ret_t& val);
+    // Tries to insert the element `e` with checksum `c` and minimizer-
+    // coordinate `m` into the `i`'th bucket. It succeeds iff the key was absent
+    // in the bucket beforehand and there was empty space, returning `true` in
+    // that case. Returns `false` otherwise; in this case if the key was already
+    // in the bucket, it puts the associated value at `val`, or else puts
+    // `null_val` at `val`.
+    bool try_insert_at(const flat_t& e, uint8_t c, uint8_t m, std::size_t i, find_ret_t& val);
 
     // Tries to update the associated value of the k-mer `key` with checksum `c`
     // at the `i`'th bucket through `f` iff it is present there. Otherwise if
@@ -473,7 +474,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const uint8_t c, const std::size_t i, find_ret_t& val)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, find_ret_t& val)
 {
     lock(i);
 
@@ -497,7 +498,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
         return false;
     }
 
-    place_at(e, c, 0, i, j);    // TODO: min-offset.
+    place_at(e, c, m, i, j);
     unlock(i);
     return true;
 }
@@ -558,13 +559,14 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it) -> find_ret_t
 {
-    const auto h = min_it.hash();
+    uint8_t m;
+    const auto h = min_it.hash(m);
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
     const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
     find_ret_t v;
-    if(const auto r = try_insert_at(x, c, b, v))
+    if(const auto r = try_insert_at(x, c, m, b, v))
         return null_val;
     else if(v)
         return v;
@@ -608,12 +610,12 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
             if(sz_p < sz_q)
             {
-                place_at(x, c, 0, p, sz_p); // TODO: min-offset.
+                place_at(x, c, m, p, sz_p);
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(x, c, 0, q, sz_q); // TODO: min-offset.
+                place_at(x, c, m, q, sz_q);
                 unlock(q), unlock(p);
             }
             else
