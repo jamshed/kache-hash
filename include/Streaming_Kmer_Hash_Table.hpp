@@ -130,11 +130,11 @@ private:
     bool try_insert_at(const flat_t& e, uint8_t c, uint8_t m, std::size_t i, find_ret_t& val);
 
     // Tries to update the associated value of the k-mer `key` with checksum `c`
-    // at the `i`'th bucket through `f` iff it is present there. Otherwise if
-    // the bucket has space, puts `key` with value `val` into it. Returns `true`
-    // iff the upsert succeeds.
+    // and minimizer-coordinate `m` at the `i`'th bucket through `f` iff it is
+    // present there. Otherwise if the bucket has space, puts `key` with value
+    // `val` into it. Returns `true` iff the upsert succeeds.
     template <typename F, typename V = T_>
-    bool try_upsert_at(Kmer<k> key, uint8_t c, std::size_t i, const F& f, const V& val) requires (is_map_);
+    bool try_upsert_at(Kmer<k> key, uint8_t c, uint8_t m, std::size_t i, const F& f, const V& val) requires (is_map_);
 
     // Tries to insert the element `e` with rolling hash `rh` and minimizer-
     // iterator `min_it` into the table. It succeeds iff the key was absent in
@@ -506,7 +506,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f, const V& val) requires (is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const uint8_t m, const std::size_t i, const F& f, const V& val) requires (is_map_)
 {
     lock(i);
 
@@ -527,7 +527,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
         return false;
     }
 
-    place_at(std::make_pair(key, val), c, 0, i, j); // TODO: min-offset.
+    place_at(std::make_pair(key, val), c, m, i, j);
     unlock(i);
     return true;
 }
@@ -634,12 +634,13 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const Rolling_Hash<k, true>& rh, const Min_Iterator<k, l>& min_it, const F& f, const V& val) requires (is_map_)
 {
-    const auto h = min_it.hash();
+    uint8_t m;
+    const auto h = min_it.hash(m);
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
     const auto c = std::max(rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
-    if(!try_upsert_at(key, c, b, f, val))
+    if(!try_upsert_at(key, c, m, b, f, val))
     {
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -669,12 +670,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
 
             if(sz_p < sz_q)
             {
-                place_at(std::make_pair(key, val), c, 0, p, sz_p);  // TODO: min-offset.
+                place_at(std::make_pair(key, val), c, m, p, sz_p);
                 unlock(q), unlock(p);
             }
             else if(sz_q < B)
             {
-                place_at(std::make_pair(key, val), c, 0, q, sz_q);  // TODO: min-offset.
+                place_at(std::make_pair(key, val), c, m, q, sz_q);
                 unlock(q), unlock(p);
             }
             else
