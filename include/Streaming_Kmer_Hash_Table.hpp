@@ -31,6 +31,10 @@
 #include <immintrin.h>
 
 
+#define KACHE_HASH_LIKELY(cond)     __builtin_expect(cond, 1)
+#define KACHE_HASH_UNLIKELY(cond)   __builtin_expect(cond, 0)
+
+
 template <uint16_t k, uint16_t l> class Kmer_Window;
 
 
@@ -98,9 +102,19 @@ private:
     // Locks the `b`'th bucket for exclusive-write access in concurrent settings.
     void lock(std::size_t b);
 
+    // Locks the `p`'th and the `q`'th buckets for exclusive-write accesses in
+    // concurrent settings, taking care of circular deadlocks and when the
+    // buckets are the same.
+    void lock_ordered(std::size_t p, std::size_t q);
+
     // Unlocks the `b`'th bucket from exclusive-write access in concurrent
     // settings.
     void unlock(std::size_t b);
+
+    // Unlocks the `p` and the `q`'th buckets from exclusive-write access in
+    // concurrent settings, taking care of circular deadlocks and when the
+    // buckets are the same.
+    void unlock_ordered(std::size_t p, std::size_t q);
 
     // Returns the associated value iff the k-mer `key` with checksum `c` is
     // present in the `i`'th bucket.
@@ -378,6 +392,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock_ordered(const std::size_t p, const std::size_t q)
+{
+    if constexpr(mt_)
+        KACHE_HASH_LIKELY(p != q) ?
+            lock(std::min(p, q)), lock(std::max(p, q)) :
+            lock(p);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b)
 {
     if constexpr(mt_)
@@ -385,6 +409,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b
         assert(M[b].min_coord[0] & Metadata::lock_mask);
         M[b].min_coord[0] &= ~Metadata::lock_mask;
     }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock_ordered(const std::size_t p, const std::size_t q)
+{
+    if constexpr(mt_)
+        KACHE_HASH_LIKELY(p != q) ?
+                unlock(std::max(p, q)), unlock(std::min(p, q)) :
+                unlock(p);
 }
 
 
@@ -583,15 +617,15 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
         const auto key = this->key(x);
 
-        lock(p), lock(q);
+        lock_ordered(p, q);
         if(const auto r_p = find(key, c, p))
         {
-            unlock(q), unlock(p);
+            unlock_ordered(p, q);
             return r_p;
         }
         else if(const auto r_q = find(key, c, q))
         {
-            unlock(q), unlock(p);
+            unlock_ordered(p, q);
             return r_q;
         }
         else
@@ -611,16 +645,16 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             if(sz_p < sz_q)
             {
                 place_at(x, c, m, p, sz_p);
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
             }
             else if(sz_q < B)
             {
                 place_at(x, c, m, q, sz_q);
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
             }
             else
             {
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
                 return overflow().insert(x) ? null_val : find_ret_t(true);  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
             }
 
@@ -646,14 +680,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
         const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
 
-        const auto s_1 = h_1 & idx_mask;
-        const auto s_2 = h_2 & idx_mask;
-        const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
-        assert(p != q);
+        const auto p = h_1 & idx_mask;
+        const auto q = h_2 & idx_mask;
 
-        lock(p), lock(q);
+        lock_ordered(p, q);
         if(find_and_update(key, c, p, f) || find_and_update(key, c, q, f))
-            unlock(q), unlock(p);
+            unlock_ordered(p, q);
         else
         {
             const auto zero = _mm256_setzero_si256();
@@ -671,16 +703,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             if(sz_p < sz_q)
             {
                 place_at(std::make_pair(key, val), c, m, p, sz_p);
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
             }
             else if(sz_q < B)
             {
                 place_at(std::make_pair(key, val), c, m, q, sz_q);
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
             }
             else
             {
-                unlock(q), unlock(p);
+                unlock_ordered(p, q);
                 if constexpr(mt_)
                     overflow().insert(flat_t(key, val));
                 else
