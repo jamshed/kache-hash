@@ -311,6 +311,10 @@ public:
 
     const ht_t::flat_t& operator*() { assert(b < ht.cap_ && 0 <= slot && slot < B); return ht.T[b * B + slot]; }
 
+    auto checksum() const { assert(b < ht.cap_ && 0 <= slot && slot < B); return ht.M[b].cs[slot]; }
+
+    auto min_coord() const { assert(b < ht.cap_ && 0 <= slot && slot < B); return ht.M[b].min_coord[slot]; }
+
     bool operator==(const Iterator& rhs) const { return &ht == &rhs.ht && b == rhs.b && slot == rhs.slot; }
 };
 

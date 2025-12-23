@@ -1,6 +1,7 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "Kmer.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Minimizer_Iterator_Baseline.hpp"
 #include "Rolling_Hash.hpp"
@@ -377,7 +378,7 @@ void test_hash_table_insert()
 
 
 template <uint16_t k, uint16_t l>
-void test_hash_table_iterator()
+void test_hash_table_iterator(const std::string& path, const std::size_t final_sz)
 {
     // Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
     Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
@@ -392,7 +393,7 @@ void test_hash_table_iterator()
     // std::vector<Padded<uint64_t>> count_s(parlay::num_workers(), 0);
     // std::vector<Padded<uint64_t>> count_m(parlay::num_workers(), 0);
 
-    Parser input(file_path);
+    Parser input(path);
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
@@ -442,19 +443,95 @@ void test_hash_table_iterator()
     // std::cout << "Positive insertions: \n";
     // std::cout << "\tinto set: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
     // std::cout << "\tinto map: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+}
+
+
+template <uint16_t k, uint16_t l>
+void test_minimizer_coordinate(const std::string& path, const std::size_t final_sz)
+{
+    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
 
     {
+        std::size_t n = 0;
+#ifndef QUIET
+        constexpr uint64_t log_step = 32768;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+#endif
+
+        Parser input(path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+
+            const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+            {
+                const auto s = seq + w_id * kmer_per_w;
+                const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+                Kmer_Window<k> w;
+
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
+            }
+            , 1);
+
+            n += len - k + 1;
+#ifndef QUIET
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rInserted " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
+#endif
+        }
+
+        input.close();
+
+        std::cout << "Map size: " << M.size() << "\n";
+        std::cout << "Overflow-set size:  " << M.overflow_size() << "\n";
+    }
+
+    {
+        Min_Iterator<k, l> min_it;
         auto it = M.cbegin();
         const auto e = M.cend();
         std::size_t c = 0;
         for(; it != e; ++it)
         {
+            const auto x = (*it).first;
+            const auto min_coord = it.min_coord();
+            const uint8_t min_idx = min_coord & Min_Iterator<k, l>::min_index_mask();
+            const bool in_fwd = min_coord & Min_Iterator<k, l>::min_orientation_mask();
+            const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : x.reverse_complement().template lmer_at<l>(min_idx);
+
+            const auto expected_min_h = min_it.hash(x);
+            const auto stored_min_h   = min_it.lmer_hash(min);
+            if(stored_min_h != expected_min_h)
+            {
+                std::cerr << "Mismatching minimizer hash at k-mer " << x << ".\n";
+                std::cerr << "Expected minimizer: " << Kmer<l>(expected_min_h) << "\n";
+                std::cerr << "Stored minimizer:   " << Kmer<l>(stored_min_h) << "; coordinate: (" << in_fwd << ", " << int(min_idx) << ")\n";
+                std::exit(EXIT_FAILURE);
+            }
+
             c++;
-            if((c & 1023) == 0)
+            if((c & 1048575) == 0)
                 std::cerr << "\rIterated over " << c << " many elements from the set.";
         }
 
         std::cerr << "\rIterated over " << c << " many elements from the set.\n";
+        std::cerr << "All minimizer-coordinates are correct.\n";
     }
 }
 
@@ -580,7 +657,7 @@ int main(int argc, char* argv[])
     // (void)k, (void)l;
 
     std::string path(argv[1]);
-    // uint64_t final_sz(std::atoll(argv[2]));
+    uint64_t final_sz(std::atoll(argv[2]));
 
     // benchmark_hash_set<k, l>(path, final_sz);
 
@@ -591,9 +668,11 @@ int main(int argc, char* argv[])
     // bench_ntHash<k>(path);
 
     // test_mt_insert<k, l>();
-    // test_hash_table_iterator<k, l>();
+    test_hash_table_iterator<k, l>(path, final_sz);
+    test_minimizer_coordinate<k, l>(path, final_sz);
 
-    test_minimizer_iterator<k, l>(path);
+    // test_minimizer_iterator<k, l>(path);
+    // test_kmer_base<k, l>(path);
 
     return 0;
 }
