@@ -6,6 +6,7 @@
 
 #include "DNA.hpp"
 #include "DNA_Utility.hpp"
+#include "Kmer.hpp"
 #include "xxHash/xxhash.h"
 
 #include <cctype>
@@ -79,7 +80,7 @@ public:
     static constexpr uint8_t min_index_mask() { return 0b0011'1111; }
 
     // Returns the 64-bit hash value of the `l`-mer `lmer`.
-    uint64_t lmer_hash(uint64_t lmer);
+    static uint64_t lmer_hash(uint64_t lmer);
 
     // Resets the iterator to the sequence `seq`. The iterator sits at the
     // first `k`-mer after the construction.
@@ -103,6 +104,9 @@ public:
     // If there are multiple candidates, then returns some value `< 0`.
     // TODO: rename.
     int16_t hash_pos() const;
+
+    // Returns the minimizer-hash of the k-mer `kmer`.
+    static uint64_t hash(Kmer<k> kmer);
 };
 
 
@@ -247,6 +251,34 @@ inline void Min_Iterator<k, l>::advance(const char ch)
         pivot++;
     else
         reset_windows();
+}
+
+
+template <uint16_t k, uint16_t l>
+inline uint64_t Min_Iterator<k, l>::hash(const Kmer<k> kmer)
+{
+    uint64_t last_lmer[2] = {0, 0};
+
+    for(std::size_t idx = 0; idx < l; ++idx)
+    {
+        const auto b = kmer.base_at(k - 1 - idx);
+        last_lmer[fwd] |= (as_u64(b) << (2 * (l - 1 - idx)));
+        last_lmer[rev] |= (as_u64(DNA_Utility::complement(b)) << (2 * idx));
+    }
+
+    auto h_fwd = lmer_hash(last_lmer[fwd]);
+    auto h_rev = lmer_hash(last_lmer[rev]);
+    for(std::size_t idx = l; idx < k; ++idx)
+    {
+        const DNA::Base b = kmer.base_at(k - 1 - idx);
+        last_lmer[fwd] = ((last_lmer[fwd] & clear_MSN_mask) << 2) | b;
+        last_lmer[rev] = (last_lmer[rev] >> 2) | (as_u64(DNA_Utility::complement(b)) << (2 * (l - 1)));
+
+        h_fwd = min(h_fwd, lmer_hash(last_lmer[fwd]));
+        h_rev = min(h_rev, lmer_hash(last_lmer[rev]));
+    }
+
+    return min(h_fwd, h_rev);
 }
 
 
