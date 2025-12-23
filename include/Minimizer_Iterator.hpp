@@ -22,6 +22,8 @@
 template <uint16_t k, uint16_t l>
 class Min_Iterator
 {
+    static_assert(k <= 64, "k-mer size must not exceed 64 for internal purposes of the hash table.");
+
 private:
 
     // Returns the minimum of `x` and `y`.
@@ -68,6 +70,14 @@ public:
     Min_Iterator& operator=(const Min_Iterator&) = delete;
     Min_Iterator& operator=(Min_Iterator&&) = delete;
 
+    // Returns the mask to extract the strand-orientation of a k-mer from
+    // its minimizer-coordinate, denoting where the minimizer comes from.
+    static constexpr uint8_t min_orientation_mask() { return 0b0100'0000; }
+
+    // Returns the mask to extract the index of the minimizer from the
+    // appropriate strand of the k-mer.
+    static constexpr uint8_t min_index_mask() { return 0b0011'1111; }
+
     // Returns the 64-bit hash value of the `l`-mer `lmer`.
     uint64_t lmer_hash(uint64_t lmer);
 
@@ -78,10 +88,10 @@ public:
     // Returns the minimizer's 64-bit hash value.
     uint64_t hash() const;
 
-    // Returns the minimizer's 64-bit hash value, and sets the highest bit of
-    // `min_coord` to `1` iff the minimizer comes from the forward strand, and
+    // Returns the minimizer's 64-bit hash value. Sets the second-highest bit of
+    // `min_coord` to `1` iff the minimizer comes from the forward strand. Also
     // places the position of the minimizer `l`-mer in its corresponding strand
-    // at `min_coord`'s lowest 7 bits.
+    // at `min_coord`'s lowest 6 bits.
     uint64_t hash(uint8_t& min_coord) const;
 
     // Moves the iterator to a next k-mer extending it with the character `ch`.
@@ -188,7 +198,7 @@ inline uint64_t Min_Iterator<k, l>::hash(uint8_t& min_coord) const
 
     if(h_fwd <= h_rev)
     {
-        min_coord = cmov(M_pre[fwd][pivot] < M_suf[fwd], P_pre[fwd][pivot] - pivot, w - pivot + P_suf[fwd]) | 0b1000'0000;
+        min_coord = cmov(M_pre[fwd][pivot] < M_suf[fwd], P_pre[fwd][pivot] - pivot, w - pivot + P_suf[fwd]) | min_orientation_mask();
         return h_fwd;
     }
     else
