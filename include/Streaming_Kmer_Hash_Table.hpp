@@ -62,6 +62,8 @@ private:
     static constexpr auto& key(const flat_t& e) { if constexpr(is_map_) return e.first; else return e; }    // Returns the key from a table-element `e`.
     static constexpr auto& val(const flat_t& e) { if constexpr(is_map_) return e.second; else return e; }   // Returns the value from a table-element `e`.
 
+    static constexpr auto min_orientation_mask = Min_Iterator<k, l>::min_orientation_mask();
+
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
 
     flat_t* T;  // Flat table of size `cap x B`.
@@ -578,6 +580,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
+    m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
     return insert(w.v.canonical(), c, h, m);
 }
 
@@ -589,6 +592,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
+    m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
     return insert(std::make_pair(w.v.canonical(), val), c, h, m);
 }
 
@@ -600,6 +604,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
+    m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
+
     upsert(w.v.canonical(), c, h, m, f, val);
 }
 
