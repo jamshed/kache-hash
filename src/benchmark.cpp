@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <atomic>
 #include <iostream>
+#include <vector>
 #include <cmath>
 #include <cstdlib>
 
@@ -210,6 +211,7 @@ uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& 
 
     Parser input(path);
     Kmer_Window<k> w;
+    const auto token = S.register_user();
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
@@ -221,7 +223,7 @@ uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& 
         std::size_t kmer_idx = 0;
         while(true)
         {
-            S.insert(w);
+            S.insert(w, token);
             if(kmer_idx + k == len)
                 break;
 
@@ -440,7 +442,8 @@ uint64_t benchmark_iceberg_map_insert_generic_concurrent_no_resize(const std::st
 template <uint16_t k>
 uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true> ht_t;
+    ht_t S(final_sz);
 
     const auto t_s = now();
 
@@ -450,6 +453,10 @@ uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& 
     uint64_t checkpoint = log_step;
     std::cerr << "\n";
 #endif
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = S.register_user();
 
     Parser input(path);
     while(input.read_next_seq())
@@ -472,7 +479,7 @@ uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& 
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert(w);
+                S.insert(w, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -567,6 +574,7 @@ uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& 
 #endif
 
     Parser input(path);
+    const auto token = M.register_user();
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
@@ -582,7 +590,7 @@ uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& 
             M.upsert(w, [](const uint64_t v)
             {
                 return v + 1;
-            }, 1);
+            }, 1, token);
 
             if(kmer_idx + k == len)
                 break;
@@ -612,7 +620,8 @@ uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& 
 template <uint16_t k>
 uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, true, uint64_t> M(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t> ht_t;
+    ht_t M(final_sz);
 
     const auto t_s = now();
 
@@ -622,6 +631,10 @@ uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& 
     uint64_t checkpoint = log_step;
     std::cerr << "\n";
 #endif
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = M.register_user();
 
     Parser input(path);
     while(input.read_next_seq())
@@ -647,7 +660,7 @@ uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& 
                 M.upsert(w, [](const uint64_t v)
                 {
                     return v + 1;
-                }, 1);
+                }, 1, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -780,7 +793,12 @@ uint64_t benchmark_boost_set_query_positive(const std::string& path, const std::
 template <uint16_t k>
 uint64_t benchmark_set_query_positive_streaming(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, true> S(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true> ht_t;
+    ht_t S(final_sz);
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = S.register_user();
 
     {
         Parser input(path);
@@ -804,7 +822,7 @@ uint64_t benchmark_set_query_positive_streaming(const std::string& path, const s
                 std::size_t kmer_idx = 0;
                 while(true)
                 {
-                    S.insert(w);
+                    S.insert(w, token[parlay::worker_id()]);
                     if(kmer_idx + k == s_len)
                         break;
 

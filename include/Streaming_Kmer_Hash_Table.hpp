@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <bit>
+#include <atomic>
 #include <optional>
 #include <utility>
 #include <type_traits>
@@ -84,6 +85,8 @@ private:
     std::conditional_t<is_map_,
         boost::unordered::concurrent_flat_map<Kmer<k>, T_, Hash<Kmer<k>>>,
         boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt_;   // The overflow table in concurrent setting.
+
+    std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -175,6 +178,8 @@ private:
 
 public:
 
+    class Token;
+
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
     Streaming_Kmer_Hash_Table(std::size_t max_sz, double lf = lf_default);
@@ -204,23 +209,29 @@ public:
     // Inserts the k-mer defined by the window `w` into the table iff it is not
     // already present in the table, returning `false` in that case. Returns
     // `true` otherwise; i.e. returns the presence-status before the insertion.
-    bool insert(const Kmer_Window<k, l>& w) requires (!is_map_);
+    // The invoking user thread must provide its token `token`.
+    bool insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_);
 
     // Inserts the k-mer defined by the window `w` and associated value `val`
     // into the table iff the key is not already present in the table, returning
     // `null_opt` in that case. Returns the associated current value otherwise;
-    // i.e. returns the associated value pre-insert.
-    template <typename V = T_> val_t insert(const Kmer_Window<k, l>& w, const V& val) requires (is_map_);
+    // i.e. returns the associated value pre-insert. The invoking user thread
+    // must provide its token `token`.
+    template <typename V = T_> val_t insert(const Kmer_Window<k, l>& w, const V& val, const Token& token) requires (is_map_);
 
     // Updates the associated value of the k-mer defined by `w` in the table
     // through `f`, iff it is present there. Otherwise inserts it into the table
-    // with associated value `val`.
+    // with associated value `val`. The invoking user thread must provide its
+    // token `token`.
     template <typename F, typename V = T_>
-    void upsert(const Kmer_Window<k, l>& w, const F& f, const V& val) requires (is_map_);
+    void upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
     find_ret_t find(const Kmer_Window<k, l>& w) const;
+
+    // Registers a new user and returns a unique token for it.
+    Token register_user() { return Token(registered_thread_count++); }
 
     class Iterator;
 
@@ -238,6 +249,27 @@ public:
 
     // Reports developer statistics about the table.
     void report_stats() const;
+};
+
+
+// Token required to use the hash table.
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+class alignas(L1_CACHE_LINE_SIZE)
+    Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Token
+{
+    friend class Streaming_Kmer_Hash_Table;
+
+private:
+
+    uint16_t id;    // Unique ID of the token.
+
+    Token(const uint16_t id): id(id)
+    {}
+
+public:
+
+    Token(): id(0)
+    {}
 };
 
 
@@ -326,6 +358,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
       cap_(ceil_pow_2((max_sz / lf) / B))
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
+    , registered_thread_count(0)
 {
     clear();
 }
@@ -336,6 +369,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(std::
       cap_(0)
     , T(nullptr)
     , M(nullptr)
+    , registered_thread_count(0)
 {
     deserialize(is);
 }
@@ -575,7 +609,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w) requires (!is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_)
 {
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
@@ -587,7 +621,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename V>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val) -> val_t requires (is_map_)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val, const Token& token) -> val_t requires (is_map_)
 {
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
@@ -599,7 +633,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val) requires (is_map_)
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_)
 {
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.

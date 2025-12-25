@@ -253,7 +253,8 @@ void bench_ntHash(const std::string& file_path)
 template <uint16_t k, uint16_t l>
 void test_mt_insert()
 {
-    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, void, l> ht_t;
+    ht_t S(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET
@@ -261,6 +262,10 @@ void test_mt_insert()
     uint64_t checkpoint = log_step;
     std::cerr << "\n";
 #endif
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = S.register_user();
 
     S.clear();
 
@@ -281,7 +286,7 @@ void test_mt_insert()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert(w);
+                S.insert(w, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -380,8 +385,8 @@ void test_hash_table_insert()
 template <uint16_t k, uint16_t l>
 void test_hash_table_iterator(const std::string& path, const std::size_t final_sz)
 {
-    // Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
-    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET
@@ -389,6 +394,10 @@ void test_hash_table_iterator(const std::string& path, const std::size_t final_s
     uint64_t checkpoint = log_step;
     std::cerr << "\n";
 #endif
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = M.register_user();
 
     // std::vector<Padded<uint64_t>> count_s(parlay::num_workers(), 0);
     // std::vector<Padded<uint64_t>> count_m(parlay::num_workers(), 0);
@@ -412,7 +421,7 @@ void test_hash_table_iterator(const std::string& path, const std::size_t final_s
             while(true)
             {
                 // c_s += !S.insert(w);
-                M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
+                M.upsert(w, [](uint64_t v){ return v + 1; }, 0, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -449,7 +458,8 @@ void test_hash_table_iterator(const std::string& path, const std::size_t final_s
 template <uint16_t k, uint16_t l>
 void test_minimizer_coordinate(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(final_sz);
 
     {
         std::size_t n = 0;
@@ -458,6 +468,10 @@ void test_minimizer_coordinate(const std::string& path, const std::size_t final_
         uint64_t checkpoint = log_step;
         std::cerr << "\n";
 #endif
+
+        std::vector<typename ht_t::Token> token(parlay::num_workers());
+        for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+            token[w] = M.register_user();
 
         Parser input(path);
         while(input.read_next_seq())
@@ -476,7 +490,7 @@ void test_minimizer_coordinate(const std::string& path, const std::size_t final_
                 std::size_t kmer_idx = 0;
                 while(true)
                 {
-                    M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
+                    M.upsert(w, [](uint64_t v){ return v + 1; }, 0, token[parlay::worker_id()]);
                     if(kmer_idx + k == s_len)
                         break;
 
