@@ -1,6 +1,7 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "Kmer_Utility.hpp"
 #include "Kmer.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Minimizer_Iterator_Baseline.hpp"
@@ -527,7 +528,8 @@ void test_minimizer_coordinate(const std::string& path, const std::size_t final_
             const auto min_coord = it.min_coord();
             const uint8_t min_idx = min_coord & Min_Iterator<k, l>::min_index_mask();
             const bool in_fwd = min_coord & Min_Iterator<k, l>::min_orientation_mask();
-            const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : x.reverse_complement().template lmer_at<l>(min_idx);
+            // const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : x.reverse_complement().template lmer_at<l>(min_idx);
+            const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(x.template lmer_at<l>(k - min_idx - l));
 
             const auto expected_min_h = min_it.hash(x);
             const auto stored_min_h   = min_it.lmer_hash(min);
