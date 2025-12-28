@@ -611,6 +611,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_)
 {
+    (void)token;
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
@@ -623,6 +624,7 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val, const Token& token) -> val_t requires (is_map_)
 {
+    (void)token;
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
@@ -635,6 +637,7 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_)
 {
+    (void)token;
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
