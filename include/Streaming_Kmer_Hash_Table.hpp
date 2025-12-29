@@ -168,6 +168,9 @@ private:
     template <typename F, typename V = T_>
     void upsert(const Kmer<k> key, uint8_t c, uint64_t h, uint8_t m, const F& f, const V& val) requires (is_map_);
 
+    // Resizes the hash table to double its capacity.
+    void resize();
+
     // Returns the overflow table. `mt_` denotes whether multiple threads can
     // access the table concurrently.
     constexpr auto& overflow() { if constexpr(mt_) return overflow_mt_; else return overflow_; }
@@ -771,6 +774,37 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             }
         }
     }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
+{
+    const auto old_cap = cap_;
+    cap_ *= 2;
+    T_new = aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE);
+    M_new = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
+    std::memset(M_new, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
+
+    for(std::size_t b = 0; b < old_cap; ++b)
+        for(std::size_t slot = 0; slot < B; ++slot)
+            if(M[b].cs[slot])
+            {
+                const auto kv = T[b * B + slot];
+                const auto key = this->key(kv);
+                const auto c = M[b].cs[slot];
+                const auto m = M[b].min_coord[slot];
+
+                const uint8_t min_idx = m & Min_Iterator<k, l>::min_index_mask();
+                const bool in_fwd = m & Min_Iterator<k, l>::min_orientation_mask();
+                const auto min = in_fwd ?
+                                    key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
+                const auto h = Min_Iterator<k, l>::lmer_hash(min);
+
+                // TODO: insert item into the new table.
+            }
+
+    // TODO: insert items from the overflow table into the new table.
 }
 
 
