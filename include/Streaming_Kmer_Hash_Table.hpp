@@ -190,7 +190,7 @@ public:
     Streaming_Kmer_Hash_Table(std::size_t max_sz, double lf = lf_default);
 
     // Deserializes a streaming k-mer hash table from the stream `is`.
-    Streaming_Kmer_Hash_Table(std::ifstream& is);
+    // Streaming_Kmer_Hash_Table(std::ifstream& is);
 
     Streaming_Kmer_Hash_Table(const Streaming_Kmer_Hash_Table&) = delete;
     Streaming_Kmer_Hash_Table(Streaming_Kmer_Hash_Table&&) = delete;
@@ -250,10 +250,10 @@ public:
     Iterator cend() const { return Iterator(*this, cap_, -1); };
 
     // Serializes the table to the stream `os`.
-    void serialize(std::ofstream& os) const;
+    // void serialize(std::ofstream& os) const;
 
     // Deserializes the table from the stream `is`.
-    void deserialize(std::ifstream& is);
+    // void deserialize(std::ifstream& is);
 
     // Reports developer statistics about the table.
     void report_stats() const;
@@ -375,6 +375,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
 }
 
 
+/*
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(std::ifstream& is):
       cap_(0)
@@ -384,6 +385,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(std::
 {
     deserialize(is);
 }
+*/
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
@@ -876,6 +878,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
 }
 
 
+/*
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::serialize(std::ofstream& os) const
 {
@@ -914,6 +917,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::deserialize(std::ifstream&
 
     ::deserialize(sum_len, is), ::deserialize(sup_kmer_c, is);
 }
+*/
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
