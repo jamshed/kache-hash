@@ -160,10 +160,11 @@ private:
 
     // Tries to update the associated value of the k-mer `key` with checksum `c`
     // and minimizer-coordinate `m` at the `i`'th bucket through `f` iff it is
-    // present there. Otherwise if the bucket has space, puts `key` with value
-    // `val` into it. Returns `true` iff the upsert succeeds.
+    // present there, and also puts the associated value to `old_val`. Otherwise
+    // if the bucket has space, puts `key` with value `val` into it and puts
+    // `null_val` at `old_val`. Returns `true` iff the upsert succeeds.
     template <typename F, typename V = T_>
-    bool try_upsert_at(Kmer<k> key, uint8_t c, uint8_t m, std::size_t i, const F& f, const V& val) requires (is_map_);
+    bool try_upsert_at(Kmer<k> key, uint8_t c, uint8_t m, std::size_t i, const F& f, const V& val, val_t& old_val) requires (is_map_);
 
     // Tries to insert the element `e` with checksum `c`, minimizer-hash `h`,
     // and -coordinate `m` into the table. It succeeds iff the key was absent in
@@ -174,9 +175,10 @@ private:
     // Inserts the k-mer `key` with checksum `c`, minimizer-hash `h`, and
     // -coordinate `m` into the table with associated value `val` iff it is not
     // already present. Otherwise updates the currently associated value through
-    // `f`.
+    // `f`. Returns the old associated value if the key was already present, and
+    // returns `null_val` otherwise.
     template <typename F, typename V = T_>
-    void upsert(const Kmer<k> key, uint8_t c, uint64_t h, uint8_t m, const F& f, const V& val) requires (is_map_);
+    val_t upsert(const Kmer<k> key, uint8_t c, uint64_t h, uint8_t m, const F& f, const V& val) requires (is_map_);
 
     // Resizes the hash table to double its capacity.
     void resize();
@@ -229,10 +231,11 @@ public:
 
     // Updates the associated value of the k-mer defined by `w` in the table
     // through `f`, iff it is present there. Otherwise inserts it into the table
-    // with associated value `val`. The invoking user thread must provide its
-    // token `token`.
+    // with associated value `val`. Returns the old associated value if the key
+    // was already present in the table, and returns `null_val` otherwise. The
+    // invoking user thread must provide its token `token`.
     template <typename F, typename V = T_>
-    void upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_);
+    val_t upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_);
 
     // Returns `true` iff the k-mer defined by the window `w` is present in the
     // table.
@@ -624,13 +627,14 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const uint8_t m, const std::size_t i, const F& f, const V& val) requires (is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const uint8_t m, const std::size_t i, const F& f, const V& val, val_t& old_val) requires (is_map_)
 {
     lock(i);
 
-    if(find_and_update(key, c, i, f))
+    if(const auto r = find_and_update(key, c, i, f))
     {
         unlock(i);
+        old_val = r;
         return true;
     }
 
@@ -647,6 +651,8 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 
     place_at(std::make_pair(key, val), c, m, i, j);
     unlock(i);
+
+    old_val = null_val;
     return true;
 }
 
@@ -680,7 +686,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) requires (is_map_)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k, l>& w, const F& f, const V& val, const Token& token) -> val_t requires (is_map_)
 {
     (void)token;
     uint8_t m;
@@ -688,7 +694,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
 
-    upsert(w.v.canonical(), c, h, m, f, val);
+    return upsert(w.v.canonical(), c, h, m, f, val);
 }
 
 
@@ -765,12 +771,15 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const uint8_t c, const uint64_t h, const uint8_t m, const F& f, const V& val) requires (is_map_)
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, const uint8_t c, const uint64_t h, const uint8_t m, const F& f, const V& val) -> val_t requires (is_map_)
 {
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    if(!try_upsert_at(key, c, m, b, f, val))
+    val_t old_val;
+    if(try_upsert_at(key, c, m, b, f, val, old_val))
+        return old_val;
+    else
     {
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -780,8 +789,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
         const auto q = h_2 & idx_mask;
 
         lock_ordered(p, q);
-        if(find_and_update(key, c, p, f) || find_and_update(key, c, q, f))
+        if(const auto r_p = find_and_update(key, c, p, f))
+        {
             unlock_ordered(p, q);
+            return r_p;
+        }
+        else if(const auto r_q = find_and_update(key, c, q, f))
+        {
+            unlock_ordered(p, q);
+            return r_q;
+        }
         else
         {
             const auto zero = _mm256_setzero_si256();
@@ -809,8 +826,18 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             else
             {
                 unlock_ordered(p, q);
-                overflow.insert(flat_t(key, val));
+
+                val_t old_val = null_val;
+                overflow.emplace_or_visit(key, val, [&](auto& kv)
+                {
+                    old_val = kv.second;
+                    kv.second = f(kv.second);
+                });
+
+                return old_val;
             }
+
+            return null_val;
         }
     }
 }
