@@ -27,6 +27,8 @@
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
+#include <thread>
+#include <algorithm>
 #include <cassert>
 
 #include <immintrin.h>
@@ -90,6 +92,7 @@ private:
         boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt_;   // The overflow table in concurrent setting.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
+    std::vector<Padded<uint64_t>> added;    // `added[i]` is the number of elements added by the `i`'th user thread.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -210,6 +213,9 @@ public:
 
     // Returns the size of the table.
     std::size_t size() const;
+
+    // Returns the number of elements added to the table.
+    uint64_t total_added() const;
 
     // Returns the size of the overflow table.
     std::size_t overflow_size() const { return !mt_ ? overflow_.size() : overflow_mt_.size();  }
@@ -372,6 +378,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , T_new(nullptr)
     , M_new(nullptr)
     , registered_thread_count(0)
+    , added(std::thread::hardware_concurrency(), 0)
 {
     clear();
 }
@@ -505,6 +512,15 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::size() const
         sz += bucket_size(b);
 
     return sz + overflow_size();
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline uint64_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::total_added() const
+{
+    uint64_t s = 0;
+    std::for_each(added.cbegin(), added.cend(), [&](const auto& a){ s += a.unwrap(); });
+    return s;
 }
 
 
@@ -645,12 +661,13 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_)
 {
-    (void)token;
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
-    return insert(w.v.canonical(), c, h, m);
+    const auto r = insert(w.v.canonical(), c, h, m);
+    added[token.id].unwrap() += (r == null_val);
+    return r;
 }
 
 
@@ -658,12 +675,13 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const V& val, const Token& token) -> val_t requires (is_map_)
 {
-    (void)token;
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
-    return insert(std::make_pair(w.v.canonical(), val), c, h, m);
+    const auto r = insert(std::make_pair(w.v.canonical(), val), c, h, m);
+    added[token.id].unwrap()++;
+    return r;
 }
 
 
