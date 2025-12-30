@@ -86,10 +86,9 @@ private:
     Metadata* M_new;    // New metadata table of buckets after a resize.
 
     static constexpr uint64_t skew_th = B;
-    std::conditional_t<is_map_, Hash_Map<Kmer<k>, T_>, Hash_Set<Kmer<k>>> overflow_;    // The overflow table in sequential setting.
     std::conditional_t<is_map_,
         boost::unordered::concurrent_flat_map<Kmer<k>, T_, Hash<Kmer<k>>>,
-        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow_mt_;   // The overflow table in concurrent setting.
+        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow;   // The overflow table.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
     std::vector<Padded<uint64_t>> added;    // `added[i]` is the number of elements added by the `i`'th user thread.
@@ -182,14 +181,6 @@ private:
     // Resizes the hash table to double its capacity.
     void resize();
 
-    // Returns the overflow table. `mt_` denotes whether multiple threads can
-    // access the table concurrently.
-    constexpr auto& overflow() { if constexpr(mt_) return overflow_mt_; else return overflow_; }
-
-    // Returns the overflow table. `mt_` denotes whether multiple threads can
-    // access the table concurrently.
-    constexpr const auto& overflow() const { if constexpr(mt_) return overflow_mt_; else return overflow_; }
-
 public:
 
     class Token;
@@ -218,7 +209,7 @@ public:
     uint64_t total_added() const;
 
     // Returns the size of the overflow table.
-    std::size_t overflow_size() const { return !mt_ ? overflow_.size() : overflow_mt_.size();  }
+    std::size_t overflow_size() const { return overflow.size();  }
 
     // Clears the table.
     void clear();
@@ -409,7 +400,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
 
     std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
-    overflow_.clear(), overflow_mt_.clear();
+    overflow.clear();
 
     min_to_kmer.clear();
 }
@@ -561,11 +552,11 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
     if constexpr(!is_map_)
-        return overflow().count(key);
+        return overflow.count(key);
     else
     {
         auto val = null_val;
-        overflow().cvisit(key, [&](const auto& kv){ val = kv.second; });
+        overflow.cvisit(key, [&](const auto& kv){ val = kv.second; });
         return val;
     }
 }
@@ -761,7 +752,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             else
             {
                 unlock_ordered(p, q);
-                return overflow().insert(x) ? null_val : find_ret_t(true);  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
+                return overflow.insert(x) ? null_val : find_ret_t(true);    // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
             }
 
             return null_val;
@@ -816,10 +807,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             else
             {
                 unlock_ordered(p, q);
-                if constexpr(mt_)
-                    overflow().insert(flat_t(key, val));
-                else
-                    overflow().insert(key, val);
+                overflow.insert(flat_t(key, val));
             }
         }
     }
@@ -896,7 +884,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::serialize(std::ofstream& o
     ::serialize(cap_, os);
     ::serialize(T, cap_ * B, os), ::serialize(M, cap_, os);
 
-    overflow_.serialize(os);
+    // overflow_.serialize(os);
 
     ::serialize(sum_len, os), ::serialize(sup_kmer_c, os);
 }
@@ -922,7 +910,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::deserialize(std::ifstream&
     T = aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE), M = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
     ::deserialize(T, cap_ * B, is), ::deserialize(M, cap_, is);
 
-    overflow_.deserialize(is);
+    // overflow_.deserialize(is);
 
     ::deserialize(sum_len, is), ::deserialize(sup_kmer_c, is);
 }
@@ -956,8 +944,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::report_stats() const
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete table size: " << sz << ".\n";
-    std::cerr   << "Overflow table size: " << overflow_.size() << " ("
-                    << (overflow_.size() * 100.0 / sz) << "%).\n";
+    std::cerr   << "Overflow table size: " << overflow.size() << " ("
+                    << (overflow.size() * 100.0 / sz) << "%).\n";
     std::cerr   << "========================================\n";
 
 
