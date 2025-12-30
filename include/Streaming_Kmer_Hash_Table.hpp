@@ -25,7 +25,7 @@
 #include <type_traits>
 #include <cstring>
 #include <iostream>
-#include <fstream>
+#include <vector>
 #include <cstdlib>
 #include <thread>
 #include <algorithm>
@@ -91,7 +91,9 @@ private:
         boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow;   // The overflow table.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
-    std::vector<Padded<uint64_t>> added;    // `added[i]` is the number of elements added by the `i`'th user thread.
+    std::atomic_uint64_t approx_sz; // Approximate size (lower bound) of the hash table.
+    std::vector<Padded<uint64_t>> checkpoint;   // `checkpoint[i]` is the number of elements remaining to be added by the `i`'th user thread before it checks for a resize.
+    static constexpr uint64_t resize_checkpoint = 16384;    // Checkpoint number of elements for a user thread to add before checking for resize.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -189,7 +191,7 @@ public:
 
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
-    Streaming_Kmer_Hash_Table(std::size_t max_sz, double lf = lf_default);
+    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, double lf = lf_default);
 
     // Deserializes a streaming k-mer hash table from the stream `is`.
     // Streaming_Kmer_Hash_Table(std::ifstream& is);
@@ -206,9 +208,6 @@ public:
 
     // Returns the size of the table.
     std::size_t size() const;
-
-    // Returns the number of elements added to the table.
-    uint64_t total_added() const;
 
     // Returns the size of the overflow table.
     std::size_t overflow_size() const { return overflow.size();  }
@@ -372,7 +371,8 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , T_new(nullptr)
     , M_new(nullptr)
     , registered_thread_count(0)
-    , added(std::thread::hardware_concurrency(), 0)
+    , approx_sz(0)
+    , checkpoint(std::thread::hardware_concurrency(), resize_checkpoint)
 {
     clear();
 }
@@ -404,6 +404,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
     sum_len = 0, sup_kmer_c = 0;
 
     std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
+
+    approx_sz = 0;
+    std::for_each(checkpoint.begin(), checkpoint.end(), [](auto& c){ c = resize_checkpoint; });
 
     overflow.clear();
 
@@ -503,20 +506,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock_ordered(const std::
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::size() const
 {
-    std::size_t sz = 0;
-    for(std::size_t b = 0; b < cap_; ++b)
-        sz += bucket_size(b);
-
-    return sz + overflow_size();
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline uint64_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::total_added() const
-{
-    uint64_t s = 0;
-    std::for_each(added.cbegin(), added.cend(), [&](const auto& a){ s += a.unwrap(); });
-    return s;
+    std::size_t sz = approx_sz;
+    std::for_each(checkpoint.cbegin(), checkpoint.cend(), [&](auto& c){ sz += c.unwrap() > 0 ? resize_checkpoint - c.unwrap() : 0; });
+    return sz;
 }
 
 
@@ -665,7 +657,16 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
     const auto r = insert(w.v.canonical(), c, h, m);
-    added[token.id].unwrap() += (r == null_val);
+
+    auto& cp = checkpoint[token.id].unwrap();
+    cp -= (r == null_val);
+    if(KACHE_HASH_UNLIKELY(cp == 0))
+    {
+        approx_sz += resize_checkpoint;
+        cp = resize_checkpoint;
+        // TODO: check resize.
+    }
+
     return r;
 }
 
@@ -679,7 +680,16 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
     const auto r = insert(std::make_pair(w.v.canonical(), val), c, h, m);
-    added[token.id].unwrap()++;
+
+    auto& cp = checkpoint[token.id].unwrap();
+    cp -= (r == null_val);
+    if(KACHE_HASH_UNLIKELY(cp == 0))
+    {
+        approx_sz += resize_checkpoint;
+        cp = resize_checkpoint;
+        // TODO: check resize.
+    }
+
     return r;
 }
 
@@ -693,8 +703,18 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
+    const auto r = upsert(w.v.canonical(), c, h, m, f, val);
 
-    return upsert(w.v.canonical(), c, h, m, f, val);
+    auto& cp = checkpoint[token.id].unwrap();
+    cp -= (r == null_val);
+    if(KACHE_HASH_UNLIKELY(cp == 0))
+    {
+        approx_sz += resize_checkpoint;
+        cp = resize_checkpoint;
+        // TODO: check resize.
+    }
+
+    return r;
 }
 
 
