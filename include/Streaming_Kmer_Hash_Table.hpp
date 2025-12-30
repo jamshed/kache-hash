@@ -80,6 +80,9 @@ private:
 
     Metadata* M;    // Metadata table of the buckets.
 
+    flat_t* T_new;  // New flat table after a resize.
+    Metadata* M_new;    // New metadata table of buckets after a resize.
+
     static constexpr uint64_t skew_th = B;
     std::conditional_t<is_map_, Hash_Map<Kmer<k>, T_>, Hash_Set<Kmer<k>>> overflow_;    // The overflow table in sequential setting.
     std::conditional_t<is_map_,
@@ -366,6 +369,8 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
       cap_(ceil_pow_2((max_sz / lf) / B))
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
+    , T_new(nullptr)
+    , M_new(nullptr)
     , registered_thread_count(0)
 {
     clear();
