@@ -104,22 +104,27 @@ private:
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
-    // Locks the `b`'th bucket for exclusive-write access in concurrent settings.
-    void lock(std::size_t b);
+    // Locks the `b`'th bucket for exclusive-write access in concurrent
+    // settings. `resize_` denotes whether the bucket requires to be locked for
+    // resizing or not.
+    template <bool resize_ = false> void lock(std::size_t b);
 
     // Locks the `p`'th and the `q`'th buckets for exclusive-write accesses in
     // concurrent settings, taking care of circular deadlocks and when the
-    // buckets are the same.
-    void lock_ordered(std::size_t p, std::size_t q);
+    // buckets are the same. `resize_` denotes whether the buckets require to be
+    // locked for resizing or not.
+    template <bool resize_ = false> void lock_ordered(std::size_t p, std::size_t q);
 
     // Unlocks the `b`'th bucket from exclusive-write access in concurrent
-    // settings.
-    void unlock(std::size_t b);
+    // settings. `resize_` denotes whether the bucket requires to be unlocked
+    // during resizing or not.
+    template <bool resize_ = false> void unlock(std::size_t b);
 
     // Unlocks the `p` and the `q`'th buckets from exclusive-write access in
     // concurrent settings, taking care of circular deadlocks and when the
-    // buckets are the same.
-    void unlock_ordered(std::size_t p, std::size_t q);
+    // buckets are the same. `resize_` denotes whether the buckets require to be
+    // unlocked during resizing or not.
+    template <bool resize_ = false> void unlock_ordered(std::size_t p, std::size_t q);
 
     // Returns the associated value iff the k-mer `key` with checksum `c` is
     // present in the `i`'th bucket.
@@ -423,46 +428,67 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const s
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
 {
     if constexpr(mt_)
         while(true)
         {
-            const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
-            if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
-                break;
+            if constexpr(!resize_)
+            {
+                const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
+                if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                    break;
+            }
+            else
+            {
+                const auto exp_unlocked = M_new[b].min_coord[0] & ~Metadata::lock_mask;
+                if(__sync_bool_compare_and_swap(&M_new[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                    break;
+            }
         }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock_ordered(const std::size_t p, const std::size_t q)
 {
     if constexpr(mt_)
         KACHE_HASH_LIKELY(p != q) ?
-            lock(std::min(p, q)), lock(std::max(p, q)) :
-            lock(p);
+            lock<resize_>(std::min(p, q)), lock<resize_>(std::max(p, q)) :
+            lock<resize_>(p);
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b)
 {
     if constexpr(mt_)
     {
-        assert(M[b].min_coord[0] & Metadata::lock_mask);
-        M[b].min_coord[0] &= ~Metadata::lock_mask;
+        if constexpr(!resize_)
+        {
+            assert(M[b].min_coord[0] & Metadata::lock_mask);
+            M[b].min_coord[0] &= ~Metadata::lock_mask;
+        }
+        else
+        {
+            assert(M_new[b].min_coord[0] & Metadata::lock_mask);
+            M_new[b].min_coord[0] &= ~Metadata::lock_mask;
+        }
     }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock_ordered(const std::size_t p, const std::size_t q)
 {
     if constexpr(mt_)
         KACHE_HASH_LIKELY(p != q) ?
-                unlock(std::max(p, q)), unlock(std::min(p, q)) :
-                unlock(p);
+                unlock<resize_>(std::max(p, q)), unlock<resize_>(std::min(p, q)) :
+                unlock<resize_>(p);
 }
 
 
