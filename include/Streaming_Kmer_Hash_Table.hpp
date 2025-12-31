@@ -13,7 +13,6 @@
 #include "utility.hpp"
 
 #include "unordered_dense/unordered_dense.h"
-#include "boost/unordered/concurrent_flat_set.hpp"
 #include "boost/unordered/concurrent_flat_map.hpp"
 
 #include <cstdint>
@@ -85,10 +84,27 @@ private:
     flat_t* T_new;  // New flat table after a resize.
     Metadata* M_new;    // New metadata table of buckets after a resize.
 
+    struct Overflow_Set_Val
+    {
+        uint8_t cs;
+        uint8_t min_coord;
+
+        Overflow_Set_Val(uint8_t cs, uint8_t min_coord): cs(cs), min_coord(min_coord) {}
+    };
+
+    struct Overflow_Map_Val
+    {
+        uint8_t cs;
+        uint8_t min_coord;
+        T_ val;
+
+        Overflow_Map_Val(uint8_t cs, uint8_t min_coord, const T_& val): cs(cs), min_coord(min_coord), val(val) {}
+    };
+
     static constexpr uint64_t skew_th = B;
     std::conditional_t<is_map_,
-        boost::unordered::concurrent_flat_map<Kmer<k>, T_, Hash<Kmer<k>>>,
-        boost::unordered::concurrent_flat_set<Kmer<k>, Hash<Kmer<k>>> > overflow;   // The overflow table.
+        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>>,
+        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>> > overflow;    // The overflow table.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
     std::atomic_uint64_t approx_sz; // Approximate size (lower bound) of the hash table.
@@ -553,7 +569,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kme
     else
     {
         auto val = null_val;
-        overflow.cvisit(key, [&](const auto& kv){ val = kv.second; });
+        overflow.cvisit(key, [&](const auto& kv){ val = kv.second.val; });
         return val;
     }
 }
@@ -780,7 +796,10 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             else
             {
                 unlock_ordered(p, q);
-                return overflow.insert(x) ? null_val : find_ret_t(true);    // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
+                if constexpr(!is_map_)  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
+                    return overflow.insert(std::pair(x, Overflow_Set_Val(c, m))) ? null_val : find_ret_t(true);
+                else
+                    return overflow.insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second))) ? null_val : find_ret_t(true);
             }
 
             return null_val;
@@ -848,10 +867,10 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
                 unlock_ordered(p, q);
 
                 val_t old_val = null_val;
-                overflow.emplace_or_visit(key, val, [&](auto& kv)
+                overflow.emplace_or_visit(key, Overflow_Map_Val(c, m, val), [&](auto& kv)
                 {
-                    old_val = kv.second;
-                    kv.second = f(kv.second);
+                    old_val = kv.second.val;
+                    kv.second.val = f(kv.second.val);
                 });
 
                 return old_val;
