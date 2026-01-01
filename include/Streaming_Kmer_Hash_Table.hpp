@@ -66,7 +66,10 @@ private:
 
     static constexpr auto min_orientation_mask = Min_Iterator<k, l>::min_orientation_mask();
 
+    const double lf;    // Load factor.
+
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
+    uint64_t resize_th; // At what size of the table to trigger the next resize.
 
     flat_t* T;  // Flat table of size `cap x B`.
 
@@ -381,7 +384,9 @@ public:
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
-      cap_(ceil_pow_2((max_sz / lf) / B))
+      lf(lf)
+    , cap_(ceil_pow_2((max_sz / lf) / B))
+    , resize_th(cap_ * lf)
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
     , T_new(nullptr)
