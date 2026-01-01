@@ -51,6 +51,7 @@ class Streaming_Kmer_Hash_Table
 private:
 
     static constexpr double lf_default = 0.8;   // Default load factor: 80%.
+    static constexpr double of_default = 0.1;   // Fixed overflow factor: 10%.
     static constexpr std::size_t B = 32;    // Bucket size.
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
     static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
@@ -71,8 +72,6 @@ private:
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
     uint64_t resize_th; // At what size of the table to trigger the next resize.
 
-    flat_t* T;  // Flat table of size `cap x B`.
-
     // Metadata of the k-mers in a bucket.
     struct Metadata
     {
@@ -81,11 +80,6 @@ private:
 
         static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `min_coord[0]` used to lock the bucket.
     };
-
-    Metadata* M;    // Metadata table of the buckets.
-
-    flat_t* T_new;  // New flat table after a resize.
-    Metadata* M_new;    // New metadata table of buckets after a resize.
 
     struct Overflow_Set_Val
     {
@@ -105,9 +99,17 @@ private:
     };
 
     static constexpr uint64_t skew_th = B;
-    std::conditional_t<is_map_,
+    typedef std::conditional_t<is_map_,
         boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>>,
-        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>> > overflow;    // The overflow table.
+        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>> > overflow_t;   // The overflow table type.
+
+    flat_t* T;  // Flat table of size `cap x B`.
+    Metadata* M;    // Metadata table of the buckets.
+    overflow_t* overflow;   // The overflow table.
+
+    flat_t* T_new;  // New flat table after a resize.
+    Metadata* M_new;    // New metadata table of buckets after a resize.
+    overflow_t* overflow_new;   // New overflow table after a resize.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
     std::atomic_uint64_t approx_sz; // Approximate size (lower bound) of the hash table.
@@ -229,7 +231,7 @@ public:
     std::size_t size() const;
 
     // Returns the size of the overflow table.
-    std::size_t overflow_size() const { return overflow.size();  }
+    std::size_t overflow_size() const { return overflow->size();  }
 
     // Clears the table.
     void clear();
@@ -389,6 +391,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , resize_th(cap_ * lf)
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
+    , overflow(new overflow_t(capacity() * of_default))
     , T_new(nullptr)
     , M_new(nullptr)
     , registered_thread_count(0)
@@ -415,7 +418,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(std::
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::~Streaming_Kmer_Hash_Table()
 {
-    deallocate(T), deallocate(M);
+    deallocate(T), deallocate(M), delete(overflow);
 }
 
 
@@ -429,7 +432,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
     approx_sz = 0;
     std::for_each(checkpoint.begin(), checkpoint.end(), [](auto& c){ c = resize_checkpoint; });
 
-    overflow.clear();
+    overflow->clear();
 
     min_to_kmer.clear();
 }
@@ -570,11 +573,11 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
     if constexpr(!is_map_)
-        return overflow.count(key);
+        return overflow->count(key);
     else
     {
         auto val = null_val;
-        overflow.cvisit(key, [&](const auto& kv){ val = kv.second.val; });
+        overflow->cvisit(key, [&](const auto& kv){ val = kv.second.val; });
         return val;
     }
 }
@@ -802,9 +805,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             {
                 unlock_ordered(p, q);
                 if constexpr(!is_map_)  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
-                    return overflow.insert(std::pair(x, Overflow_Set_Val(c, m))) ? null_val : find_ret_t(true);
+                    return overflow->insert(std::pair(x, Overflow_Set_Val(c, m))) ? null_val : find_ret_t(true);
                 else
-                    return overflow.insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second))) ? null_val : find_ret_t(true);
+                    return overflow->insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second))) ? null_val : find_ret_t(true);
             }
 
             return null_val;
@@ -872,7 +875,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
                 unlock_ordered(p, q);
 
                 val_t old_val = null_val;
-                overflow.emplace_or_visit(key, Overflow_Map_Val(c, m, val), [&](auto& kv)
+                overflow->emplace_or_visit(key, Overflow_Map_Val(c, m, val), [&](auto& kv)
                 {
                     old_val = kv.second.val;
                     kv.second.val = f(kv.second.val);
@@ -1019,8 +1022,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::report_stats() const
     std::cerr   << "========================================\n";
 
     std::cerr   << "Complete table size: " << sz << ".\n";
-    std::cerr   << "Overflow table size: " << overflow.size() << " ("
-                    << (overflow.size() * 100.0 / sz) << "%).\n";
+    std::cerr   << "Overflow table size: " << overflow->size() << " ("
+                    << (overflow->size() * 100.0 / sz) << "%).\n";
     std::cerr   << "========================================\n";
 
 
