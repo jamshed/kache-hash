@@ -11,6 +11,7 @@
 #include "Rolling_Hash.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Hash_Table.hpp"
+#include "RW_Lock.hpp"
 #include "utility.hpp"
 
 #include "unordered_dense/unordered_dense.h"
@@ -116,6 +117,9 @@ private:
     std::atomic_uint64_t approx_sz; // Approximate size (lower bound) of the hash table.
     std::vector<Padded<uint64_t>> checkpoint;   // `checkpoint[i]` is the number of elements remaining to be added by the `i`'th user thread before it checks for a resize.
     static constexpr uint64_t resize_checkpoint = 16384;    // Checkpoint number of elements for a user thread to add before checking for resize.
+
+    static constexpr uint64_t max_worker = 64;  // Maximum number of workers allowed to use the table.
+    RW_Lock<max_worker> table_lock; // Readers-writers lock to resize the table exclusively.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -720,7 +724,10 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
+
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = insert(w.v.canonical(), c, h, m);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -744,7 +751,10 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
+
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = insert(std::make_pair(w.v.canonical(), val), c, h, m);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -769,7 +779,10 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
+
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = upsert(w.v.canonical(), c, h, m, f, val);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
