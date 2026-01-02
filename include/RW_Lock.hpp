@@ -55,7 +55,7 @@ template <std::size_t N>
 inline void RW_Lock<N>::lock()
 {
     while(writer.test_and_set(std::memory_order_acquire))   // Wait until the ongoing write finishes, if any.
-        while(writer.test(std::memory_order_relaxed));
+        writer.wait(true, std::memory_order_acquire);
 
     bool read;
     do  // Wait until ongoing reads finish.
@@ -72,6 +72,7 @@ inline void RW_Lock<N>::unlock()
 {
     assert(writer.test());
     writer.clear(std::memory_order_release);
+    writer.notify_all();
 }
 
 
@@ -83,8 +84,9 @@ inline void RW_Lock<N>::lock_shared(const std::size_t w_id)
 
     while(!r)   // Keep checking as long as it's not safe to commit to reading. This also makes the read-lock reentrant.
     {
-        while(writer.test(std::memory_order_acq_rel));  // Some write is either (1) ongoing, in that case wait until it finishes; or
+        while(writer.test(std::memory_order_acq_rel))   // Some write is either (1) ongoing, in that case wait until it finishes; or
                                                         // (2) has signalled that it trying to start, in that case prioritize the write.
+            writer.wait(true, std::memory_order_acq_rel);
         // Write(s) have finished.
 
         r = true;   // Declare intention to read. It is unsafe to exit right away, as some other writer may have started in between.
