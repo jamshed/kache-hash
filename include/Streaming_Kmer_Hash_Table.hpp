@@ -118,8 +118,10 @@ private:
     std::vector<Padded<uint64_t>> checkpoint;   // `checkpoint[i]` is the number of elements remaining to be added by the `i`'th user thread before it checks for a resize.
     static constexpr uint64_t resize_checkpoint = 16384;    // Checkpoint number of elements for a user thread to add before checking for resize.
 
-    static constexpr uint64_t max_worker = 64;  // Maximum number of workers allowed to use the table.
-    RW_Lock<max_worker> table_lock; // Readers-writers lock to resize the table exclusively.
+    static constexpr uint64_t max_user = 64;    // Maximum number of users allowed to use the table.
+    RW_Lock<max_user> table_lock; // Readers-writers lock to resize the table exclusively.
+
+    const uint64_t resize_worker_c; // Number of worker threads to spawn for a concurrent resize.
 
     uint64_t sum_len;   // Total sequence length provided.
     uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
@@ -236,7 +238,7 @@ public:
 
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
-    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, double lf = lf_default);
+    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default);
 
     // Deserializes a streaming k-mer hash table from the stream `is`.
     // Streaming_Kmer_Hash_Table(std::ifstream& is);
@@ -409,7 +411,7 @@ public:
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
+inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const uint64_t resize_worker_c, const double lf):
       lf(lf)
     , cap_(ceil_pow_2((max_sz / lf) / B))
     , resize_th(capacity() * lf)
@@ -422,6 +424,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , registered_thread_count(0)
     , approx_sz(0)
     , checkpoint(std::thread::hardware_concurrency(), resize_checkpoint)
+    , resize_worker_c(resize_worker_c)
 {
     clear();
 }
@@ -1027,10 +1030,17 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     overflow_new = new overflow_t(capacity() * of_default);
     std::memset(M_new, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
-    for(std::size_t b = 0; b < old_cap; ++b)
-        for(std::size_t slot = 0; slot < B; ++slot)
-            if(M[b].cs[slot])
-                insert_at_resize(T[b * B + slot], M[b].cs[slot], M[b].min_coord[slot]);
+    std::vector<std::thread> W;
+    W.reserve(resize_worker_c);
+    for(uint64_t i = 0; i < resize_worker_c; ++i)
+        W.emplace_back([&]()
+        {
+            const auto stride = resize_worker_c;
+            for(std::size_t b = i; b < old_cap; b += stride)
+                for(std::size_t slot = 0; slot < B; ++slot)
+                    if(M[b].cs[slot])
+                        insert_at_resize(T[b * B + slot], M[b].cs[slot], M[b].min_coord[slot]);
+        });
 
     overflow->visit_all([&](auto& x)
     {
@@ -1039,6 +1049,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
         else
             insert_at_resize(flat_t(x.first, x.second.val), x.second.cs, x.second.min_coord);
     });
+
+    std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
 
     std::swap(M, M_new), std::swap(T, T_new), std::swap(overflow, overflow_new);
