@@ -6,6 +6,7 @@
 
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
+#include "Kmer_Utility.hpp"
 #include "Directed_Vertex.hpp"
 #include "Rolling_Hash.hpp"
 #include "Minimizer_Iterator.hpp"
@@ -173,6 +174,12 @@ private:
     void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
     { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m; }
 
+    // Directly places the element `e` with checksum `c` and minimizer-
+    // coordinate `m` into the `i`'th bucket at index `j` of the new resized
+    // table.
+    void place_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
+    { T_new[i * B + j] = e, M_new[i].cs[j] = c, M_new[i].min_coord[j] = m; }
+
     // Tries to insert the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket. It succeeds iff the key was absent
     // in the bucket beforehand and there was empty space, returning `true` in
@@ -180,6 +187,12 @@ private:
     // in the bucket, it puts the associated value at `val`, or else puts
     // `null_val` at `val`.
     bool try_insert_at(const flat_t& e, uint8_t c, uint8_t m, std::size_t i, find_ret_t& val);
+
+    // Tries to insert the element `x` with checksum `c` and minimizer-
+    // coordinate `m` into the `i`'th bucket of the newly resized table. It
+    // succeeds iff there was empty space, returning `true` in that case.
+    // Returns `false` otherwise.
+    bool try_insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, std::size_t i);
 
     // Tries to update the associated value of the k-mer `key` with checksum `c`
     // and minimizer-coordinate `m` at the `i`'th bucket through `f` iff it is
@@ -194,6 +207,10 @@ private:
     // the table beforehand, and returns `null_val` in that case. Otherwise it
     // returns the currently associated value.
     find_ret_t insert(const flat_t& e, uint8_t c, uint64_t h, uint8_t m);
+
+    // Inserts the element `x` with checksum `c` and minimizer-coordinate `m`
+    // into the resized table.
+    void insert_at_resize(const flat_t& x, uint8_t c, uint8_t m);
 
     // Inserts the k-mer `key` with checksum `c`, minimizer-hash `h`, and
     // -coordinate `m` into the table with associated value `val` iff it is not
@@ -388,12 +405,13 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const double lf):
       lf(lf)
     , cap_(ceil_pow_2((max_sz / lf) / B))
-    , resize_th(cap_ * lf)
+    , resize_th(capacity() * lf)
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
     , overflow(new overflow_t(capacity() * of_default))
     , T_new(nullptr)
     , M_new(nullptr)
+    , overflow_new((nullptr))
     , registered_thread_count(0)
     , approx_sz(0)
     , checkpoint(std::thread::hardware_concurrency(), resize_checkpoint)
@@ -642,6 +660,28 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at(const flat_t
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i)
+{
+    lock<true>(i);
+
+    const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M_new[i].cs));
+    const auto zero = _mm256_setzero_si256();
+    const auto cmp = eq_mask(c_vec, zero);
+
+    const auto j = std::countr_zero(cmp);
+    if(j == B)
+    {
+        unlock<true>(i);
+        return false;
+    }
+
+    place_at_resize(e, c, m, i, j);
+    unlock<true>(i);
+    return true;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
 inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k> key, const uint8_t c, const uint8_t m, const std::size_t i, const F& f, const V& val, val_t& old_val) requires (is_map_)
 {
@@ -688,7 +728,8 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     {
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
-        // TODO: check resize.
+        if(approx_sz >= resize_th)
+            resize();
     }
 
     return r;
@@ -711,7 +752,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     {
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
-        // TODO: check resize.
+        if(approx_sz >= resize_th)
+            resize();
     }
 
     return r;
@@ -735,7 +777,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     {
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
-        // TODO: check resize.
+        if(approx_sz >= resize_th)
+            resize();
     }
 
     return r;
@@ -762,7 +805,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
         const auto s_1 = h_1 & idx_mask;
         const auto s_2 = h_2 & idx_mask;
         const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
-        assert(p != q);
 
         const auto key = this->key(x);
 
@@ -812,6 +854,63 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
 
             return null_val;
         }
+    }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const flat_t& x, const uint8_t c, const uint8_t m)
+{
+    const auto idx_mask = cap_ - 1;
+
+    const auto key = this->key(x);
+    const uint8_t min_idx = m & Min_Iterator<k, l>::min_index_mask();
+    const bool in_fwd = m & Min_Iterator<k, l>::min_orientation_mask();
+    const auto min = in_fwd ?
+                        key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
+    const auto h = Min_Iterator<k, l>::lmer_hash(min);
+
+    const auto b = h & idx_mask;
+    if(try_insert_at_resize(x, c, m, b))
+        return;
+
+    const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
+    const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
+    const auto s_1 = h_1 & idx_mask;
+    const auto s_2 = h_2 & idx_mask;
+    const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
+
+    lock_ordered<true>(p, q);
+
+    const auto zero = _mm256_setzero_si256();
+
+    const auto c_vec_p = _mm256_load_si256(reinterpret_cast<const __m256i*>(M_new[p].cs));
+    const auto c_vec_q = _mm256_load_si256(reinterpret_cast<const __m256i*>(M_new[q].cs));
+
+    const auto cmp_p = eq_mask(c_vec_p, zero);
+    const auto cmp_q = eq_mask(c_vec_q, zero);
+
+    const auto sz_p = static_cast<std::size_t>(std::countr_zero(cmp_p));
+    const auto sz_q = static_cast<std::size_t>(std::countr_zero(cmp_q));
+    assert(std::countr_zero(cmp_p) + std::countl_one(cmp_p) == B), assert(std::countr_zero(cmp_q) + std::countl_one(cmp_q) == B);
+
+    if(sz_p < sz_q)
+    {
+        place_at_resize(x, c, m, p, sz_p);
+        unlock_ordered<true>(p, q);
+    }
+    else if(sz_q < B)
+    {
+        place_at_resize(x, c, m, q, sz_q);
+        unlock_ordered<true>(p, q);
+    }
+    else
+    {
+        unlock_ordered<true>(p, q);
+        if constexpr(!is_map_)
+            overflow_new->insert(std::pair(x, Overflow_Set_Val(c, m)));
+        else
+            overflow_new->insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second)));
     }
 }
 
@@ -897,27 +996,28 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     cap_ *= 2;
     T_new = aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE);
     M_new = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
+    overflow_new = new overflow_t(capacity() * of_default);
     std::memset(M_new, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
     for(std::size_t b = 0; b < old_cap; ++b)
         for(std::size_t slot = 0; slot < B; ++slot)
             if(M[b].cs[slot])
-            {
-                const auto kv = T[b * B + slot];
-                const auto key = this->key(kv);
-                const auto c = M[b].cs[slot];
-                const auto m = M[b].min_coord[slot];
+                insert_at_resize(T[b * B + slot], M[b].cs[slot], M[b].min_coord[slot]);
 
-                const uint8_t min_idx = m & Min_Iterator<k, l>::min_index_mask();
-                const bool in_fwd = m & Min_Iterator<k, l>::min_orientation_mask();
-                const auto min = in_fwd ?
-                                    key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
-                const auto h = Min_Iterator<k, l>::lmer_hash(min);
+    overflow->visit_all([&](auto& x)
+    {
+        if constexpr(!is_map_)
+            insert_at_resize(x.first, x.second.cs, x.second.min_coord);
+        else
+            insert_at_resize(flat_t(x.first, x.second.val), x.second.cs, x.second.min_coord);
+    });
 
-                // TODO: insert item into the new table.
-            }
 
-    // TODO: insert items from the overflow table into the new table.
+    std::swap(M, M_new), std::swap(T, T_new), std::swap(overflow, overflow_new);
+    deallocate(M_new), deallocate(T_new), delete(overflow_new);
+    M_new = nullptr, T_new = nullptr, overflow_new = nullptr;
+
+    resize_th = capacity() * lf;
 }
 
 
