@@ -224,6 +224,9 @@ private:
     template <typename F, typename V = T_>
     val_t upsert(const Kmer<k> key, uint8_t c, uint64_t h, uint8_t m, const F& f, const V& val) requires (is_map_);
 
+    // Tries to resize the hash table to double its capacity.
+    void try_resize();
+
     // Resizes the hash table to double its capacity.
     void resize();
 
@@ -736,7 +739,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
         if(approx_sz >= resize_th)
-            resize();
+            try_resize();
     }
 
     return r;
@@ -763,7 +766,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
         if(approx_sz >= resize_th)
-            resize();
+            try_resize();
     }
 
     return r;
@@ -791,7 +794,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
         approx_sz += resize_checkpoint;
         cp = resize_checkpoint;
         if(approx_sz >= resize_th)
-            resize();
+            try_resize();
     }
 
     return r;
@@ -999,6 +1002,18 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             return null_val;
         }
     }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
+{
+    if constexpr(mt_)   table_lock.lock();
+
+    if(approx_sz >= resize_th)
+        resize();
+
+    if constexpr(mt_)   table_lock.unlock();
 }
 
 
