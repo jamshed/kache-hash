@@ -72,6 +72,9 @@ public:
     // Clears the hash table.
     void clear();
 
+    // Returns the size of the table. It costs linear in the size of the table.
+    std::size_t size() const;
+
     // Inserts the key `key` with value `val` into the table. Returns `nullptr`
     // iff the insertion succeeds, i.e. the key was absent in the table. Returns
     // the address of the associated value otherwise.
@@ -141,6 +144,17 @@ template <typename T_key_, typename T_val_, typename T_hasher_>
 inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::clear()
 {
     std::memset(static_cast<void*>(T), -1, capacity_ * sizeof(Key_Val_Pair));
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline std::size_t Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::size() const
+{
+    std::size_t sz = 0;
+    for(std::size_t i = 0; i < capacity_; ++i)
+        sz += (T[i].key != empty_key_);
+
+    return sz;
 }
 
 
