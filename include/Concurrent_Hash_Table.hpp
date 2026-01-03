@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <vector>
 #include <cstring>
+#include <optional>
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
@@ -76,11 +77,10 @@ public:
     // the address of the associated value otherwise.
     const T_val_* insert(T_key_ key, T_val_ val);
 
-    // Inserts the key `key` with value `val` into the table. Returns `false` if
-    // the key already exists in the table; and in that case, the existing value
-    // associated to `key` is overwritten with `val`. Otherwise returns `true`
-    // iff the insertion succeeds, i.e. free space was found for the insertion.
-    bool upsert(T_key_ key, T_val_ val);
+    // Inserts the key `key` with value `val` into the table if it is absent and
+    // returns `null_opt`. Otherwise updates the associated value to `val` and
+    // returns the old value.
+    std::optional<T_val_> upsert(T_key_ key, T_val_ val);
 
     // Searches for `key` in the table and returns the address of the value
     // associated to it iff it is found. Returns `nullptr` otherwise.
@@ -178,7 +178,7 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val)
+inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val)
 {
 #ifndef NDEBUG
     std::size_t tried_slots = 0;
@@ -199,20 +199,21 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key
             lock[i].unlock();
 
             if(success)
-                return true;
+                return std::nullopt;
         }
 
         if(T[i].key == key)
         {
             lock[i].lock();
+            const auto old_val = T[i].val;
             T[i].val = val;
             lock[i].unlock();
 
-            return false;
+            return old_val;
         }
     }
 
-    return false;   // Placeholder.
+    return T[0].val;    // Placeholder.
 }
 
 
