@@ -48,8 +48,6 @@ private:
     mutable std::vector<Spin_Lock> lock;    // Locks for atomic storing of key-value entries.
     // TODO: experiment moving the spin-lock to the key-value structure for seemingly better cache-behavior.
 
-    const uint64_t user_count;  // Maximum number of concurrent users for the table.
-
     // Maps the hash value `h` to an index into the table.
     std::size_t hash_to_idx(std::size_t h) const { return h & idx_wrapper_mask; }
 
@@ -62,7 +60,7 @@ public:
     // Constructs a concurrent hash table to support upto `max_n` elements, with
     // a maximum load-factor of `load_factor`. The object `hasher` is used to
     // hash the keys in the table.
-    Concurrent_Hash_Table(std::size_t max_n, uint64_t user_count, double load_factor = lf_default, T_hasher_ hasher = T_hasher_());
+    Concurrent_Hash_Table(std::size_t max_n, double load_factor = lf_default, T_hasher_ hasher = T_hasher_());
 
     ~Concurrent_Hash_Table() { deallocate(T); }
 
@@ -126,14 +124,13 @@ public:
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Concurrent_Hash_Table(const std::size_t max_n, const uint64_t user_count, const double load_factor, const T_hasher_ hasher):
+inline Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Concurrent_Hash_Table(const std::size_t max_n, const double load_factor, const T_hasher_ hasher):
       empty_key_()
     , hash(hasher)
     , capacity_(ceil_pow_2(static_cast<std::size_t>(std::ceil(max_n / load_factor))))
     , idx_wrapper_mask(capacity_ - 1)
     , T(allocate<Key_Val_Pair>(capacity_))
     , lock(capacity_)
-    , user_count(user_count)
 {
     std::memset(reinterpret_cast<char*>(&empty_key_), -1, sizeof(empty_key_));
 
