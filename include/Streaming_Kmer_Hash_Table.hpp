@@ -11,11 +11,9 @@
 #include "Rolling_Hash.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "Hash_Table.hpp"
+#include "Concurrent_Hash_Table.hpp"
 #include "RW_Lock.hpp"
 #include "utility.hpp"
-
-#include "unordered_dense/unordered_dense.h"
-#include "boost/unordered/concurrent_flat_map.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -88,6 +86,7 @@ private:
         uint8_t cs;
         uint8_t min_coord;
 
+        Overflow_Set_Val() {}
         Overflow_Set_Val(uint8_t cs, uint8_t min_coord): cs(cs), min_coord(min_coord) {}
     };
 
@@ -97,21 +96,22 @@ private:
         uint8_t min_coord;
         T_ val;
 
+        Overflow_Map_Val() {}
         Overflow_Map_Val(uint8_t cs, uint8_t min_coord, const T_& val): cs(cs), min_coord(min_coord), val(val) {}
     };
 
-    static constexpr uint64_t skew_th = B;
-    typedef std::conditional_t<is_map_,
-        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>>,
-        boost::unordered::concurrent_flat_map<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>> > overflow_t;   // The overflow table type.
+    typedef std::conditional_t<!is_map_,
+        Concurrent_Hash_Table<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>>,
+        Concurrent_Hash_Table<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>> > ov_t; // The overflow table type.
+
 
     flat_t* T;  // Flat table of size `cap x B`.
     Metadata* M;    // Metadata table of the buckets.
-    overflow_t* overflow;   // The overflow table.
+    ov_t* ov;   // The overflow table.
 
     flat_t* T_new;  // New flat table after a resize.
     Metadata* M_new;    // New metadata table of buckets after a resize.
-    overflow_t* overflow_new;   // New overflow table after a resize.
+    ov_t* ov_new;    // New overflow table after a resize.
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
     std::atomic_uint64_t approx_sz; // Approximate size (lower bound) of the hash table.
@@ -122,12 +122,6 @@ private:
     RW_Lock<max_user> table_lock; // Readers-writers lock to resize the table exclusively.
 
     const uint64_t resize_worker_c; // Number of worker threads to spawn for a concurrent resize.
-
-    uint64_t sum_len;   // Total sequence length provided.
-    uint64_t sup_kmer_c;    // Number of super k-mers in the provided sequences to the table.
-
-    // Following are for used for developer stats.
-    ankerl::unordered_dense::map<uint64_t, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>> min_to_kmer;  // Set of overflowing minimizers.
 
 
     // Returns `true` iff `key` matches to the key of the element `e`.
@@ -260,7 +254,7 @@ public:
     std::size_t size() const;
 
     // Returns the size of the overflow table.
-    std::size_t overflow_size() const { return overflow->size();  }
+    std::size_t overflow_size() const { return ov->size();  }
 
     // Clears the table.
     void clear();
@@ -420,10 +414,10 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , resize_th(capacity() * lf)
     , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
     , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
-    , overflow(new overflow_t(capacity() * of_default))
+    , ov(new ov_t(capacity() * of_default))
     , T_new(nullptr)
     , M_new(nullptr)
-    , overflow_new((nullptr))
+    , ov_new(nullptr)
     , registered_thread_count(0)
     , approx_sz(0)
     , checkpoint(std::thread::hardware_concurrency(), resize_checkpoint)
@@ -436,23 +430,19 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::~Streaming_Kmer_Hash_Table()
 {
-    deallocate(T), deallocate(M), delete(overflow);
+    deallocate(T), deallocate(M), delete(ov);
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear()
 {
-    sum_len = 0, sup_kmer_c = 0;
-
     std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
     approx_sz = 0;
     std::for_each(checkpoint.begin(), checkpoint.end(), [](auto& c){ c = resize_checkpoint; });
 
-    overflow->clear();
-
-    min_to_kmer.clear();
+    ov->clear();
 }
 
 
@@ -559,6 +549,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock_ordered(const std::
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::size() const
 {
+    // return main_table_size() + overflow_size();
     std::size_t sz = approx_sz;
     std::for_each(checkpoint.cbegin(), checkpoint.cend(), [&](auto& c){ sz += c.unwrap() > 0 ? resize_checkpoint - c.unwrap() : 0; });
     return sz;
@@ -602,12 +593,11 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
     if constexpr(!is_map_)
-        return overflow->count(key);
+        return ov->find(key);
     else
     {
-        auto val = null_val;
-        overflow->cvisit(key, [&](const auto& kv){ val = kv.second.val; });
-        return val;
+        const auto p = ov->find(key);
+        return !p ? null_val : p->val;
     }
 }
 
@@ -866,10 +856,13 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             else
             {
                 unlock_ordered(p, q);
-                if constexpr(!is_map_)  // TODO: incorrect value for now, due to limitations in the 3rd-party map APIs.
-                    return overflow->insert(std::pair(x, Overflow_Set_Val(c, m))) ? null_val : find_ret_t(true);
+                if constexpr(!is_map_)
+                    return ov->insert(x, Overflow_Set_Val(c, m));
                 else
-                    return overflow->insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second))) ? null_val : find_ret_t(true);
+                {
+                    const auto p = ov->insert(x.first, Overflow_Map_Val(c, m, x.second));
+                    return !p ? null_val : val_t(p->val);
+                }
             }
 
             return null_val;
@@ -928,9 +921,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     {
         unlock_ordered<true>(p, q);
         if constexpr(!is_map_)
-            overflow_new->insert(std::pair(x, Overflow_Set_Val(c, m)));
+            ov_new->insert(x, Overflow_Set_Val(c, m));
         else
-            overflow_new->insert(std::pair(x.first, Overflow_Map_Val(c, m, x.second)));
+            ov_new->insert(x.first, Overflow_Map_Val(c, m, x.second));
     }
 }
 
@@ -992,15 +985,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             else
             {
                 unlock_ordered(p, q);
-
-                val_t old_val = null_val;
-                overflow->emplace_or_visit(key, Overflow_Map_Val(c, m, val), [&](auto& kv)
-                {
-                    old_val = kv.second.val;
-                    kv.second.val = f(kv.second.val);
-                });
-
-                return old_val;
+                const auto r = ov->upsert(key, Overflow_Map_Val(c, m, val));
+                return !r ? null_val : val_t(r->val);
             }
 
             return null_val;
@@ -1031,35 +1017,37 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     cap_ *= 2;
     T_new = aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE);
     M_new = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
-    overflow_new = new overflow_t(capacity() * of_default);
+    ov_new = new ov_t(capacity() * of_default);
     std::memset(M_new, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
 
     std::vector<std::thread> W;
     W.reserve(resize_worker_c);
     for(uint64_t i = 0; i < resize_worker_c; ++i)
-        W.emplace_back([&]()
+        W.emplace_back([&](const auto w_id)
         {
             const auto stride = resize_worker_c;
-            for(std::size_t b = i; b < old_cap; b += stride)
+            for(std::size_t b = w_id; b < old_cap; b += stride)
                 for(std::size_t slot = 0; slot < B; ++slot)
                     if(M[b].cs[slot])
                         insert_at_resize(T[b * B + slot], M[b].cs[slot], M[b].min_coord[slot]);
-        });
 
-    overflow->visit_all([&](auto& x)
-    {
-        if constexpr(!is_map_)
-            insert_at_resize(x.first, x.second.cs, x.second.min_coord);
-        else
-            insert_at_resize(flat_t(x.first, x.second.val), x.second.cs, x.second.min_coord);
-    });
+            auto it = ov->iterator(resize_worker_c, w_id);
+            typedef std::conditional_t<!is_map_, Overflow_Set_Val, Overflow_Map_Val> ov_val_t;
+            Kmer<k> key;
+            ov_val_t val;
+            while(it.next(key, val))
+                if constexpr(!is_map_)
+                    insert_at_resize(key, val.cs, val.min_coord);
+                else
+                    insert_at_resize(flat_t(key, val.val), val.cs, val.min_coord);
+        }, i);
 
     std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
 
-    std::swap(M, M_new), std::swap(T, T_new), std::swap(overflow, overflow_new);
-    deallocate(M_new), deallocate(T_new), delete(overflow_new);
-    M_new = nullptr, T_new = nullptr, overflow_new = nullptr;
+    std::swap(M, M_new), std::swap(T, T_new), std::swap(ov, ov_new);
+    deallocate(M_new), deallocate(T_new), delete(ov_new);
+    M_new = nullptr, T_new = nullptr, ov_new = nullptr;
 
     resize_th = capacity() * lf;
 
@@ -1100,48 +1088,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
 }
 
 
-/*
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::serialize(std::ofstream& os) const
-{
-    ::serialize(k, os), ::serialize(l, os), ::serialize(B, os);
-
-    ::serialize(cap_, os);
-    ::serialize(T, cap_ * B, os), ::serialize(M, cap_, os);
-
-    // overflow_.serialize(os);
-
-    ::serialize(sum_len, os), ::serialize(sup_kmer_c, os);
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::deserialize(std::ifstream& is)
-{
-    uint16_t k_, l_;
-    std::size_t B_;
-    ::deserialize(k_, is), ::deserialize(l_, is), ::deserialize(B_, is);
-    if(k_ != k || l_ != l || B_ != B)
-    {
-        std::cerr << "Mismatching configuration of the hash table. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    ::deserialize(cap_, is);
-
-    if(T)
-        deallocate(T), deallocate(M);
-
-    T = aligned_allocate<Kmer<k>>(cap_ * B, L1_CACHE_LINE_SIZE), M = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
-    ::deserialize(T, cap_ * B, is), ::deserialize(M, cap_, is);
-
-    // overflow_.deserialize(is);
-
-    ::deserialize(sum_len, is), ::deserialize(sup_kmer_c, is);
-}
-*/
-
-
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::report_stats() const
 {
@@ -1149,29 +1095,11 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::report_stats() const
     std::cerr   << "Table width:  " << B << ".\n";
     std::cerr   << "========================================\n";
 
-    std::cerr   << "Total sequence length:  " << sum_len << ".\n";
-    std::cerr   << "Number of super k-mers: " << sup_kmer_c << ".\n";
-    std::cerr   << "========================================\n";
-
 
     uint64_t sz = size();
-
-    uint64_t skew_min = 0;
-    uint64_t skew_kmer = 0;
-    for(const auto& m : min_to_kmer)
-        if(m.second.size() > skew_th)
-            skew_min++, skew_kmer += m.second.size();
-
-    std::cerr   << "Minimizer set size: " << min_to_kmer.size() << ".\n";
-    std::cerr   << "Minimizers with more than " << B << " k-mers: " << skew_min << " (" << (skew_min * 100.0 / min_to_kmer.size()) << "%).\n";
-    std::cerr   << "Associated k-mer count: " << skew_kmer << " (" << (skew_kmer * 100.0 / sz) << "%).\n";
-    // std::cerr   << "Identified skew-minimizer set size: " << skew_mins.size() << "\n";
-    // std::cerr   << "Identified skew-minimizer data structure size: " << (skew_mins.capacity() * sizeof(uint64_t) / (1024lu))  << " KBs.\n";
-    std::cerr   << "========================================\n";
-
     std::cerr   << "Complete table size: " << sz << ".\n";
-    std::cerr   << "Overflow table size: " << overflow->size() << " ("
-                    << (overflow->size() * 100.0 / sz) << "%).\n";
+    std::cerr   << "Overflow table size: " << ov->size() << " ("
+                    << (ov->size() * 100.0 / sz) << "%).\n";
     std::cerr   << "========================================\n";
 
 
