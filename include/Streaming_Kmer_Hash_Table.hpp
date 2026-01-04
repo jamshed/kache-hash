@@ -56,7 +56,8 @@ private:
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
     static_assert(B == 32, "Bucket size needs to be 32 for the current vectorization scheme to function.");
 
-    static constexpr bool is_map_ = !std::is_void_v<T_>;    // Whether a hash-map or a -set.
+    static constexpr bool is_set_ = std::is_void_v<T_>; // Whether a hash-set.
+    static constexpr bool is_map_ = !is_set_;   // Whether a hash-map.
     typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_t;    // Underlying data type in the flat table.
     typedef std::optional<T_> val_t;    // Type of values returned by hash-map operations.
     typedef std::conditional_t<is_map_, val_t, bool> find_ret_t;    // Return type for find / insert methods.
@@ -100,7 +101,7 @@ private:
         Overflow_Map_Val(uint8_t cs, uint8_t min_coord, const T_& val): cs(cs), min_coord(min_coord), val(val) {}
     };
 
-    typedef std::conditional_t<!is_map_,
+    typedef std::conditional_t<is_set_,
         Concurrent_Hash_Table<Kmer<k>, Overflow_Set_Val, Hash<Kmer<k>>>,
         Concurrent_Hash_Table<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>> > ov_t; // The overflow table type.
 
@@ -263,7 +264,7 @@ public:
     // already present in the table, returning `false` in that case. Returns
     // `true` otherwise; i.e. returns the presence-status before the insertion.
     // The invoking user thread must provide its token `token`.
-    bool insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_);
+    bool insert(const Kmer_Window<k, l>& w, const Token& token) requires (is_set_);
 
     // Inserts the k-mer defined by the window `w` and associated value `val`
     // into the table iff the key is not already present in the table, returning
@@ -592,7 +593,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
-    if constexpr(!is_map_)
+    if constexpr(is_set_)
         return ov->find(key);
     else
     {
@@ -715,7 +716,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_upsert_at(const Kmer<k
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const Token& token) requires (!is_map_)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k, l>& w, const Token& token) requires (is_set_)
 {
     uint8_t m;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));  // Avoiding checksum 0 by overloading checksum 1.
@@ -856,7 +857,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             else
             {
                 unlock_ordered(p, q);
-                if constexpr(!is_map_)
+                if constexpr(is_set_)
                     return ov->insert(x, Overflow_Set_Val(c, m));
                 else
                 {
@@ -920,7 +921,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     else
     {
         unlock_ordered<true>(p, q);
-        if constexpr(!is_map_)
+        if constexpr(is_set_)
             ov_new->insert(x, Overflow_Set_Val(c, m));
         else
             ov_new->insert(x.first, Overflow_Map_Val(c, m, x.second));
@@ -1036,7 +1037,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             Kmer<k> key;
             ov_val_t val;
             while(it.next(key, val))
-                if constexpr(!is_map_)
+                if constexpr(is_set_)
                     insert_at_resize(key, val.cs, val.min_coord);
                 else
                     insert_at_resize(flat_t(key, val.val), val.cs, val.min_coord);
