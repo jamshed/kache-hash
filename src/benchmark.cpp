@@ -7,6 +7,7 @@
 #include "Streaming_Kmer_Hash_Table.hpp"
 
 #include "boost/unordered/concurrent_flat_set.hpp"
+#include "boost/unordered/concurrent_flat_map.hpp"
 #include "icebergHT/iceberg_table.h"
 #include "utility.hpp"
 
@@ -198,7 +199,7 @@ uint64_t benchmark_set_insert_generic_sequential_no_resize(const std::string& pa
 template <uint16_t k>
 uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, false> S(final_sz);
+    Streaming_Kmer_Hash_Table<k, false> S(final_sz, 1);
 
     const auto t_s = now();
 
@@ -443,7 +444,7 @@ template <uint16_t k>
 uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
     typedef Streaming_Kmer_Hash_Table<k, true> ht_t;
-    ht_t S(final_sz);
+    ht_t S(final_sz, parlay::num_workers());
 
     const auto t_s = now();
 
@@ -562,7 +563,7 @@ uint64_t benchmark_map_insert_generic_sequential_no_resize(const std::string& pa
 template <uint16_t k>
 uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz);
+    Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz, 1);
 
     const auto t_s = now();
 
@@ -621,7 +622,7 @@ template <uint16_t k>
 uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
     typedef Streaming_Kmer_Hash_Table<k, true, uint64_t> ht_t;
-    ht_t M(final_sz);
+    ht_t M(final_sz, parlay::num_workers());
 
     const auto t_s = now();
 
