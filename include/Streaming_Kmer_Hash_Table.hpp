@@ -139,6 +139,9 @@ private:
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
+    // Returns the size of the main table.
+    std::size_t main_table_size() const;
+
     // Locks the `b`'th bucket for exclusive-write access in concurrent
     // settings. `resize_` denotes whether the bucket requires to be locked for
     // resizing or not.
@@ -430,19 +433,6 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
 }
 
 
-/*
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(std::ifstream& is):
-      cap_(0)
-    , T(nullptr)
-    , M(nullptr)
-    , registered_thread_count(0)
-{
-    deserialize(is);
-}
-*/
-
-
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::~Streaming_Kmer_Hash_Table()
 {
@@ -487,6 +477,17 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const s
 
     assert(std::countr_zero(cmp) + std::countl_one(cmp) == B);
     return std::countr_zero(cmp);   // This must hold if no deletion is performed at the table.
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::main_table_size() const
+{
+    std::size_t sz = 0;
+    for(std::size_t b = 0; b < cap_; ++b)
+        sz += bucket_size(b);
+
+    return sz;
 }
 
 
@@ -1023,6 +1024,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 {
+    std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
+    const auto t_s = now();
+
     const auto old_cap = cap_;
     cap_ *= 2;
     T_new = aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE);
@@ -1058,6 +1062,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     M_new = nullptr, T_new = nullptr, overflow_new = nullptr;
 
     resize_th = capacity() * lf;
+
+    const auto t_e = now();
+    std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
+    std::cerr << "Time taken: " << duration(t_e - t_s) << "s.\n";
 }
 
 

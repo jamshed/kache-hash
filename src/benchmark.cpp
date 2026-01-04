@@ -918,11 +918,11 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_rolling_hash<k>(path) << "\n";
     // std::cerr << benchmark_ntHash<k>(path) << "\n";
     // std::cerr << benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
     // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
 
-    std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
+    // std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
     // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
