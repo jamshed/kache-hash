@@ -231,6 +231,24 @@ else()
 endif()
 
 
+# Prepare the `libcuckoo` library.
+set(LIBCUCKOO_MIN_VERSION "0.3.1")
+message("Build system will fetch and install the `libcuckoo` library")
+ExternalProject_Add(prj_libcuckoo
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/efficient/libcuckoo/archive/refs/tags/v${LIBCUCKOO_MIN_VERSION}.tar.gz -o libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
+                        tar -xzf libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
+                        rm libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz
+
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/libcuckoo-${LIBCUCKOO_MIN_VERSION}
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   ""
+    BUILD_COMMAND       ""
+    INSTALL_COMMAND     cp -rf libcuckoo/ ${EXT_INCLUDE}/
+)
+
+
 # Prepare the `parlay` library—a parallel algorithms programming toolkit.
 message("Build system will fetch and install parlaylib")
 ExternalProject_Add(prj_parlaylib
