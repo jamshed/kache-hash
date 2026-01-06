@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 # Project name, its version, and languages used.
-set(PROJECT_NAME kmer_hash)
+set(PROJECT_NAME kache-hash)
 project(${PROJECT_NAME}
             VERSION 0.1.0
             LANGUAGES CXX C
