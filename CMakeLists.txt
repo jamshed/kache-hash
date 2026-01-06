@@ -117,8 +117,8 @@ endif()
 # Required preprocessor definitions.
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
 add_compile_definitions(${XXHASH_DEFS})
-add_compile_definitions(CMAKE_EXPORT_COMPILE_COMMANDS)  # Better `clangd` scan.
 add_compile_definitions(DEVELOP)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
 
 execute_process(
     COMMAND getconf LEVEL1_DCACHE_LINESIZE

@@ -82,6 +82,10 @@ public:
     // then returns `b_0 b_1 ... b_{B - 1}`.
     template <uint16_t B>
     static uint64_t base_reverse(uint64_t val);
+
+    // Returns the reverse complement of the `k`-mer encoding `kmer`.
+    template <uint16_t k>
+    static uint64_t reverse_complement(uint64_t kmer);
 };
 
 
@@ -140,6 +144,36 @@ inline uint64_t Kmer_Utility::base_reverse(const uint64_t val)
 
 
     return 0;
+}
+
+
+template <uint16_t k>
+inline uint64_t Kmer_Utility::reverse_complement(const uint64_t kmer)
+{
+    uint64_t rc = 0;
+
+    // Working with bytes instead of 64-bit words at a time.
+
+    uint8_t* const rev_compl = reinterpret_cast<uint8_t*>(&rc);
+    const uint8_t* const data = reinterpret_cast<const uint8_t*>(&kmer);
+
+
+    // Get the reverse complement for the fully packed bytes.
+
+    constexpr uint16_t packed_byte_count = k / 4;
+    for(uint16_t byte_idx = 0; byte_idx < packed_byte_count; ++byte_idx)
+        rev_compl[packed_byte_count - 1 - byte_idx] = Kmer_Utility::reverse_complement(data[byte_idx]);
+
+
+    // Get the reverse complement for the only byte that might be partially packed (possible for the highest-indexed byte only).
+
+    constexpr uint16_t rem_base_count = k % 4;
+    if constexpr(rem_base_count == 0)
+        return rc;
+
+    rc <<= 2 * rem_base_count;
+    rev_compl[0] |= (Kmer_Utility::reverse_complement(data[packed_byte_count]) >> (2 * (4 - rem_base_count)));
+    return rc;
 }
 
 

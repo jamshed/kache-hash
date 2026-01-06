@@ -1,6 +1,10 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "Kmer_Utility.hpp"
+#include "Kmer.hpp"
+#include "Minimizer_Iterator.hpp"
+#include "Minimizer_Iterator_Baseline.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
@@ -250,7 +254,8 @@ void bench_ntHash(const std::string& file_path)
 template <uint16_t k, uint16_t l>
 void test_mt_insert()
 {
-    Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, void, l> ht_t;
+    ht_t S(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET
@@ -258,6 +263,10 @@ void test_mt_insert()
     uint64_t checkpoint = log_step;
     std::cerr << "\n";
 #endif
+
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = S.register_user();
 
     S.clear();
 
@@ -278,7 +287,7 @@ void test_mt_insert()
             std::size_t kmer_idx = 0;
             while(true)
             {
-                S.insert(w);
+                S.insert(w, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -375,10 +384,10 @@ void test_hash_table_insert()
 
 
 template <uint16_t k, uint16_t l>
-void test_hash_table_iterator()
+void test_hash_table_iterator(const std::string& path, const std::size_t final_sz)
 {
-    // Streaming_Kmer_Hash_Table<k, true, void, l> S(final_sz);
-    Streaming_Kmer_Hash_Table<k, true, uint64_t, l> M(final_sz);
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(final_sz);
 
     std::size_t n = 0;
 #ifndef QUIET
@@ -387,10 +396,14 @@ void test_hash_table_iterator()
     std::cerr << "\n";
 #endif
 
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = M.register_user();
+
     // std::vector<Padded<uint64_t>> count_s(parlay::num_workers(), 0);
     // std::vector<Padded<uint64_t>> count_m(parlay::num_workers(), 0);
 
-    Parser input(file_path);
+    Parser input(path);
     while(input.read_next_seq())
     {
         auto const seq = input.seq();
@@ -409,7 +422,7 @@ void test_hash_table_iterator()
             while(true)
             {
                 // c_s += !S.insert(w);
-                M.upsert(w, [](uint64_t v){ return v + 1; }, 0);
+                M.upsert(w, [](uint64_t v){ return v + 1; }, 0, token[parlay::worker_id()]);
                 if(kmer_idx + k == s_len)
                     break;
 
@@ -440,20 +453,215 @@ void test_hash_table_iterator()
     // std::cout << "Positive insertions: \n";
     // std::cout << "\tinto set: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
     // std::cout << "\tinto map: " << [&](){ uint64_t s = 0; std::for_each(count_s.cbegin(), count_s.cend(), [&](auto& c){ s += c.unwrap(); }); return s; }() << "\n";
+}
+
+
+template <uint16_t k, uint16_t l>
+void test_minimizer_coordinate(const std::string& path, const std::size_t final_sz)
+{
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(final_sz);
 
     {
+        std::size_t n = 0;
+#ifndef QUIET
+        constexpr uint64_t log_step = 32768;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+#endif
+
+        std::vector<typename ht_t::Token> token(parlay::num_workers());
+        for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+            token[w] = M.register_user();
+
+        Parser input(path);
+        while(input.read_next_seq())
+        {
+            auto const seq = input.seq();
+            auto const len = input.seq_len();
+
+            const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+            parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+            {
+                const auto s = seq + w_id * kmer_per_w;
+                const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+                Kmer_Window<k> w;
+
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    M.upsert(w, [](uint64_t v){ return v + 1; }, 0, token[parlay::worker_id()]);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
+            }
+            , 1);
+
+            n += len - k + 1;
+#ifndef QUIET
+            if(n >= checkpoint)
+            {
+                std::cerr << "\rInserted " << n << " k-mers.";
+                checkpoint = n + log_step;
+            }
+#endif
+        }
+
+        input.close();
+
+        std::cout << "Map size: " << M.size() << "\n";
+        std::cout << "Overflow-set size:  " << M.overflow_size() << "\n";
+    }
+
+    {
+        Min_Iterator<k, l> min_it;
         auto it = M.cbegin();
         const auto e = M.cend();
         std::size_t c = 0;
         for(; it != e; ++it)
         {
+            const auto x = (*it).first;
+            const auto min_coord = it.min_coord();
+            const uint8_t min_idx = min_coord & Min_Iterator<k, l>::min_index_mask();
+            const bool in_fwd = min_coord & Min_Iterator<k, l>::min_orientation_mask();
+            // const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : x.reverse_complement().template lmer_at<l>(min_idx);
+            const auto min = in_fwd ? x.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(x.template lmer_at<l>(k - min_idx - l));
+
+            const auto expected_min_h = min_it.hash(x);
+            const auto stored_min_h   = min_it.lmer_hash(min);
+            if(stored_min_h != expected_min_h)
+            {
+                std::cerr << "Mismatching minimizer hash at k-mer " << x << ".\n";
+                std::cerr << "Expected minimizer: " << Kmer<l>(expected_min_h) << "\n";
+                std::cerr << "Stored minimizer:   " << Kmer<l>(stored_min_h) << "; coordinate: (" << in_fwd << ", " << int(min_idx) << ")\n";
+                std::exit(EXIT_FAILURE);
+            }
+
             c++;
-            if((c & 1023) == 0)
+            if((c & 1048575) == 0)
                 std::cerr << "\rIterated over " << c << " many elements from the set.";
         }
 
         std::cerr << "\rIterated over " << c << " many elements from the set.\n";
+        std::cerr << "All minimizer-coordinates are correct.\n";
     }
+}
+
+
+template <uint16_t k, uint16_t l>
+void test_kmer_base(const std::string& path)
+{
+    Parser input(path);
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                for(uint16_t i = 0; i < k; ++i)
+                    if(v.kmer().base_at(i) != DNA_Utility::map_base(s[kmer_idx + k - 1 - i]))
+                    {
+                        std::cerr << "Mismatching k-mer base encoding.\n";
+                        std::exit(EXIT_FAILURE);
+                    }
+
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+    }
+
+    std::cerr << "All k-mer bases are encoded / decoded correctly.\n";
+
+    input.close();
+}
+
+
+template <uint16_t k, uint16_t l>
+void test_minimizer_iterator(const std::string& path)
+{
+    Parser input(path);
+
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+
+        const auto kmer_per_w = (len - (k - 1)) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto w_id)
+        {
+            const auto s = seq + w_id * kmer_per_w;
+            const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Min_Iterator<k, l> min_it;
+            Minimizer_Iterator<const char*, k, true> min_it_base(l);
+
+            Directed_Vertex<k> v(s);
+            min_it.reset(s), min_it_base.reset(s, s_len);
+            std::size_t kmer_idx = 0;
+            uint8_t min_coord;
+            while(true)
+            {
+                const auto h = min_it.hash(min_coord);
+                const auto h_base = min_it_base.hash();
+                const uint8_t min_idx = min_coord & 0b0111'1111;
+                const bool in_fwd = min_coord & 0b1000'0000;
+
+                if(h != h_base)
+                {
+                    std::cerr << "Mismatching minimizer hash\n";
+                    std::exit(EXIT_FAILURE);
+                }
+
+                const auto min = in_fwd ?
+                    v.kmer().template lmer_at<l>(min_idx) :
+                    v.kmer_bar().template lmer_at<l>(min_idx);
+
+                if(min_it.lmer_hash(min) != h)
+                {
+                    std::cerr   << "Positional hash " << min_it.lmer_hash(min) << " does not match minimizer hash " << h
+                                << " at k-mer index " << kmer_idx << "\n";
+
+                    std::exit(EXIT_FAILURE);
+                }
+
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                min_it.advance(s[kmer_idx + k]);
+                min_it_base.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+        }
+        , 1);
+    }
+
+    std::cerr << "All minimizers computed correctly.\n";
+
+    input.close();
 }
 
 
@@ -464,8 +672,8 @@ int main(int argc, char* argv[])
     constexpr uint16_t k = 31, l = 19;
     // (void)k, (void)l;
 
-    // std::string path(argv[1]);
-    // uint64_t final_sz(std::atoll(argv[2]));
+    std::string path(argv[1]);
+    uint64_t final_sz(std::atoll(argv[2]));
 
     // benchmark_hash_set<k, l>(path, final_sz);
 
@@ -476,7 +684,11 @@ int main(int argc, char* argv[])
     // bench_ntHash<k>(path);
 
     // test_mt_insert<k, l>();
-    test_hash_table_iterator<k, l>();
+    test_hash_table_iterator<k, l>(path, final_sz);
+    test_minimizer_coordinate<k, l>(path, final_sz);
+
+    // test_minimizer_iterator<k, l>(path);
+    // test_kmer_base<k, l>(path);
 
     return 0;
 }
