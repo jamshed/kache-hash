@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <cstdlib>
 
 template <uint16_t k, uint16_t l>
 uint64_t throughput_kache_hash_sequential(const std::string& path, const std::size_t init_cap)
@@ -266,15 +267,42 @@ uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::siz
     input.close();
     const auto t_e = now();
     std::cerr << "\n Time taken for libcuckoo for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
-    std::cerr << "Throughput: " << duration(t_e - t_s) / (n * 1000'000.0) << "M op/s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
 
     return M.size();
 }
 
 
+template <uint16_t k, uint16_t l>
+void throughput_sequential(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_kache_hash_sequential<k, l>(file_path, init_cap);
+    throughput_iceberg_concurrent<k>(file_path, init_cap);
+    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+}
+
+
+template <uint16_t k, uint16_t l>
+void throughput_concurrent(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_kache_hash_concurrent<k, l>(file_path, init_cap);
+    throughput_iceberg_concurrent<k>(file_path, init_cap);
+    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+}
+
+
+
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
+
+    constexpr uint16_t k = 31, l = 17;
+
+    std::string path(argv[1]);
+    uint64_t init_cap(std::atoll(argv[2]));
+
+    // throughput_sequential<k, l>(path, init_cap);
+    throughput_concurrent<k, l>(path, init_cap);
 
     return 0;
 }
