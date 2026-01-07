@@ -12,7 +12,7 @@
 #include <string>
 
 template <uint16_t k, uint16_t l>
-void throughput_kache_hash_sequential(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_kache_hash_sequential(const std::string& path, const std::size_t init_cap)
 {
     Streaming_Kmer_Hash_Table<k, false, uint64_t, l> M(init_cap, 1);
 
@@ -64,7 +64,7 @@ void throughput_kache_hash_sequential(const std::string& path, const std::size_t
     input.close();
     const auto t_e = now();
     std::cerr << "\n Time taken for kache-hash-sequential for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
-    std::cerr << "Throughput: " << duration(t_e - t_s) / (n * 1000'000.0) << "M op/s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
 
     return M.size();
 }
@@ -136,7 +136,7 @@ uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::si
     input.close();
     const auto t_e = now();
     std::cerr << "\n Time taken for kache-hash-concurrent for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
-    std::cerr << "Throughput: " << duration(t_e - t_s) / (n * 1000'000.0) << "M op/s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
 
     return M.size();
 }
@@ -200,7 +200,7 @@ uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_
     input.close();
     const auto t_e = now();
     std::cerr << "\n Time taken for iceberg for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
-    std::cerr << "Throughput: " << duration(t_e - t_s) / (n * 1000'000.0) << "M op/s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
 
     return tot_balls(&M);
 }
