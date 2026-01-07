@@ -14,7 +14,7 @@
 #include <cstdlib>
 
 template <uint16_t k, uint16_t l>
-uint64_t throughput_kache_hash_sequential(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_kache_hash_sequential_insert(const std::string& path, const std::size_t init_cap)
 {
     Streaming_Kmer_Hash_Table<k, false, uint64_t, l> M(init_cap, 1);
 
@@ -73,7 +73,7 @@ uint64_t throughput_kache_hash_sequential(const std::string& path, const std::si
 
 
 template <uint16_t k, uint16_t l>
-uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_kache_hash_concurrent_insert(const std::string& path, const std::size_t init_cap)
 {
     typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
     ht_t M(init_cap, parlay::num_workers());
@@ -145,7 +145,7 @@ uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::si
 
 
 template <uint16_t k>
-uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_iceberg_concurrent_insert(const std::string& path, const std::size_t init_cap)
 {
     iceberg_table M;
     iceberg_init(&M, std::ceil(std::log2(init_cap)));
@@ -209,7 +209,7 @@ uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_
 
 
 template <uint16_t k>
-uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_libcuckoo_concurrent_insert(const std::string& path, const std::size_t init_cap)
 {
     libcuckoo::cuckoohash_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
 
@@ -275,7 +275,7 @@ uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::siz
 
 
 template <uint16_t k>
-uint64_t throughput_boost_concurrent(const std::string& path, const std::size_t init_cap)
+uint64_t throughput_boost_concurrent_insert(const std::string& path, const std::size_t init_cap)
 {
     boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
 
@@ -341,57 +341,57 @@ uint64_t throughput_boost_concurrent(const std::string& path, const std::size_t 
 
 
 template <uint16_t k, uint16_t l>
-void throughput_sequential(const std::string& file_path, const std::size_t init_cap)
+void throughput_sequential_insert(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_kache_hash_sequential<k, l>(file_path, init_cap);
-    throughput_iceberg_concurrent<k>(file_path, init_cap);
-    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
-    throughput_boost_concurrent<k>(file_path, init_cap);
+    throughput_kache_hash_sequential_insert<k, l>(file_path, init_cap);
+    throughput_iceberg_concurrent_insert<k>(file_path, init_cap);
+    throughput_libcuckoo_concurrent_insert<k>(file_path, init_cap);
+    throughput_boost_concurrent_insert<k>(file_path, init_cap);
 }
 
 
 template <uint16_t k, uint16_t l>
 void throughput_concurrent(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_kache_hash_concurrent<k, l>(file_path, init_cap);
-    throughput_iceberg_concurrent<k>(file_path, init_cap);
-    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
-    throughput_boost_concurrent<k>(file_path, init_cap);
+    throughput_kache_hash_concurrent_insert<k, l>(file_path, init_cap);
+    throughput_iceberg_concurrent_insert<k>(file_path, init_cap);
+    throughput_libcuckoo_concurrent_insert<k>(file_path, init_cap);
+    throughput_boost_concurrent_insert<k>(file_path, init_cap);
 }
 
 
 template <uint16_t k, uint16_t l>
 void cache_miss_kache_hash_sequential(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_kache_hash_sequential<k, l>(file_path, init_cap);
+    throughput_kache_hash_sequential_insert<k, l>(file_path, init_cap);
 }
 
 
 template <uint16_t k, uint16_t l>
 void cache_miss_kache_hash_concurrent(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_kache_hash_concurrent<k, l>(file_path, init_cap);
+    throughput_kache_hash_concurrent_insert<k, l>(file_path, init_cap);
 }
 
 
 template <uint16_t k>
 void cache_miss_iceberg_concurrent(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_iceberg_concurrent<k>(file_path, init_cap);
+    throughput_iceberg_concurrent_insert<k>(file_path, init_cap);
 }
 
 
 template <uint16_t k>
 void cache_miss_libcuckoo_concurrent(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+    throughput_libcuckoo_concurrent_insert<k>(file_path, init_cap);
 }
 
 
 template <uint16_t k>
 void cache_miss_boost_concurrent(const std::string& file_path, const std::size_t init_cap)
 {
-    throughput_boost_concurrent<k>(file_path, init_cap);
+    throughput_boost_concurrent_insert<k>(file_path, init_cap);
 }
 
 
@@ -405,8 +405,8 @@ int main(int argc, char* argv[])
     std::string path(argv[1]);
     uint64_t init_cap(std::atoll(argv[2]));
 
-    throughput_sequential<k, l>(path, init_cap);
-    // throughput_concurrent<k, l>(path, init_cap);
+    // throughput_sequential_insert<k, l>(path, init_cap);
+    throughput_concurrent<k, l>(path, init_cap);
 
     // cache_miss_kache_hash_sequential<k, l>(path, init_cap);
     // cache_miss_kache_hash_concurrent<k, l>(path, init_cap);
