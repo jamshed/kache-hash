@@ -281,7 +281,7 @@ void test_mt_insert()
         {
             const auto s = seq + w_id * kmer_per_w;
             const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
 
             w.init(s);
             std::size_t kmer_idx = 0;
@@ -342,7 +342,7 @@ void test_hash_table_insert()
             const auto s = seq + w_id * kmer_per_w;
             const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
             std::size_t c_s = 0;
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
 
             w.init(s);
             std::size_t kmer_idx = 0;
@@ -415,7 +415,7 @@ void test_hash_table_iterator(const std::string& path, const std::size_t final_s
             const auto s = seq + w_id * kmer_per_w;
             const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
             // std::size_t c_s = 0;
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
 
             w.init(s);
             std::size_t kmer_idx = 0;
@@ -485,7 +485,7 @@ void test_minimizer_coordinate(const std::string& path, const std::size_t final_
             {
                 const auto s = seq + w_id * kmer_per_w;
                 const auto s_len = (w_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - w_id * kmer_per_w);
-                Kmer_Window<k> w;
+                Kmer_Window<k, l> w;
 
                 w.init(s);
                 std::size_t kmer_idx = 0;
