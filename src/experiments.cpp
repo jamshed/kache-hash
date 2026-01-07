@@ -11,10 +11,10 @@
 #include <cstddef>
 #include <string>
 
-template <uint16_t k>
-void throughput_kache_hash_sequential(const std::string& path, const std::size_t final_sz)
+template <uint16_t k, uint16_t l>
+void throughput_kache_hash_sequential(const std::string& path, const std::size_t init_cap)
 {
-    Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz, 1);
+    Streaming_Kmer_Hash_Table<k, false, uint64_t, l> M(init_cap, 1);
 
     const auto t_s = now();
 
@@ -34,7 +34,7 @@ void throughput_kache_hash_sequential(const std::string& path, const std::size_t
         if(len < k)
             continue;
 
-        Kmer_Window<k> w;
+        Kmer_Window<k, l> w;
         w.init(seq);
         std::size_t kmer_idx = 0;
         while(true)
@@ -70,11 +70,11 @@ void throughput_kache_hash_sequential(const std::string& path, const std::size_t
 }
 
 
-template <uint16_t k>
-uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::size_t final_sz)
+template <uint16_t k, uint16_t l>
+uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::size_t init_cap)
 {
-    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t> ht_t;
-    ht_t M(final_sz, parlay::num_workers());
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(init_cap, parlay::num_workers());
 
     const auto t_s = now();
 
@@ -105,7 +105,7 @@ uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::si
             if(s_len < k)
                 return;
 
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
             w.init(s);
             std::size_t kmer_idx = 0;
             while(true)
@@ -143,10 +143,10 @@ uint64_t throughput_kache_hash_concurrent(const std::string& path, const std::si
 
 
 template <uint16_t k>
-uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_t final_sz)
+uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_t init_cap)
 {
     iceberg_table M;
-    iceberg_init(&M, std::ceil(std::log2(final_sz)));
+    iceberg_init(&M, std::ceil(std::log2(init_cap)));
 
     const auto t_s = now();
 
@@ -207,9 +207,9 @@ uint64_t throughput_iceberg_concurrent(const std::string& path, const std::size_
 
 
 template <uint16_t k>
-uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::size_t final_sz)
+uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::size_t init_cap)
 {
-    libcuckoo::cuckoohash_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(final_sz);
+    libcuckoo::cuckoohash_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
 
     const auto t_s = now();
 

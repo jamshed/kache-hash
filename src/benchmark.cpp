@@ -197,10 +197,10 @@ uint64_t benchmark_set_insert_generic_sequential_no_resize(const std::string& pa
 }
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, false> S(final_sz, 1);
+    Streaming_Kmer_Hash_Table<k, false, void, l> S(final_sz, 1);
 
     const auto t_s = now();
 
@@ -212,7 +212,7 @@ uint64_t benchmark_set_insert_streaming_sequential_no_resize(const std::string& 
 #endif
 
     Parser input(path);
-    Kmer_Window<k> w;
+    Kmer_Window<k, l> w;
     const auto token = S.register_user();
     while(input.read_next_seq())
     {
@@ -506,10 +506,10 @@ uint64_t benchmark_libcuckoo_map_insert_concurrent_no_resize(const std::string& 
 }
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    typedef Streaming_Kmer_Hash_Table<k, true> ht_t;
+    typedef Streaming_Kmer_Hash_Table<k, true, void, l> ht_t;
     ht_t S(final_sz, parlay::num_workers());
 
     const auto t_s = now();
@@ -541,7 +541,7 @@ uint64_t benchmark_set_insert_streaming_concurrent_no_resize(const std::string& 
             if(s_len < k)
                 return;
 
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
             w.init(s);
             std::size_t kmer_idx = 0;
             while(true)
@@ -626,10 +626,10 @@ uint64_t benchmark_map_insert_generic_sequential_no_resize(const std::string& pa
 }
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    Streaming_Kmer_Hash_Table<k, false, uint64_t> M(final_sz, 1);
+    Streaming_Kmer_Hash_Table<k, false, uint64_t, l> M(final_sz, 1);
 
     const auto t_s = now();
 
@@ -649,7 +649,7 @@ uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& 
         if(len < k)
             continue;
 
-        Kmer_Window<k> w;
+        Kmer_Window<k, l> w;
         w.init(seq);
         std::size_t kmer_idx = 0;
         while(true)
@@ -685,10 +685,10 @@ uint64_t benchmark_map_insert_streaming_sequential_no_resize(const std::string& 
 }
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& path, const std::size_t final_sz)
 {
-    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t> ht_t;
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
     ht_t M(final_sz, parlay::num_workers());
 
     const auto t_s = now();
@@ -720,7 +720,7 @@ uint64_t benchmark_map_insert_streaming_concurrent_no_resize(const std::string& 
             if(s_len < k)
                 return;
 
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
             w.init(s);
             std::size_t kmer_idx = 0;
             while(true)
@@ -925,10 +925,10 @@ uint64_t benchmark_boost_set_query_positive(const std::string& path, const std::
 }
 
 
-template <uint16_t k>
+template <uint16_t k, uint16_t l>
 uint64_t benchmark_set_query_positive_streaming(const std::string& path, const std::size_t final_sz)
 {
-    typedef Streaming_Kmer_Hash_Table<k, true> ht_t;
+    typedef Streaming_Kmer_Hash_Table<k, true, void, l> ht_t;
     ht_t S(final_sz);
 
     std::vector<typename ht_t::Token> token(parlay::num_workers());
@@ -952,7 +952,7 @@ uint64_t benchmark_set_query_positive_streaming(const std::string& path, const s
                 if(s_len < k)
                     return;
 
-                Kmer_Window<k> w;
+                Kmer_Window<k, l> w;
                 w.init(s);
                 std::size_t kmer_idx = 0;
                 while(true)
@@ -997,7 +997,7 @@ uint64_t benchmark_set_query_positive_streaming(const std::string& path, const s
             if(s_len < k)
                 return;
 
-            Kmer_Window<k> w;
+            Kmer_Window<k, l> w;
             w.init(s);
             std::size_t kmer_idx = 0, found = 0;
             while(true)
@@ -1052,22 +1052,22 @@ int main(int argc, char* argv[])
     // std::cerr << benchmark_kmer_hash<k>(path) << "\n";
     // std::cerr << benchmark_rolling_hash<k>(path) << "\n";
     // std::cerr << benchmark_ntHash<k>(path) << "\n";
-    // std::cerr << benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_generic_sequential_no_resize<k, ankerl::unordered_dense::set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_streaming_sequential_no_resize<k, l>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_generic_concurrent_no_resize<k, boost::unordered::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_insert_streaming_concurrent_no_resize<k, l>(path, final_sz) << "\n";
 
-    // std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_map_insert_generic_sequential_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_boost_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_map_insert_streaming_sequential_no_resize<k, l>(path, final_sz) << "\n";
+    std::cerr << benchmark_map_insert_streaming_concurrent_no_resize<k, l>(path, final_sz) << "\n";
+    std::cerr << benchmark_iceberg_map_insert_generic_concurrent_no_resize<k>(path, final_sz) << "\n";
     std::cerr << benchmark_libcuckoo_map_insert_concurrent_no_resize<k>(path, final_sz) << "\n";
 
     // std::cerr << benchmark_map_insert_streaming_lightweight_shuffled_sequential_no_resize<k>(path, final_sz) << "\n";
 
-    // std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
-    // std::cerr << benchmark_set_query_positive_streaming<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_boost_set_query_positive<k>(path, final_sz) << "\n";
+    std::cerr << benchmark_set_query_positive_streaming<k, l>(path, final_sz) << "\n";
 
 
     return EXIT_SUCCESS;

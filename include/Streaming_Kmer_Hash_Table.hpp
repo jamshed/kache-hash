@@ -330,7 +330,7 @@ public:
 
 // A window definining a k-mer with its associated metadata: its hash and
 // minimizer.
-template <uint16_t k, uint16_t l = 19>
+template <uint16_t k, uint16_t l>
 class Kmer_Window
 {
     template <uint16_t k_, bool mt_, typename T_, uint16_t l_> friend class Streaming_Kmer_Hash_Table;
