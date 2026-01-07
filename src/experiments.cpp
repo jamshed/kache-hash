@@ -4,6 +4,7 @@
 
 #include "icebergHT/iceberg_table.h"
 #include "libcuckoo/cuckoohash_map.hh"
+#include "boost/unordered/concurrent_flat_map.hpp"
 #include "parlay/parallel.h"
 #include "utility.hpp"
 
@@ -273,6 +274,72 @@ uint64_t throughput_libcuckoo_concurrent(const std::string& path, const std::siz
 }
 
 
+template <uint16_t k>
+uint64_t throughput_boost_concurrent(const std::string& path, const std::size_t init_cap)
+{
+    boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
+
+    const auto t_s = now();
+
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / parlay::num_workers();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            const auto s = seq + p_id * kmer_per_w;
+            const auto s_len = (p_id < parlay::num_workers() - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+            if(s_len < k)
+                return;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.emplace_or_visit(v.canonical(), 1, [](auto& kv)
+                {
+                    kv.second++;
+                });
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+        }
+        , 1);
+
+        n += len - k + 1;
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+
+    input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time taken for boost for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
+
+    return M.size();
+}
+
+
 template <uint16_t k, uint16_t l>
 void throughput_sequential(const std::string& file_path, const std::size_t init_cap)
 {
@@ -288,6 +355,7 @@ void throughput_concurrent(const std::string& file_path, const std::size_t init_
     throughput_kache_hash_concurrent<k, l>(file_path, init_cap);
     throughput_iceberg_concurrent<k>(file_path, init_cap);
     throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+    throughput_boost_concurrent<k>(file_path, init_cap);
 }
 
 
