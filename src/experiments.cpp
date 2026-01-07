@@ -346,6 +346,7 @@ void throughput_sequential(const std::string& file_path, const std::size_t init_
     throughput_kache_hash_sequential<k, l>(file_path, init_cap);
     throughput_iceberg_concurrent<k>(file_path, init_cap);
     throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+    throughput_boost_concurrent<k>(file_path, init_cap);
 }
 
 
@@ -359,18 +360,59 @@ void throughput_concurrent(const std::string& file_path, const std::size_t init_
 }
 
 
+template <uint16_t k, uint16_t l>
+void cache_miss_kache_hash_sequential(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_kache_hash_sequential<k, l>(file_path, init_cap);
+}
+
+
+template <uint16_t k, uint16_t l>
+void cache_miss_kache_hash_concurrent(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_kache_hash_concurrent<k, l>(file_path, init_cap);
+}
+
+
+template <uint16_t k>
+void cache_miss_iceberg_concurrent(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_iceberg_concurrent<k>(file_path, init_cap);
+}
+
+
+template <uint16_t k>
+void cache_miss_libcuckoo_concurrent(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_libcuckoo_concurrent<k>(file_path, init_cap);
+}
+
+
+template <uint16_t k>
+void cache_miss_boost_concurrent(const std::string& file_path, const std::size_t init_cap)
+{
+    throughput_boost_concurrent<k>(file_path, init_cap);
+}
+
 
 int main(int argc, char* argv[])
 {
     (void)argc, (void)argv;
 
     constexpr uint16_t k = 31, l = 17;
+    (void)l;
 
     std::string path(argv[1]);
     uint64_t init_cap(std::atoll(argv[2]));
 
-    // throughput_sequential<k, l>(path, init_cap);
-    throughput_concurrent<k, l>(path, init_cap);
+    throughput_sequential<k, l>(path, init_cap);
+    // throughput_concurrent<k, l>(path, init_cap);
+
+    // cache_miss_kache_hash_sequential<k, l>(path, init_cap);
+    // cache_miss_kache_hash_concurrent<k, l>(path, init_cap);
+    // cache_miss_iceberg_concurrent<k>(path, init_cap);
+    // cache_miss_libcuckoo_concurrent<k>(path, init_cap);
+    // cache_miss_boost_concurrent<k>(path, init_cap);
 
     return 0;
 }
