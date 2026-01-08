@@ -27,7 +27,11 @@ set(ICEBERG_INCLUDE ${INCLUDE_DIR}/icebergHT)
 # add_executable(bench bench.cpp)
 add_executable(bench benchmark.cpp)
 add_executable(main main.cpp)
-add_executable(experiment experiments.cpp)
+
+# Benchmark experiment executables.
+add_executable(throughput_sequential experiments/throughput-sequential.cpp)
+add_executable(throughput_concurrent experiments/throughput-concurrent.cpp)
+add_executable(cache_miss experiments/cache-miss.cpp)
 
 
 # Dependencies
@@ -46,19 +50,28 @@ target_include_directories(core PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(iceberg_ht PRIVATE ${ICEBERG_INCLUDE})
 target_include_directories(bench PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(main PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
-target_include_directories(experiment PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+
+target_include_directories(throughput_sequential PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(throughput_concurrent PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(cache_miss PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 target_compile_options(core PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench PRIVATE ${COMPILE_FLAGS})
 target_compile_options(main PRIVATE ${COMPILE_FLAGS})
-target_compile_options(experiment PRIVATE ${COMPILE_FLAGS})
+
+target_compile_options(throughput_sequential PRIVATE ${COMPILE_FLAGS})
+target_compile_options(throughput_concurrent PRIVATE ${COMPILE_FLAGS})
+target_compile_options(cache_miss PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(core PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench PRIVATE ${LINK_FLAGS})
 target_link_libraries(main PRIVATE ${LINK_FLAGS})
-target_compile_options(experiment PRIVATE ${LINK_FLAGS})
+
+target_compile_options(throughput_sequential PRIVATE ${LINK_FLAGS})
+target_compile_options(throughput_concurrent PRIVATE ${LINK_FLAGS})
+target_compile_options(cache_miss PRIVATE ${LINK_FLAGS})
 
 
 # Target-links.
@@ -75,8 +88,9 @@ target_link_libraries(iceberg_ht PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shar
 target_link_libraries(bench PRIVATE core)
 target_link_libraries(bench PRIVATE iceberg_ht)
 
-target_link_libraries(experiment PRIVATE core)
-target_link_libraries(experiment PRIVATE iceberg_ht)
+target_link_libraries(throughput_sequential PRIVATE core iceberg_ht)
+target_link_libraries(throughput_concurrent PRIVATE core iceberg_ht)
+target_link_libraries(cache_miss PRIVATE core iceberg_ht)
 # target_link_libraries(bench PRIVATE benchmark)
 # target_link_libraries(bench PRIVATE nthash)
 
@@ -86,6 +100,6 @@ target_link_libraries(main PRIVATE core)
 
 
 # Installation path.
-install(TARGETS main bench experiment
+install(TARGETS main bench throughput_sequential throughput_concurrent cache_miss
         DESTINATION bin
         )
