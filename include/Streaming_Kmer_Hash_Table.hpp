@@ -601,7 +601,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kme
     else
     {
         const auto p = ov->find(key);
-        return !p ? null_val : p->val;
+        return !p ? null_val : val_t(p->val);
     }
 }
 
