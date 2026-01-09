@@ -32,6 +32,7 @@ add_executable(main main.cpp)
 add_executable(throughput_sequential experiments/throughput-sequential.cpp)
 add_executable(throughput_concurrent experiments/throughput-concurrent.cpp)
 add_executable(cache_miss experiments/cache-miss.cpp)
+add_executable(query experiments/query-positive.cpp)
 
 
 # Dependencies
@@ -54,6 +55,7 @@ target_include_directories(main PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(throughput_sequential PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(throughput_concurrent PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(cache_miss PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(query PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 target_compile_options(core PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
@@ -63,6 +65,7 @@ target_compile_options(main PRIVATE ${COMPILE_FLAGS})
 target_compile_options(throughput_sequential PRIVATE ${COMPILE_FLAGS})
 target_compile_options(throughput_concurrent PRIVATE ${COMPILE_FLAGS})
 target_compile_options(cache_miss PRIVATE ${COMPILE_FLAGS})
+target_compile_options(query PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(core PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
@@ -72,6 +75,7 @@ target_link_libraries(main PRIVATE ${LINK_FLAGS})
 target_compile_options(throughput_sequential PRIVATE ${LINK_FLAGS})
 target_compile_options(throughput_concurrent PRIVATE ${LINK_FLAGS})
 target_compile_options(cache_miss PRIVATE ${LINK_FLAGS})
+target_compile_options(query PRIVATE ${LINK_FLAGS})
 
 
 # Target-links.
@@ -91,6 +95,7 @@ target_link_libraries(bench PRIVATE iceberg_ht)
 target_link_libraries(throughput_sequential PRIVATE core iceberg_ht)
 target_link_libraries(throughput_concurrent PRIVATE core iceberg_ht)
 target_link_libraries(cache_miss PRIVATE core iceberg_ht)
+target_link_libraries(query PRIVATE core iceberg_ht)
 # target_link_libraries(bench PRIVATE benchmark)
 # target_link_libraries(bench PRIVATE nthash)
 
@@ -100,6 +105,6 @@ target_link_libraries(main PRIVATE core)
 
 
 # Installation path.
-install(TARGETS main bench throughput_sequential throughput_concurrent cache_miss
+install(TARGETS main bench throughput_sequential throughput_concurrent cache_miss query
         DESTINATION bin
         )
