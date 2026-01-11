@@ -32,7 +32,7 @@ add_executable(main main.cpp)
 add_executable(throughput_sequential experiments/throughput-sequential.cpp)
 add_executable(throughput_concurrent experiments/throughput-concurrent.cpp)
 add_executable(cache_miss experiments/cache-miss.cpp)
-add_executable(query experiments/query-positive.cpp)
+add_executable(query experiments/query.cpp)
 
 
 # Dependencies
