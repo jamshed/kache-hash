@@ -17,6 +17,10 @@
 #include <cassert>
 
 
+namespace kache_hash
+{
+
+
 // Defining this macro states our intent that only odd k-values will be used for de Bruijn graph vertices.
 // Hence, extraction of k-mers from (k + 1)-mers — vertices from edges — will only happen when k is odd.
 #define ODD_K
@@ -686,6 +690,9 @@ inline uint64_t Kmer<k>::as_int() const
     static_assert(k <= 32, "k-mer conversions to 64-bit unsigned integers is only defined for k <= 32.");
 
     return kmer_data[0];
+}
+
+
 }
 
 

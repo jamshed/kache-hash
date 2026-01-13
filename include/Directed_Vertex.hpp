@@ -10,6 +10,10 @@
 #include <cstdint>
 
 
+namespace kache_hash
+{
+
+
 // A class denoting an instance of a vertex. It's "directed" in the sense that the k-mer
 // observed for the vertex is in a particular orientation — although a vertex `v` has an
 // unambiguous canonical k-mer `v_hat`, the vertex can be observed in two different k-mer
@@ -200,6 +204,9 @@ inline bool Directed_Vertex<k>::is_same_vertex(const Directed_Vertex<k>& v) cons
     // TODO: revert back w/ correct design.
     // return hash() == v.hash();
     return canonical() == v.canonical();
+}
+
+
 }
 
 

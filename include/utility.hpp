@@ -12,6 +12,10 @@
 #include <cassert>
 
 
+namespace kache_hash
+{
+
+
 // Returns pointer to a memory-allocation for `size` elements of type `T_`.
 template <typename T_>
 inline T_* allocate(const std::size_t size)
@@ -140,6 +144,9 @@ public:
 
     const T_& unwrap() const { return data_; }
 };
+
+
+}
 
 
 

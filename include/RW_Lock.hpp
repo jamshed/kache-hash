@@ -11,6 +11,9 @@
 #include <algorithm>
 
 
+namespace kache_hash
+{
+
 
 // A readers-writer lock allowing concurrent read-only accesses and exclusive
 // write access. It can support up-to `N` distinct workers.
@@ -105,6 +108,9 @@ inline void RW_Lock<N>::unlock_shared(const std::size_t w_id)
 {
     assert(w_id < N);   assert(reader[w_id].unwrap());
     reader[w_id].unwrap() = false;
+}
+
+
 }
 
 

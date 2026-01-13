@@ -10,6 +10,9 @@
 #include <cassert>
 
 
+using namespace kache_hash;
+
+
 template <typename T_seq_, uint16_t k, bool is_canonical_> class Minimizer_Iterator;
 
 

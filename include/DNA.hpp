@@ -7,6 +7,10 @@
 #include <cstdint>
 
 
+namespace kache_hash
+{
+
+
 namespace DNA
 {
     // A = 0, C = 1, G = 2, T = 3.
@@ -38,6 +42,9 @@ namespace DNA
         OP_non_branch = 0b101,  // 5
         OP_branching = 0b110,   // 6
     };
+}
+
+
 }
 
 

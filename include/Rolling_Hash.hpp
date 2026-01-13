@@ -11,6 +11,10 @@
 #include <cassert>
 
 
+namespace kache_hash
+{
+
+
 // Rolling tabulation hasher for `k`-mers, using cyclic polynomials.
 template <uint16_t k, bool canonical = false>
 class Rolling_Hash
@@ -120,6 +124,9 @@ inline uint64_t Rolling_Hash<k, canonical>::hash() const
         return h_f + h_r;
 
     return h_f;
+}
+
+
 }
 
 

@@ -17,6 +17,10 @@
 #include <cmath>
 
 
+namespace kache_hash
+{
+
+
 // =============================================================================
 template <typename T_key_, typename T_val_, typename T_hasher_>
 class Concurrent_Hash_Table
@@ -277,6 +281,9 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Iterator::next(T_k
         }
 
     return false;
+}
+
+
 }
 
 

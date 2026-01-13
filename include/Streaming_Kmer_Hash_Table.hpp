@@ -33,6 +33,10 @@
 #include <immintrin.h>
 
 
+namespace kache_hash
+{
+
+
 #define KACHE_HASH_LIKELY(cond)     __builtin_expect(cond, 1)
 #define KACHE_HASH_UNLIKELY(cond)   __builtin_expect(cond, 0)
 
@@ -1116,6 +1120,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::report_stats() const
     std::cerr   << "#Empty-blocks: " << empty << "(" << (empty * 100.0 / cap_) << "%).\n";
     std::cerr   << "Avg-occupancy: " << blk_occ / cap_ << ".\n";
     std::cerr   << "========================================\n";
+
+}
+
 
 }
 

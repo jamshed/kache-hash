@@ -13,6 +13,10 @@
 #include <vector>
 
 
+namespace kache_hash
+{
+
+
 struct _KSEQ_DATA;  // Forward declaration for `kseq`'s sequence-data format.
 
 
@@ -75,6 +79,9 @@ public:
     // Closes the internal kseq parser for the current reference.
     void close();
 };
+
+
+}
 
 
 

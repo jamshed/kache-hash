@@ -17,6 +17,9 @@
 #include <fstream>
 
 
+using namespace kache_hash;
+
+
 // Hasher for objects of type `T_`.
 template <typename T_>
 struct Hash

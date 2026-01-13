@@ -9,6 +9,10 @@
 #include <cstdint>
 
 
+namespace kache_hash
+{
+
+
 class Kmer_Utility
 {
 private:
@@ -174,6 +178,9 @@ inline uint64_t Kmer_Utility::reverse_complement(const uint64_t kmer)
     rc <<= 2 * rem_base_count;
     rev_compl[0] |= (Kmer_Utility::reverse_complement(data[packed_byte_count]) >> (2 * (4 - rem_base_count)));
     return rc;
+}
+
+
 }
 
 

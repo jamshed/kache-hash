@@ -24,6 +24,9 @@
 #include <cstdlib>
 
 
+using namespace kache_hash;
+
+
 uint64_t benchmark_file_read(const std::string& path)
 {
     uint64_t sum_len = 0;

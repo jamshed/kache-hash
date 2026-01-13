@@ -10,6 +10,10 @@
 #include <cstddef>
 
 
+namespace kache_hash
+{
+
+
 class DNA_Utility
 {
 private:
@@ -180,6 +184,9 @@ public:
         return DNA::Base(base);
     }
 };
+
+
+}
 
 
 

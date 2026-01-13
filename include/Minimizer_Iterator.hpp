@@ -16,6 +16,10 @@
 #include <cassert>
 
 
+namespace kache_hash
+{
+
+
 // A class to iterate over the `l`-minimizers of the constituent `k`-mers of a
 // given sequence, computing the minimizer for each `k`-mer in amortized `O(1)`
 // time. Canonical minimizers are computed, i.e. both strand-forms of the
@@ -279,6 +283,9 @@ inline uint64_t Min_Iterator<k, l>::hash(const Kmer<k> kmer)
     }
 
     return min(h_fwd, h_rev);
+}
+
+
 }
 
 

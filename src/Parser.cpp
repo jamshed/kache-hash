@@ -5,6 +5,10 @@
 #include <iostream>
 
 
+namespace kache_hash
+{
+
+
 // Declare the type of file handler and the read() function.
 // Required for FASTA/FASTQ file reading using the kseq library.
 KSEQ_INIT(gzFile, gzread)
@@ -126,4 +130,7 @@ void Parser::close()
         parser = nullptr;
         file_ptr = nullptr;
     }
+}
+
+
 }
