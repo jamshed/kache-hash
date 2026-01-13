@@ -15,6 +15,10 @@
 #include <cstdlib>
 #include <thread>
 
+
+using namespace kache_hash;
+
+
 template <uint16_t k, uint16_t l>
 uint64_t throughput_kache_hash_sequential_insert(const std::string& path, const std::size_t init_cap)
 {

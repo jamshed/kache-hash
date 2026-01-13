@@ -10,7 +10,6 @@
 #include "Directed_Vertex.hpp"
 #include "Rolling_Hash.hpp"
 #include "Minimizer_Iterator.hpp"
-#include "Hash_Table.hpp"
 #include "Concurrent_Hash_Table.hpp"
 #include "RW_Lock.hpp"
 #include "utility.hpp"

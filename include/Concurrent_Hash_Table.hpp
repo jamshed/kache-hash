@@ -21,6 +21,14 @@ namespace kache_hash
 {
 
 
+// Hasher for objects of type `T_`.
+template <typename T_>
+struct Hash
+{
+    uint64_t operator()(const T_& key) const { return XXH3_64bits(&key, sizeof(key)); }
+};
+
+
 // =============================================================================
 template <typename T_key_, typename T_val_, typename T_hasher_>
 class Concurrent_Hash_Table
