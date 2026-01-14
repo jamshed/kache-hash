@@ -1,6 +1,6 @@
 
-#ifndef REF_PARSER_HPP
-#define REF_PARSER_HPP
+#ifndef KACHE_HASH_REF_PARSER_HPP
+#define KACHE_HASH_REF_PARSER_HPP
 
 
 

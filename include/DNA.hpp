@@ -1,6 +1,6 @@
 
-#ifndef DNA_HPP
-#define DNA_HPP
+#ifndef KACHE_HASH_DNA_HPP
+#define KACHE_HASH_DNA_HPP
 
 
 

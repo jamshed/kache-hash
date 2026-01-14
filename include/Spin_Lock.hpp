@@ -1,6 +1,6 @@
 
-#ifndef SPIN_LOCK_HPP
-#define SPIN_LOCK_HPP
+#ifndef KACHE_HASH_SPIN_LOCK_HPP
+#define KACHE_HASH_SPIN_LOCK_HPP
 
 
 

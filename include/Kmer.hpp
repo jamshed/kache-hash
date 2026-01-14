@@ -1,6 +1,6 @@
 
-#ifndef KMER_HPP
-#define KMER_HPP
+#ifndef KACHE_HASH_KMER_HPP
+#define KACHE_HASH_KMER_HPP
 
 
 

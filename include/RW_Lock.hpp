@@ -1,6 +1,6 @@
 
-#ifndef RW_LOCK_HPP
-#define RW_LOCK_HPP
+#ifndef KACHE_HASH_RW_LOCK_HPP
+#define KACHE_HASH_RW_LOCK_HPP
 
 
 
