@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <bit>
 #include <atomic>
+#include <tuple>
 #include <optional>
 #include <utility>
 #include <type_traits>
@@ -136,6 +137,10 @@ private:
 
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
+
+    // Returns the pair of the numbers of keys at bucket `b` which have `b` as
+    // their primary bucket and as their secondary bucket, respectively.
+    std::pair<std::size_t, std::size_t> distribution(std::size_t b) const;
 
     // Returns the size of the main table.
     std::size_t main_table_size() const;
@@ -298,6 +303,10 @@ public:
 
     // Returns an iterator to the (exclusive-)end of the table.
     Iterator cend() const { return Iterator(*this, cap_, -1); };
+
+    // Returns the percentages of keys in the table that are placed into their
+    // primary bucket, their secondary buckets, and the overflow table.
+    std::tuple<double, double, double> key_distribution() const;
 
     // Serializes the table to the stream `os`.
     // void serialize(std::ofstream& os) const;
@@ -474,6 +483,27 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const s
 
     assert(std::countr_zero(cmp) + std::countl_one(cmp) == B);
     return std::countr_zero(cmp);   // This must hold if no deletion is performed at the table.
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::distribution(const std::size_t b) const
+{
+    const auto idx_mask = cap_ - 1;
+
+    std::size_t p = 0, s = 0;
+    for(std::size_t slot = 0; slot < B; ++slot)
+        if(M[b].cs[slot])
+        {
+            const auto key = this->key(T[b * B + slot]);
+            const uint8_t min_idx = M[b].min_coord[slot] & Min_Iterator<k, l>::min_index_mask();
+            const bool in_fwd = M[b].min_coord[slot] & Min_Iterator<k, l>::min_orientation_mask();
+            const auto min = in_fwd ? key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
+            const auto h = Min_Iterator<k, l>::lmer_hash(min);
+            p += ((h & idx_mask) == b), s += ((h & idx_mask) != b);
+        }
+
+    return {p, s};
 }
 
 
@@ -1092,6 +1122,22 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
         return find_in_overflow(key);
 
     return null_val;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::key_distribution() const -> std::tuple<double, double, double>
+{
+    std::size_t p = 0, s = 0;
+    for(size_t b = 0; b < cap_; ++b)
+    {
+        const auto d = distribution(b);
+        p += d.first, s += d.second;
+    }
+
+    const auto o = overflow_size();
+    const auto sz = p + s + o;
+    return {p * 100.0 / sz, s * 100.0 / sz, o * 100.0 / sz};
 }
 
 
