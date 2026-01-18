@@ -1,8 +1,0 @@
-[package]
-name = "bench_cbl"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-cbl = { git = "https://github.com/imartayan/CBL.git" }
-needletail = "0.6.3"
