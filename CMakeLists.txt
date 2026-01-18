@@ -114,6 +114,10 @@ if(AVX_512)
 endif()
 
 
+if(MIN_SIZE_EXP)
+    add_compile_definitions(MIN_SIZE_EXP=${MIN_SIZE_EXP})
+endif()
+
 # Required preprocessor definitions.
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
 add_compile_definitions(${XXHASH_DEFS})
