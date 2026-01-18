@@ -926,10 +926,11 @@ void cache_miss_boost_concurrent(const std::string& file_path, const std::size_t
 
 
 template <uint16_t k, uint16_t l>
-void key_distribution_kache_hash(const std::string& path, const std::size_t init_cap)
+void key_distribution_kache_hash(const std::string& path, const std::size_t init_cap, const double lf = -1)
 {
     typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
-    ht_t M(init_cap, parlay::num_workers());
+    ht_t M(init_cap, parlay::num_workers(), lf < 0 ? ht_t::lf_default() : lf);
+    std::cerr << "Capacity: " << M.capacity() << "\n";
 
     const auto t_s = now();
 

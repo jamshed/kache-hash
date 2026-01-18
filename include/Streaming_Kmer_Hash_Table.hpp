@@ -54,7 +54,7 @@ class Streaming_Kmer_Hash_Table
 {
 private:
 
-    static constexpr double lf_default = 0.8;   // Default load factor: 80%.
+    static constexpr double lf_default_ = 0.8;  // Default load factor: 80%.
     static constexpr double of_default = 0.1;   // Fixed overflow factor: 10%.
     static constexpr std::size_t B = 32;    // Bucket size.
     static_assert(B % 8 == 0, "Bucket size must be a multiple of 8.");
@@ -244,7 +244,7 @@ public:
 
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
     // with a maximum load-factor of `lf`.
-    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default);
+    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_);
 
     // Deserializes a streaming k-mer hash table from the stream `is`.
     // Streaming_Kmer_Hash_Table(std::ifstream& is);
@@ -255,6 +255,9 @@ public:
     Streaming_Kmer_Hash_Table& operator=(Streaming_Kmer_Hash_Table&&) = delete;
 
     ~Streaming_Kmer_Hash_Table();
+
+    // Returns the default load factor of the table.
+    static constexpr auto lf_default() { return lf_default_; }
 
     // Returns the capacity (in terms of keys) of the table.
     auto capacity() const { return cap_ * B; }
