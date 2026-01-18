@@ -993,9 +993,29 @@ void key_distribution_kache_hash(const std::string& path, const std::size_t init
     std::cerr << "\n Time taken for kache-hash-concurrent for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
     std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
 
+    std::cerr << "Map size: " << M.size() << "\n";
+
     const auto d = M.key_distribution();
     std::cerr << "\n\nPercentage of keys going to:\n";
     std::cerr << "\tPrimary:   " << std::get<0>(d) << "%\n";
     std::cerr << "\tSecondary: " << std::get<1>(d) << "%\n";
     std::cerr << "\tOverflow:  " << std::get<2>(d) << "%\n";
+}
+
+
+template <uint16_t k, uint16_t l_min, uint16_t l_max, uint16_t step>
+void minimizer_len_sweep(const std::string& path, const std::size_t init_cap, const std::size_t runs)
+{
+    if constexpr(l_min > l_max)
+        return;
+    else
+    {
+        for(std::size_t r = 0; r < runs; ++r)
+        {
+            std::cerr << "======== Minimizer-len: " << l_min << ", Run: " << r << " ========\n";
+            key_distribution_kache_hash<k, l_min>(path, init_cap);
+        }
+
+        minimizer_len_sweep<k, l_min + step, l_max, step>(path, init_cap, runs);
+    }
 }
