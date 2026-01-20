@@ -8,6 +8,7 @@
 #include "parlay/parallel.h"
 #include "utility.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -338,6 +339,310 @@ uint64_t throughput_boost_concurrent_insert(const std::string& path, const std::
     }
 
     input.close();
+    const auto t_e = now();
+    std::cerr << "\n Time taken for boost for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k, uint16_t l>
+uint64_t throughput_kache_hash_concurrent_insert_fastq(const std::string& path, const std::size_t init_cap)
+{
+    std::atomic_uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 65536;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(init_cap, parlay::num_workers());
+    std::vector<typename ht_t::Token> token(parlay::num_workers());
+    for(uint16_t w = 0; w < parlay::num_workers(); ++w)
+        token[w] = M.register_user();
+
+    const auto t_s = now();
+
+    parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+    {
+        uint64_t inserted = 0;
+        const auto& R = S[p_id].unwrap();
+        for(const auto& read : R)
+        {
+            auto const s = read.c_str();
+            auto const s_len = read.length();
+            if(s_len < k)
+                continue;
+
+            Kmer_Window<k, l> w;
+            w.init(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.upsert(w, [](const uint64_t v)
+                {
+                    return v + 1;
+                }, 1, token[parlay::worker_id()]);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                w.advance(s[kmer_idx + k]);
+                kmer_idx++;
+            }
+
+            inserted += s_len - k + 1;
+            if(inserted >= checkpoint)
+            {
+                n += inserted;
+#ifndef QUIET
+                std::cerr << "\rInserted " << n << " k-mers.";
+                inserted = 0;
+#endif
+            }
+        }
+    }, 1);
+
+    const auto t_e = now();
+    std::cerr << "\n Time taken for kache-hash for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t throughput_iceberg_concurrent_insert_fastq(const std::string& path, const std::size_t init_cap)
+{
+    std::atomic_uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 65536;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    iceberg_table M;
+    iceberg_init(&M, std::ceil(std::log2(init_cap)));
+
+    const auto t_s = now();
+
+    parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+    {
+        uint64_t inserted = 0;
+        const auto& R = S[p_id].unwrap();
+        for(const auto& read : R)
+        {
+            auto const s = read.c_str();
+            auto const s_len = read.length();
+            if(s_len < k)
+                continue;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                iceberg_insert(&M, v.canonical().as_int(), 1, parlay::worker_id());
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+
+            inserted += s_len - k + 1;
+            if(inserted >= checkpoint)
+            {
+                n += inserted;
+#ifndef QUIET
+                std::cerr << "\rInserted " << n << " k-mers.";
+                inserted = 0;
+#endif
+            }
+        }
+    }, 1);
+
+    const auto t_e = now();
+    std::cerr << "\n Time taken for iceberg for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
+
+    return tot_balls(&M);
+}
+
+
+template <uint16_t k>
+uint64_t throughput_libcuckoo_concurrent_insert_fastq(const std::string& path, const std::size_t init_cap)
+{
+    std::atomic_uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 65536;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    libcuckoo::cuckoohash_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
+
+    const auto t_s = now();
+
+    parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+    {
+        uint64_t inserted = 0;
+        const auto& R = S[p_id].unwrap();
+        for(const auto& read : R)
+        {
+            auto const s = read.c_str();
+            auto const s_len = read.length();
+            if(s_len < k)
+                continue;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.upsert(v.canonical(), [](uint64_t& c)
+                {
+                    c++;
+                }, 1);
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+
+            inserted += s_len - k + 1;
+            if(inserted >= checkpoint)
+            {
+                n += inserted;
+#ifndef QUIET
+                std::cerr << "\rInserted " << n << " k-mers.";
+                inserted = 0;
+#endif
+            }
+        }
+    }, 1);
+
+    const auto t_e = now();
+    std::cerr << "\n Time taken for libcuckoo for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
+    std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
+
+    return M.size();
+}
+
+
+template <uint16_t k>
+uint64_t throughput_boost_concurrent_insert_fastq(const std::string& path, const std::size_t init_cap)
+{
+    std::atomic_uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 65536;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
+
+    const auto t_s = now();
+
+    parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+    {
+        uint64_t inserted = 0;
+        const auto& R = S[p_id].unwrap();
+        for(const auto& read : R)
+        {
+            auto const s = read.c_str();
+            auto const s_len = read.length();
+            if(s_len < k)
+                continue;
+
+            Directed_Vertex<k> v(s);
+            std::size_t kmer_idx = 0;
+            while(true)
+            {
+                M.emplace_or_visit(v.canonical(), 1, [](auto& kv)
+                {
+                    kv.second++;
+                });
+                if(kmer_idx + k == s_len)
+                    break;
+
+                v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                kmer_idx++;
+            }
+
+            inserted += s_len - k + 1;
+            if(inserted >= checkpoint)
+            {
+                n += inserted;
+#ifndef QUIET
+                std::cerr << "\rInserted " << n << " k-mers.";
+                inserted = 0;
+#endif
+            }
+        }
+    }, 1);
+
     const auto t_e = now();
     std::cerr << "\n Time taken for boost for " << n << " insertions: " << duration(t_e - t_s) << "s.\n";
     std::cerr << "Throughput: " << (n / (duration(t_e - t_s) * 1000'000.0)) << "M op/s.\n";
