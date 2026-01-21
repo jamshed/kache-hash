@@ -1,0 +1,12 @@
+[package]
+name = "bench_cbl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.100"
+bincode = "1.3"
+cbl = { git = "https://github.com/imartayan/CBL.git" }
+clap = { version = "4.5.54", features = ["derive"] }
+needletail = { git = "https://github.com/onecodex/needletail" }
+serde = "1.0.228"

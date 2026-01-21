@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Build and binaries
+build/
+bin/
+external/
+
+# clangd
+.cache/
