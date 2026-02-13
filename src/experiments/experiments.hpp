@@ -1196,6 +1196,568 @@ void throughput_boost_concurrent_query(const std::string& index_path, const std:
 
 
 template <uint16_t k, uint16_t l>
+void throughput_kache_hash_concurrent_query_fastq(const std::string& index_path, const std::string& query_path, const std::size_t init_cap, const std::size_t builder_threads, const uint64_t runs)
+{
+    typedef Streaming_Kmer_Hash_Table<k, true, uint64_t, l> ht_t;
+    ht_t M(init_cap, builder_threads);
+
+{
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    std::vector<typename ht_t::Token> token(builder_threads);
+    for(uint16_t w = 0; w < builder_threads; ++w)
+        token[w] = M.register_user();
+
+    Parser input(index_path);
+    while(input.read_next_seq())
+    {
+        std::vector<std::thread> W;
+        W.reserve(builder_threads);
+
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / builder_threads;
+        for(std::size_t p_id = 0; p_id < builder_threads; ++p_id)
+            W.emplace_back([&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < builder_threads - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Kmer_Window<k, l> w;
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    M.upsert(w, [](const uint64_t v)
+                    {
+                        return v + 1;
+                    }, 1, token[p_id]);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
+            }
+            , p_id);
+
+        std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+
+        n += len - k + 1;
+
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+}
+
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(query_path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    for(uint64_t r = 0; r < runs; ++r)
+    {
+        std::atomic_uint64_t n = 0, p = 0;
+    #ifndef QUIET
+        constexpr uint64_t log_step = 65536;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+    #endif
+
+        const auto t_s = now();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            uint64_t queried = 0;
+            uint64_t c = 0;
+            const auto& R = S[p_id].unwrap();
+            for(const auto& read : R)
+            {
+                auto const s = read.c_str();
+                auto const s_len = read.length();
+                if(s_len < k)
+                    continue;
+
+                Kmer_Window<k, l> w;
+                w.init(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    const auto r = M.find(w); assert(r);
+                    c += (r ? 1 : 0);
+
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    w.advance(s[kmer_idx + k]);
+                    kmer_idx++;
+                }
+
+                queried += s_len - k + 1;
+                if(queried >= checkpoint)
+                {
+                    n += queried;
+    #ifndef QUIET
+                    std::cerr << "\rQueried " << n << " k-mers.";
+                    queried = 0;
+    #endif
+                }
+            }
+
+            p += c, n += queried;
+        }, 1);
+
+        const auto t_e = now();
+        const auto t = duration(t_e - t_s);
+
+        std::cerr << "\n Time taken for kache-hash for " << p << " positive queries out of " << n << "queries,  with " << parlay::num_workers() << " threads: " << t << "s at run " << r << ".\n";
+        std::cerr << "Throughput: " << (n / (t * 1000'000.0)) << "M op/s.\n";
+    }
+}
+
+
+template <uint16_t k>
+void throughput_iceberg_concurrent_query_fastq(const std::string& index_path, const std::string& query_path, const std::size_t init_cap, const std::size_t builder_threads, const uint64_t runs)
+{
+    iceberg_table M;
+    iceberg_init(&M, std::ceil(std::log2(init_cap)));
+
+{
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(index_path);
+    while(input.read_next_seq())
+    {
+        std::vector<std::thread> W;
+        W.reserve(builder_threads);
+
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / builder_threads;
+        for(std::size_t p_id = 0; p_id < builder_threads; ++p_id)
+            W.emplace_back([&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < builder_threads - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    iceberg_insert(&M, v.canonical().as_int(), 1, p_id);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+            }
+            , p_id);
+
+        std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+
+        n += len - k + 1;
+
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+}
+
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(query_path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    for(uint64_t r = 0; r < runs; ++r)
+    {
+        std::atomic_uint64_t n = 0, p = 0;
+    #ifndef QUIET
+        constexpr uint64_t log_step = 65536;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+    #endif
+
+        const auto t_s = now();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            uint64_t queried = 0;
+            uint64_t c = 0;
+            const auto& R = S[p_id].unwrap();
+            for(const auto& read : R)
+            {
+                auto const s = read.c_str();
+                auto const s_len = read.length();
+                if(s_len < k)
+                    continue;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                uint64_t val;
+                while(true)
+                {
+                    val = 0;
+                    iceberg_get_value(&M, v.canonical().as_int(), &val, parlay::worker_id());
+                    c += (val ? 1 : 0);
+
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+
+                queried += s_len - k + 1;
+                if(queried >= checkpoint)
+                {
+                    n += queried;
+    #ifndef QUIET
+                    std::cerr << "\rQueried " << n << " k-mers.";
+                    queried = 0;
+    #endif
+                }
+            }
+
+            p += c, n += queried;
+        }, 1);
+
+        const auto t_e = now();
+        const auto t = duration(t_e - t_s);
+
+        std::cerr << "\n Time taken for iceberg for " << p << " positive queries out of " << n << "queries,  with " << parlay::num_workers() << " threads: " << t << "s at run " << r << ".\n";
+        std::cerr << "Throughput: " << (n / (t * 1000'000.0)) << "M op/s.\n";
+    }
+}
+
+
+template <uint16_t k>
+void throughput_libcuckoo_concurrent_query_fastq(const std::string& index_path, const std::string& query_path, const std::size_t init_cap, const std::size_t builder_threads, const uint64_t runs)
+{
+    libcuckoo::cuckoohash_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
+
+{
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(index_path);
+    while(input.read_next_seq())
+    {
+        std::vector<std::thread> W;
+        W.reserve(builder_threads);
+
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / builder_threads;
+        for(std::size_t p_id = 0; p_id < builder_threads; ++p_id)
+            W.emplace_back([&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < builder_threads - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    M.upsert(v.canonical(), [](uint64_t& c)
+                    {
+                        c++;
+                    }, 1);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+            }
+            , p_id);
+
+        std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+
+        n += len - k + 1;
+
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+}
+
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(query_path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    for(uint64_t r = 0; r < runs; ++r)
+    {
+        std::atomic_uint64_t n = 0, p = 0;
+    #ifndef QUIET
+        constexpr uint64_t log_step = 65536;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+    #endif
+
+        const auto t_s = now();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            uint64_t queried = 0;
+            uint64_t c = 0;
+            const auto& R = S[p_id].unwrap();
+            for(const auto& read : R)
+            {
+                auto const s = read.c_str();
+                auto const s_len = read.length();
+                if(s_len < k)
+                    continue;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                uint64_t val;
+                while(true)
+                {
+                    c += M.find(v.canonical(), val);
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+
+                queried += s_len - k + 1;
+                if(queried >= checkpoint)
+                {
+                    n += queried;
+    #ifndef QUIET
+                    std::cerr << "\rQueried " << n << " k-mers.";
+                    queried = 0;
+    #endif
+                }
+            }
+
+            p += c, n += queried;
+        }, 1);
+
+        const auto t_e = now();
+        const auto t = duration(t_e - t_s);
+
+        std::cerr << "\n Time taken for libcuckoo for " << p << " positive queries out of " << n << "queries,  with " << parlay::num_workers() << " threads: " << t << "s at run " << r << ".\n";
+        std::cerr << "Throughput: " << (n / (t * 1000'000.0)) << "M op/s.\n";
+    }
+}
+
+
+template <uint16_t k>
+void throughput_boost_concurrent_query_fastq(const std::string& index_path, const std::string& query_path, const std::size_t init_cap, const std::size_t builder_threads, const uint64_t runs)
+{
+    boost::unordered::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>> M(init_cap);
+
+{
+    uint64_t n = 0;
+#ifndef QUIET
+    constexpr uint64_t log_step = 32768;
+    uint64_t checkpoint = log_step;
+    std::cerr << "\n";
+#endif
+
+    Parser input(index_path);
+    while(input.read_next_seq())
+    {
+        std::vector<std::thread> W;
+        W.reserve(builder_threads);
+
+        auto const seq = input.seq();
+        auto const len = input.seq_len();
+        if(len < k)
+            continue;
+
+        const auto kmer_per_w = (len - k + 1) / builder_threads;
+        for(std::size_t p_id = 0; p_id < builder_threads; ++p_id)
+            W.emplace_back([&](const auto p_id)
+            {
+                const auto s = seq + p_id * kmer_per_w;
+                const auto s_len = (p_id < builder_threads - 1 ? kmer_per_w + k - 1 : len - p_id * kmer_per_w);
+                if(s_len < k)
+                    return;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                while(true)
+                {
+                    M.emplace_or_visit(v.canonical(), 1, [](auto& kv)
+                    {
+                        kv.second++;
+                    });
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+            }
+            , p_id);
+
+        std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+
+        n += len - k + 1;
+
+#ifndef QUIET
+        if(n >= checkpoint)
+        {
+            std::cerr << "\rInserted " << n << " k-mers.";
+            checkpoint = n + log_step;
+        }
+#endif
+    }
+}
+
+
+    std::vector<Padded<std::vector<std::string>>> S(parlay::num_workers());
+{
+    Parser input(query_path);
+    std::size_t cur_w = 0;
+    while(input.read_next_seq())
+    {
+        S[cur_w].unwrap().emplace_back(input.seq());
+        cur_w = (cur_w + 1) % parlay::num_workers();
+    }
+
+    input.close();
+
+    std::cerr << "Read all reads in memory\n";
+}
+
+    for(uint64_t r = 0; r < runs; ++r)
+    {
+        std::atomic_uint64_t n = 0, p = 0;
+    #ifndef QUIET
+        constexpr uint64_t log_step = 65536;
+        uint64_t checkpoint = log_step;
+        std::cerr << "\n";
+    #endif
+
+        const auto t_s = now();
+        parlay::parallel_for(0, parlay::num_workers(), [&](const auto p_id)
+        {
+            uint64_t queried = 0;
+            uint64_t c = 0;
+            const auto& R = S[p_id].unwrap();
+            for(const auto& read : R)
+            {
+                auto const s = read.c_str();
+                auto const s_len = read.length();
+                if(s_len < k)
+                    continue;
+
+                Directed_Vertex<k> v(s);
+                std::size_t kmer_idx = 0;
+                uint64_t val;
+                while(true)
+                {
+                    c += M.visit(v.canonical(), [&val](const auto& kv){ val = kv.second; });
+                    if(kmer_idx + k == s_len)
+                        break;
+
+                    v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+                    kmer_idx++;
+                }
+
+                queried += s_len - k + 1;
+                if(queried >= checkpoint)
+                {
+                    n += queried;
+    #ifndef QUIET
+                    std::cerr << "\rQueried " << n << " k-mers.";
+                    queried = 0;
+    #endif
+                }
+            }
+
+            p += c, n += queried;
+        }, 1);
+
+        const auto t_e = now();
+        const auto t = duration(t_e - t_s);
+
+        std::cerr << "\n Time taken for boost for " << p << " positive queries out of " << n << "queries,  with " << parlay::num_workers() << " threads: " << t << "s at run " << r << ".\n";
+        std::cerr << "Throughput: " << (n / (t * 1000'000.0)) << "M op/s.\n";
+    }
+}
+
+
+
+template <uint16_t k, uint16_t l>
 void cache_miss_kache_hash_sequential(const std::string& file_path, const std::size_t init_cap)
 {
     throughput_kache_hash_sequential_insert<k, l>(file_path, init_cap);

@@ -11,5 +11,6 @@ constexpr const char* file_path = "/home/jamshed/refseq";
 // constexpr std::size_t final_sz = 8501727;
 constexpr std::size_t final_sz = 45'343'352;
 // constexpr std::size_t final_sz = 2'652'229'049;
+// constexpr std::size_t final_sz = 747'613'577;   // FASTQ
 
 constexpr const char* ht_path = "/ssd1/jamshed/ht";
