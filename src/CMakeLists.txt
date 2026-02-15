@@ -17,8 +17,6 @@ file(GLOB ICEBERG_HT_SRC
         "icebergHT/*"
 )
 
-add_library(core STATIC ${SRC})
-
 add_library(iceberg_ht STATIC ${ICEBERG_HT_SRC})
 set(ICEBERG_INCLUDE ${INCLUDE_DIR}/icebergHT)
 
@@ -40,18 +38,11 @@ add_executable(lf_v_key_dist experiments/lf-vs-key-dist.cpp)
 
 
 # Dependencies
-add_dependencies(core prj_parlaylib)
-
-# add_dependencies(core prj_benchmark)
-
-if(NOT BOOST_FOUND)
-    add_dependencies(core prj_boost)
-endif()
+add_dependencies(main prj_parlaylib)
 
 
 # Configs for targets.
 
-target_include_directories(core PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(iceberg_ht PRIVATE ${ICEBERG_INCLUDE})
 target_include_directories(bench PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(main PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
@@ -65,7 +56,6 @@ target_include_directories(key_distribution PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE
 target_include_directories(minimizer_effect PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(lf_v_key_dist PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
-target_compile_options(core PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench PRIVATE ${COMPILE_FLAGS})
 target_compile_options(main PRIVATE ${COMPILE_FLAGS})
@@ -79,7 +69,6 @@ target_compile_options(key_distribution PRIVATE ${COMPILE_FLAGS})
 target_compile_options(minimizer_effect PRIVATE ${COMPILE_FLAGS})
 target_compile_options(lf_v_key_dist PRIVATE ${COMPILE_FLAGS})
 
-target_link_libraries(core PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench PRIVATE ${LINK_FLAGS})
 target_link_libraries(main PRIVATE ${LINK_FLAGS})
@@ -95,31 +84,24 @@ target_compile_options(lf_v_key_dist PRIVATE ${LINK_FLAGS})
 
 
 # Target-links.
-target_link_libraries(core PRIVATE jemalloc)
-target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
-target_link_libraries(core PRIVATE ZLIB::ZLIB)
-target_link_libraries(core PRIVATE Threads::Threads)
-# target_link_libraries(core PRIVATE benchmark)
-# target_link_libraries(core PRIVATE pfm)
 
 target_link_libraries(iceberg_ht PRIVATE jemalloc)
 target_link_libraries(iceberg_ht PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
 
-target_link_libraries(bench PRIVATE core)
-target_link_libraries(bench PRIVATE iceberg_ht)
+target_link_libraries(main PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(bench PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 
-target_link_libraries(throughput_sequential PRIVATE core iceberg_ht)
-target_link_libraries(throughput_concurrent PRIVATE core iceberg_ht)
-target_link_libraries(cache_miss PRIVATE core iceberg_ht)
-target_link_libraries(cache_miss_query PRIVATE core iceberg_ht)
-target_link_libraries(query PRIVATE core iceberg_ht)
-target_link_libraries(key_distribution PRIVATE core iceberg_ht)
-target_link_libraries(minimizer_effect PRIVATE core iceberg_ht)
-target_link_libraries(lf_v_key_dist PRIVATE core iceberg_ht)
+target_link_libraries(throughput_sequential PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(throughput_concurrent PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(cache_miss PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(cache_miss_query PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(query PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(key_distribution PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(minimizer_effect PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(lf_v_key_dist PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 # target_link_libraries(bench PRIVATE benchmark)
 # target_link_libraries(bench PRIVATE nthash)
 
-target_link_libraries(main PRIVATE core)
 # target_link_libraries(main PRIVATE benchmark)
 # target_link_libraries(main PRIVATE nthash)
 
