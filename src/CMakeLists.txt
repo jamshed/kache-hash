@@ -5,13 +5,8 @@ set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
 
 # Targets.
 
-# Libraries.
 
-set(SRC
-        Parser.cpp
-        # examples/Kmer_Set.cpp
-        # examples/Minimizer_Scan.cpp
-)
+# Libraries.
 
 file(GLOB ICEBERG_HT_SRC
         "icebergHT/*"
@@ -22,9 +17,7 @@ set(ICEBERG_INCLUDE ${INCLUDE_DIR}/icebergHT)
 
 
 # Executables.
-# add_executable(bench bench.cpp)
-add_executable(bench benchmark.cpp)
-add_executable(main main.cpp)
+add_executable(example examples/example.cpp)
 
 # Benchmark experiment executables.
 add_executable(throughput_sequential experiments/throughput-sequential.cpp)
@@ -38,14 +31,12 @@ add_executable(lf_v_key_dist experiments/lf-vs-key-dist.cpp)
 
 
 # Dependencies
-add_dependencies(main prj_parlaylib)
 
 
 # Configs for targets.
 
+target_include_directories(example PRIVATE ${INCLUDE_DIR})
 target_include_directories(iceberg_ht PRIVATE ${ICEBERG_INCLUDE})
-target_include_directories(bench PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
-target_include_directories(main PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 target_include_directories(throughput_sequential PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(throughput_concurrent PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
@@ -56,9 +47,8 @@ target_include_directories(key_distribution PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE
 target_include_directories(minimizer_effect PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(lf_v_key_dist PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
+target_compile_options(example PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
-target_compile_options(bench PRIVATE ${COMPILE_FLAGS})
-target_compile_options(main PRIVATE ${COMPILE_FLAGS})
 
 target_compile_options(throughput_sequential PRIVATE ${COMPILE_FLAGS})
 target_compile_options(throughput_concurrent PRIVATE ${COMPILE_FLAGS})
@@ -69,9 +59,8 @@ target_compile_options(key_distribution PRIVATE ${COMPILE_FLAGS})
 target_compile_options(minimizer_effect PRIVATE ${COMPILE_FLAGS})
 target_compile_options(lf_v_key_dist PRIVATE ${COMPILE_FLAGS})
 
+target_link_libraries(example PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
-target_link_libraries(bench PRIVATE ${LINK_FLAGS})
-target_link_libraries(main PRIVATE ${LINK_FLAGS})
 
 target_compile_options(throughput_sequential PRIVATE ${LINK_FLAGS})
 target_compile_options(throughput_concurrent PRIVATE ${LINK_FLAGS})
@@ -88,8 +77,7 @@ target_compile_options(lf_v_key_dist PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE jemalloc)
 target_link_libraries(iceberg_ht PRIVATE ${CMAKE_DL_LIBS})    # For dynamic shared objects, like `jemalloc`.
 
-target_link_libraries(main PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
-target_link_libraries(bench PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(example PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 
 target_link_libraries(throughput_sequential PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(throughput_concurrent PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
@@ -99,14 +87,9 @@ target_link_libraries(query PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads
 target_link_libraries(key_distribution PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(minimizer_effect PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(lf_v_key_dist PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
-# target_link_libraries(bench PRIVATE benchmark)
-# target_link_libraries(bench PRIVATE nthash)
-
-# target_link_libraries(main PRIVATE benchmark)
-# target_link_libraries(main PRIVATE nthash)
 
 
 # Installation path.
-install(TARGETS main bench throughput_sequential throughput_concurrent cache_miss cache_miss_query query key_distribution minimizer_effect lf_v_key_dist
+install(TARGETS example throughput_sequential throughput_concurrent cache_miss cache_miss_query query key_distribution minimizer_effect lf_v_key_dist
         DESTINATION bin
-        )
+)
