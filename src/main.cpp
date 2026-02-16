@@ -1,10 +1,11 @@
 
 #include "DNA_Utility.hpp"
 #include "Directed_Vertex.hpp"
+#include "DNA_Utility.hpp"
 #include "Kmer_Utility.hpp"
 #include "Kmer.hpp"
 #include "Minimizer_Iterator.hpp"
-#include "Minimizer_Iterator_Baseline.hpp"
+// #include "Minimizer_Iterator_Baseline.hpp"
 #include "Rolling_Hash.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
@@ -23,6 +24,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+
+
+using namespace kache_hash;
 
 
 template <uint16_t k, uint16_t l>
@@ -597,6 +601,7 @@ void test_kmer_base(const std::string& path)
 }
 
 
+/*
 template <uint16_t k, uint16_t l>
 void test_minimizer_iterator(const std::string& path)
 {
@@ -663,6 +668,7 @@ void test_minimizer_iterator(const std::string& path)
 
     input.close();
 }
+*/
 
 
 int main(int argc, char* argv[])
