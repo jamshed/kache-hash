@@ -1050,7 +1050,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 {
-    std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
+    // std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
     const auto t_s = now();
 
     const auto old_cap = cap_;
@@ -1092,8 +1092,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     resize_th = capacity() * lf;
 
     const auto t_e = now();
-    std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
-    std::cerr << "Time taken: " << duration(t_e - t_s) << "s.\n";
+    (void)t_s, (void)t_e;
+    // std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
+    // std::cerr << "Time taken: " << duration(t_e - t_s) << "s.\n";
 }
 
 
