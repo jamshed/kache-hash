@@ -19,9 +19,6 @@
 using namespace kache_hash;
 
 
-constexpr uint16_t l = 19;  // Minimizer size.
-
-
 // Measurement configuration, from the command line.
 struct Config
 {
@@ -34,25 +31,6 @@ struct Config
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
     std::optional<std::string> perf;    // Raw hardware events to count per phase, as `name=rCODE` items, if any.
 };
-
-
-// Applies `f` to each of the `n` k-mer windows of the sequence `s`.
-template <typename F_>
-void for_each_window(const char* const s, const std::size_t n, const F_& f)
-{
-    Kmer_Window<k, l> w;
-    w.init(s);
-    std::size_t kmer_idx = 0;
-    while(true)
-    {
-        f(w);
-        if(kmer_idx + 1 == n)
-            break;
-
-        w.advance(s[kmer_idx + k]);
-        kmer_idx++;
-    }
-}
 
 
 // Scans the k-mers in the fragments `F` with `thread_c` threads, computing all

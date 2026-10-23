@@ -5,6 +5,7 @@
 
 
 #include "Perf_Group.hpp"
+#include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
 #include "DNA_Utility.hpp"
 #include "utility.hpp"
@@ -26,6 +27,7 @@ using namespace kache_hash;
 
 
 constexpr uint16_t k = 31;  // k-mer size.
+constexpr uint16_t l = 19;  // Minimizer size of the kache-hash tables.
 
 
 // Fragments of the sequences in an input: their maximal stretches of at least
@@ -231,6 +233,25 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f,
         perf->stop();
 
     return duration(t_e - t_s);
+}
+
+
+// Applies `f` to each of the `n` k-mer windows of the sequence `s`.
+template <typename F_>
+void for_each_window(const char* const s, const std::size_t n, const F_& f)
+{
+    Kmer_Window<k, l> w;
+    w.init(s);
+    std::size_t kmer_idx = 0;
+    while(true)
+    {
+        f(w);
+        if(kmer_idx + 1 == n)
+            break;
+
+        w.advance(s[kmer_idx + k]);
+        kmer_idx++;
+    }
 }
 
 

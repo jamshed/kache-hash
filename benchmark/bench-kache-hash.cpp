@@ -12,28 +12,6 @@
 using namespace kache_hash;
 
 
-constexpr uint16_t l = 19;  // Minimizer size.
-
-
-// Applies `f` to each of the `n` k-mer windows of the sequence `s`.
-template <typename F_>
-void for_each_window(const char* const s, const std::size_t n, const F_& f)
-{
-    Kmer_Window<k, l> w;
-    w.init(s);
-    std::size_t kmer_idx = 0;
-    while(true)
-    {
-        f(w);
-        if(kmer_idx + 1 == n)
-            break;
-
-        w.advance(s[kmer_idx + k]);
-        kmer_idx++;
-    }
-}
-
-
 // Adapter of the kache-hash table, that is concurrent iff `mt_`, and that maps
 // k-mers to `T_` counts—a set if `T_` is `void`.
 template <bool mt_, typename T_>
