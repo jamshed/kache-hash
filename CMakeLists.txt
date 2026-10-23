@@ -119,7 +119,7 @@ if(MIN_SIZE_EXP)
 endif()
 
 # Required preprocessor definitions.
-set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
+set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY XXH_FORCE_MEMORY_ACCESS=0)   # `memcpy` reads: xxHash's default for GCC breaks strict aliasing.
 add_compile_definitions(${XXHASH_DEFS})
 add_compile_definitions(DEVELOP)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
