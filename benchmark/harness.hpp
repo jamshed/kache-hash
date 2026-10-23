@@ -4,6 +4,7 @@
 
 
 
+#include "Perf_Group.hpp"
 #include "Parser.hpp"
 #include "DNA_Utility.hpp"
 #include "utility.hpp"
@@ -124,6 +125,17 @@ inline void report_phase(const std::string& name, const std::size_t op_c, const 
 }
 
 
+// Prints the counts of the performance-counter events in the group `perf` for
+// the phase `name`.
+inline void report_perf(const std::string& name, const Perf_Group& perf)
+{
+    for(std::size_t i = 0; i < perf.size(); ++i)
+        print("perf." + name + "." + perf.name(i), perf.count(i));
+
+    print("perf." + name + ".running_pct", perf.running_pct());
+}
+
+
 // Returns the maximum resident set size of the process so far, in bytes.
 inline std::size_t max_rss_bytes()
 {
@@ -171,10 +183,11 @@ inline void report_memory()
 
 // Runs `f(t_id, s, n)` in parallel with `thread_c` threads, where the `t_id`'th
 // thread gets the `t_id`'th contiguous share of the k-mers in the fragments
-// `F`, in runs of `n` k-mers starting at `s`, each within a fragment. Returns
-// the elapsed time in seconds.
+// `F`, in runs of `n` k-mers starting at `s`, each within a fragment. Counts the
+// events of the group `perf` over the run, if provided. Returns the elapsed time
+// in seconds.
 template <typename F_>
-double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f)
+double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f, Perf_Group* const perf = nullptr)
 {
     const auto kmer_c = F.kmer_count();
     const auto share_start = [&](const std::size_t t){ return t * kmer_c / thread_c; };
@@ -193,6 +206,9 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f)
     std::vector<std::thread> W;
     W.reserve(thread_c);
 
+    if(perf)
+        perf->start();
+
     const auto t_s = now();
 
     for(std::size_t t = 0; t < thread_c; ++t)
@@ -210,6 +226,10 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f)
     std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
     const auto t_e = now();
+
+    if(perf)
+        perf->stop();
+
     return duration(t_e - t_s);
 }
 

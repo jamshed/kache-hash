@@ -1,0 +1,16 @@
+# Raw hardware-event groups for Intel Cascade Lake, one per line: a group name, then comma-separated `name=rCODE` items.
+# Each group gets one run of the measurement driver, alongside the always-counted cycles and instructions and software
+# events. The nodes expose 4 general-purpose counters per CPU, and with the NMI watchdog holding the fixed cycles
+# counter, cycles takes one of them: so a group holds at most 3 raw events, or it is never scheduled. Cycle shares use
+# the cycles of the same run. The codes follow `perf list --details`: `rCODE` packs cmask << 24 | umask << 8 | event.
+demand      mem_load_retired.l1_miss=r08d1,mem_load_retired.l2_miss=r10d1,mem_load_retired.l3_miss=r20d1
+noise       mem_load_retired.fb_hit=r40d1,longest_lat_cache.miss=r412e,l2_lines_in.all=r1ff1
+numa        mem_load_l3_miss_retired.local_dram=r01d3,mem_load_l3_miss_retired.remote_dram=r02d3,mem_load_l3_miss_retired.remote_hitm=r04d3
+latency     mem_load_l3_miss_retired.remote_fwd=r08d3,offcore_requests.l3_miss_demand_data_rd=r10b0,offcore_requests_outstanding.l3_miss_demand_data_rd=r1060
+mlp_l1d     l1d_pend_miss.pending=r0148,l1d_pend_miss.pending_cycles=r1000148,l1d_pend_miss.fb_full=r0248
+mlp_dram    offcore_requests_outstanding.demand_data_rd=r0160,offcore_requests_outstanding.cycles_with_demand_data_rd=r1000160,cycle_activity.stalls_l3_miss=r60006a3
+tlb         dtlb_load_misses.walk_completed=r0e08,dtlb_load_misses.walk_pending=r1008,dtlb_load_misses.walk_active=r1001008
+tlb_page    dtlb_load_misses.walk_completed_2m_4m=r0408,dtlb_load_misses.stlb_hit=r2008,dtlb_store_misses.walk_completed=r0e49
+sync        mem_inst_retired.lock_loads=r21d0,mem_inst_retired.all_loads=r81d0,mem_inst_retired.all_stores=r82d0
+order       machine_clears.memory_ordering=r02c3,resource_stalls.sb=r08a2,l2_lines_out.non_silent=r02f2
+coherence   mem_load_l3_hit_retired.xsnp_hitm=r04d2,offcore_requests.demand_rfo=r04b0
