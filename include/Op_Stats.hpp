@@ -29,7 +29,10 @@ constexpr bool instrument = false;  // Whether the hash table operations are ins
 // Statistics of the hash table operations of a thread, collected iff
 // `instrument`. The statistics of each thread are kept in a registry outliving
 // the thread, so that the statistics of all the threads, including transient
-// ones like resize workers, can be aggregated at quiescent points.
+// ones like resize workers, can be aggregated at quiescent points. An operation
+// concludes when the thread's next one begins, or at aggregation, with its
+// outcome set by its key getting found or placed. Notes for operations from a
+// thread yet to begin any, like a resize worker, are ignored.
 class Op_Stats
 {
 public:
@@ -45,8 +48,8 @@ public:
     enum Outcome: uint8_t { found, placed, absent, outcome_count };
 
     // Kinds of memory lines touched by the operations: lines of the bucket
-    // metadata, of the bucket slots that are read or written, and of the
-    // overflow table.
+    // metadata, of the bucket slots that are first read or first written, and
+    // of the overflow table.
     enum Line: uint8_t { meta, slot_read, slot_write, overflow_line, line_count };
 
 private:
@@ -58,13 +61,14 @@ private:
 
     Op_Type type = update;  // Type of the current operation.
     Level level = primary;  // Deepest level reached by the current operation.
+    Outcome outcome = absent;   // Outcome of the current operation so far.
     std::size_t op_line_n = 0;  // Number of distinct lines remembered for the current operation.
-    uintptr_t op_line[op_line_cap] = {};    // Lines touched by the current operation, tagged with their kinds.
+    uintptr_t op_line[op_line_cap] = {};    // Lines touched by the current operation.
 
     uint64_t run_h = 0; // Minimizer hash of the current run: a maximal stretch of operations with the same minimizer hash.
-    uint64_t run_len = 0;   // Length of the current run; 0 if no run is ongoing.
+    uint64_t run_len = 0;   // Length of the current run; 0 iff no operation has begun since the last reset.
     std::size_t run_line_n = 0; // Number of distinct lines remembered for the current run.
-    uintptr_t run_line[run_line_cap] = {};  // Lines touched by the current run, tagged with their kinds.
+    uintptr_t run_line[run_line_cap] = {};  // Lines touched by the current run.
 
 public:
 
@@ -93,6 +97,7 @@ public:
     uint64_t run_len_sq_sum = 0;    // Sum of the completed runs' squared lengths.
     uint64_t run_len_hist[run_len_cap] = {};    // `run_len_hist[i]` is the number of completed runs of length `i + 1`; the last bin is for all longer runs too.
     uint64_t run_line_c[line_count] = {};   // Number of distinct lines touched, summed over the runs.
+    uint64_t unremembered_line_c = 0;   // Number of line touches past the remembering capacities, whose lines may be counted again.
 
 
 private:
@@ -103,10 +108,17 @@ private:
     // Returns the lock of the registry.
     static std::mutex& registry_lock();
 
+    // Returns whether an operation has begun since the last reset.
+    bool in_op() const { return run_len > 0; }
+
+    // Concludes the current operation.
+    void end_op() { concluded_c[type][level][outcome]++; }
+
     // Completes the current run, if any.
     void end_run();
 
-    // Adds the statistics `s` to these, counting its ongoing run as completed.
+    // Adds the statistics `s` to these, counting its ongoing operation as
+    // concluded and its ongoing run as completed.
     void add(const Op_Stats& s);
 
 public:
@@ -122,31 +134,37 @@ public:
     // concurrently with any operation.
     static Op_Stats total();
 
-    // Begins an operation of type `t` for a k-mer with minimizer hash `h`.
+    // Begins an operation of type `t` for a k-mer with minimizer hash `h`,
+    // concluding the previous operation, if any.
     void begin_op(Op_Type t, uint64_t h);
 
     // Notes that the current operation reached level `l`.
     void reach(Level l);
 
-    // Notes that the current operation touched the memory line of kind `kind`
-    // containing the address `p`.
-    void touch(Line kind, const void* p);
+    // Notes that the current operation touched the memory lines of kind `kind`
+    // spanning the `sz` bytes at address `p`. A line counts once per operation
+    // and once per run, as the kind of its first touch.
+    void touch(Line kind, const void* p, std::size_t sz = 1);
 
-    // Notes a key comparison of the current operation after a checksum match,
-    // with the keys being equal iff `equal`.
-    void compare_key(bool equal) { key_cmp_c[type]++, cs_false_c[type] += !equal; }
+    // Notes a read of the bucket-slot key at address `p` by the current
+    // operation, after a checksum match iff `matched`, with the key being equal
+    // to the operation's iff `equal`—the key is then found.
+    void read_key(const void* p, bool matched, bool equal);
 
-    // Notes a key read of the current operation without a checksum match.
-    void read_blind() { blind_read_c[type]++; }
+    // Notes that the current operation found its key, accessing the `sz` bytes
+    // at address `p` of memory lines of kind `kind`.
+    void find_key(Line kind, const void* p, std::size_t sz = 1) { if(in_op()) touch(kind, p, sz), outcome = found; }
 
-    // Notes a slot probe of the current operation in the overflow table.
-    void probe_overflow() { ov_probe_c[type]++; }
+    // Notes that the current operation placed its key, writing the `sz` bytes
+    // at address `p` of memory lines of kind `kind`.
+    void place_key(Line kind, const void* p, std::size_t sz = 1) { if(in_op()) touch(kind, p, sz), outcome = placed; }
+
+    // Notes a probe of the current operation into the overflow-table slot with
+    // its key at address `p`.
+    void probe_overflow(const void* p) { if(in_op()) touch(overflow_line, p), ov_probe_c[type]++; }
 
     // Notes an overflow-table slot lock taken by the current operation.
-    void lock_overflow() { ov_lock_c[type]++; }
-
-    // Ends the current operation with outcome `o`.
-    void end_op(Outcome o) { concluded_c[type][level][o]++; }
+    void lock_overflow() { if(in_op()) ov_lock_c[type]++; }
 
     // Writes the statistics to `os` as TSV lines, with keys prefixed by
     // `prefix`.
@@ -198,18 +216,21 @@ inline Op_Stats Op_Stats::total()
 
 inline void Op_Stats::begin_op(const Op_Type t, const uint64_t h)
 {
+    if(run_len > 0)
+        end_op();
+
     if(run_len == 0 || h != run_h)
         end_run(), run_h = h;
 
     run_len++;
-    type = t, level = primary, op_line_n = 0;
+    type = t, level = primary, outcome = absent, op_line_n = 0;
     op_c[t]++;
 }
 
 
 inline void Op_Stats::reach(const Level l)
 {
-    if(l > level)
+    if(in_op() && l > level)
     {
         level = l;
         if(l == overflow)
@@ -218,23 +239,48 @@ inline void Op_Stats::reach(const Level l)
 }
 
 
-inline void Op_Stats::touch(const Line kind, const void* const p)
+inline void Op_Stats::touch(const Line kind, const void* const p, const std::size_t sz)
 {
-    const uintptr_t tag = ((reinterpret_cast<uintptr_t>(p) / line_sz) << 2) | kind;
+    if(!in_op())
+        return;
 
-    if(std::find(op_line, op_line + op_line_n, tag) == op_line + op_line_n)
+    const auto addr = reinterpret_cast<uintptr_t>(p);
+    for(auto line = addr / line_sz; line <= (addr + sz - 1) / line_sz; ++line)
     {
-        line_c[type][kind]++;
-        if(op_line_n < op_line_cap)
-            op_line[op_line_n++] = tag;
-    }
+        if(std::find(op_line, op_line + op_line_n, line) == op_line + op_line_n)
+        {
+            line_c[type][kind]++;
+            if(op_line_n < op_line_cap)
+                op_line[op_line_n++] = line;
+            else
+                unremembered_line_c++;
+        }
 
-    if(std::find(run_line, run_line + run_line_n, tag) == run_line + run_line_n)
-    {
-        run_line_c[kind]++;
-        if(run_line_n < run_line_cap)
-            run_line[run_line_n++] = tag;
+        if(std::find(run_line, run_line + run_line_n, line) == run_line + run_line_n)
+        {
+            run_line_c[kind]++;
+            if(run_line_n < run_line_cap)
+                run_line[run_line_n++] = line;
+            else
+                unremembered_line_c++;
+        }
     }
+}
+
+
+inline void Op_Stats::read_key(const void* const p, const bool matched, const bool equal)
+{
+    if(!in_op())
+        return;
+
+    touch(slot_read, p);
+    if(matched)
+        key_cmp_c[type]++, cs_false_c[type] += !equal;
+    else
+        blind_read_c[type]++;
+
+    if(equal)
+        outcome = found;
 }
 
 
@@ -281,8 +327,11 @@ inline void Op_Stats::add(const Op_Stats& s)
     for(std::size_t kind = 0; kind < line_count; ++kind)
         run_line_c[kind] += s.run_line_c[kind];
 
-    if(s.run_len > 0)   // The ongoing run of `s` counts as completed; its lines are already counted.
+    unremembered_line_c += s.unremembered_line_c;
+
+    if(s.run_len > 0)   // The ongoing operation and run of `s` count as concluded and completed; their lines are already counted.
     {
+        concluded_c[s.type][s.level][s.outcome]++;
         run_c++;
         run_len_sum += s.run_len, run_len_sq_sum += s.run_len * s.run_len;
         run_len_hist[std::min<uint64_t>(s.run_len, run_len_cap) - 1]++;
@@ -329,6 +378,7 @@ inline void Op_Stats::report(std::ostream& os, const std::string& prefix) const
     for(std::size_t l = 0; l < level_count; ++l)
         put(std::string("resize.placed.") + level_name[l], resize_placed_c[l]);
 
+    put("lines.unremembered", unremembered_line_c);
     put("runs.count", run_c);
     put("runs.len_sum", run_len_sum);
     put("runs.len_sq_sum", run_len_sq_sum);
