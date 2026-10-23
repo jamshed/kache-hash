@@ -18,7 +18,7 @@ ena="https://ftp.sra.ebi.ac.uk/vol1/fastq"
 # Downloads the gzipped file at the URL $1 into $2, resuming a partial download.
 fetch()
 {
-    local url="${1}" file="${data_dir}/${2}"
+    local url="${1}" file="${data_dir}/${2}" attempt
 
     if [ -s "${file}" ] && gzip -t "${file}" 2> /dev/null; then
         echo "Found ${file}"
@@ -26,11 +26,20 @@ fetch()
     fi
 
     echo "Fetching ${url}"
-    if ! curl -fL --retry 3 -C - -o "${file}" "${url}" || ! gzip -t "${file}"; then
-        echo "Failed fetching ${file}" >&2
-        rm -f "${file}"
-        exit 1
-    fi
+    for attempt in {1..10}; do  # Servers may drop long transfers; each attempt resumes the partial download.
+        if curl -fL -C - -o "${file}" "${url}"; then
+            if gzip -t "${file}"; then
+                return
+            fi
+
+            rm -f "${file}"
+        fi
+
+        sleep 10
+    done
+
+    echo "Failed fetching ${file}" >&2
+    exit 1
 }
 
 
