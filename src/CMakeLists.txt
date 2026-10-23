@@ -28,7 +28,6 @@ add_executable(query experiments/query.cpp)
 add_executable(key_distribution experiments/key-distribution.cpp)
 add_executable(minimizer_effect experiments/minimizer-effect.cpp)
 add_executable(lf_v_key_dist experiments/lf-vs-key-dist.cpp)
-add_executable(measure experiments/measure.cpp)
 
 
 # Dependencies
@@ -47,7 +46,6 @@ target_include_directories(query PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(key_distribution PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(minimizer_effect PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(lf_v_key_dist PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
-target_include_directories(measure PRIVATE ${INCLUDE_DIR})
 
 target_compile_options(example PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
@@ -60,11 +58,9 @@ target_compile_options(query PRIVATE ${COMPILE_FLAGS})
 target_compile_options(key_distribution PRIVATE ${COMPILE_FLAGS})
 target_compile_options(minimizer_effect PRIVATE ${COMPILE_FLAGS})
 target_compile_options(lf_v_key_dist PRIVATE ${COMPILE_FLAGS})
-target_compile_options(measure PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(example PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
-target_link_libraries(measure PRIVATE ${LINK_FLAGS})
 
 target_compile_options(throughput_sequential PRIVATE ${LINK_FLAGS})
 target_compile_options(throughput_concurrent PRIVATE ${LINK_FLAGS})
@@ -91,10 +87,9 @@ target_link_libraries(query PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads
 target_link_libraries(key_distribution PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(minimizer_effect PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(lf_v_key_dist PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
-target_link_libraries(measure PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 
 
 # Installation path.
-install(TARGETS example throughput_sequential throughput_concurrent cache_miss cache_miss_query query key_distribution minimizer_effect lf_v_key_dist measure
+install(TARGETS example throughput_sequential throughput_concurrent cache_miss cache_miss_query query key_distribution minimizer_effect lf_v_key_dist
         DESTINATION bin
 )

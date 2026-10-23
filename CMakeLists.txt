@@ -296,4 +296,5 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 
+add_subdirectory(benchmark)
 add_subdirectory(src)
