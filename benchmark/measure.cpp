@@ -96,6 +96,8 @@ void measure(const Config& cfg, Perf_Group* const perf)
         print("perf.events", *cfg.perf);
     if constexpr(instrument)
         print("instrument", instrument);
+    if constexpr(no_table_lock)
+        print("no_table_lock", no_table_lock);
 
     const Fragments index(cfg.index);
     report_input("index", cfg.index, index);

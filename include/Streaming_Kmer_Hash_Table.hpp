@@ -42,6 +42,13 @@ namespace kache_hash
 #define KACHE_HASH_UNLIKELY(cond)   __builtin_expect(cond, 0)
 
 
+#ifdef NO_TABLE_LOCK
+constexpr bool no_table_lock = true;    // Whether concurrent updates skip the table lock, for measurement only: the table can't resize then.
+#else
+constexpr bool no_table_lock = false;   // Whether concurrent updates skip the table lock, for measurement only: the table can't resize then.
+#endif
+
+
 template <uint16_t k, uint16_t l> class Kmer_Window;
 
 
@@ -800,9 +807,9 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     if constexpr(instrument)
         Op_Stats::local().begin_op(Op_Stats::update, h);
 
-    if constexpr(mt_)   table_lock.lock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
     const auto r = insert(w.v.canonical(), c, h, m);
-    if constexpr(mt_)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -830,9 +837,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     if constexpr(instrument)
         Op_Stats::local().begin_op(Op_Stats::update, h);
 
-    if constexpr(mt_)   table_lock.lock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
     const auto r = insert(std::make_pair(w.v.canonical(), val), c, h, m);
-    if constexpr(mt_)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -861,9 +868,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     if constexpr(instrument)
         Op_Stats::local().begin_op(Op_Stats::update, h);
 
-    if constexpr(mt_)   table_lock.lock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
     const auto r = upsert(w.v.canonical(), c, h, m, f, val);
-    if constexpr(mt_)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -1105,6 +1112,12 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 {
+    if constexpr(mt_ && no_table_lock)
+    {
+        std::cerr << "A concurrent table can't resize without the table lock, which this build skips. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
     if constexpr(mt_)   table_lock.lock();
 
     if(approx_sz >= resize_th)

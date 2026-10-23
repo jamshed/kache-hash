@@ -117,6 +117,10 @@ if(INSTRUMENT)
     add_compile_definitions(INSTRUMENT)
 endif()
 
+if(NO_TABLE_LOCK)
+    add_compile_definitions(NO_TABLE_LOCK)
+endif()
+
 
 if(MIN_SIZE_EXP)
     add_compile_definitions(MIN_SIZE_EXP=${MIN_SIZE_EXP})
