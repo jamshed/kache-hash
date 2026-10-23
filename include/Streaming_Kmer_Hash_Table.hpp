@@ -273,6 +273,9 @@ public:
     // Returns the size of the overflow table.
     std::size_t overflow_size() const { return ov->size();  }
 
+    // Returns the capacity of the overflow table.
+    std::size_t overflow_capacity() const { return ov->capacity(); }
+
     // Clears the table.
     void clear();
 
@@ -315,6 +318,10 @@ public:
     // Returns the percentages of keys in the table that are placed into their
     // primary bucket, their secondary buckets, and the overflow table.
     std::tuple<double, double, double> key_distribution() const;
+
+    // Returns the histogram of the bucket sizes: its `s`'th entry is the number
+    // of buckets holding `s` keys.
+    std::vector<std::size_t> occupancy() const;
 
     // Serializes the table to the stream `os`.
     // void serialize(std::ofstream& os) const;
@@ -536,11 +543,14 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
             if constexpr(!resize_)
             {
                 if constexpr(instrument)
-                    Op_Stats::local().touch(Op_Stats::meta, &M[b]);
+                    Op_Stats::local().lock_bucket(&M[b]);
 
                 const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
                 if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
                     break;
+
+                if constexpr(instrument)
+                    Op_Stats::local().fail_bucket_lock();
             }
             else
             {
@@ -965,7 +975,11 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
 
     const auto b = h & idx_mask;
     if(try_insert_at_resize(x, c, m, b))
+    {
+        if constexpr(instrument)
+            Op_Stats::local().reinsert_key(Op_Stats::primary);
         return;
+    }
 
     const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
     const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
@@ -991,15 +1005,22 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     {
         place_at_resize(x, c, m, p, sz_p);
         unlock_ordered<true>(p, q);
+        if constexpr(instrument)
+            Op_Stats::local().reinsert_key(Op_Stats::secondary);
     }
     else if(sz_q < B)
     {
         place_at_resize(x, c, m, q, sz_q);
         unlock_ordered<true>(p, q);
+        if constexpr(instrument)
+            Op_Stats::local().reinsert_key(Op_Stats::secondary);
     }
     else
     {
         unlock_ordered<true>(p, q);
+        if constexpr(instrument)
+            Op_Stats::local().reinsert_key(Op_Stats::overflow);
+
         if constexpr(is_set_)
             ov_new->insert(x, Overflow_Set_Val(c, m));
         else
@@ -1139,6 +1160,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
     const auto t_e = now();
     (void)t_s, (void)t_e;
+    if constexpr(instrument)
+        Op_Stats::local().resize_table(t_e - t_s);
     // std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
     // std::cerr << "Time taken: " << duration(t_e - t_s) << "s.\n";
 }
@@ -1194,6 +1217,17 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::key_distribution() const -
     const auto o = overflow_size();
     const auto sz = p + s + o;
     return {p * 100.0 / sz, s * 100.0 / sz, o * 100.0 / sz};
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::occupancy() const -> std::vector<std::size_t>
+{
+    std::vector<std::size_t> H(B + 1, 0);
+    for(std::size_t b = 0; b < cap_; ++b)
+        H[bucket_size(b)]++;
+
+    return H;
 }
 
 

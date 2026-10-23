@@ -146,6 +146,13 @@ void measure(const Config& cfg, Perf_Group* const perf)
     print("table.primary_pct", primary);
     print("table.secondary_pct", secondary);
     print("table.overflow_pct", overflow);
+    if constexpr(instrument)
+    {
+        print("table.overflow_capacity", M.overflow_capacity());
+        const auto occ = M.occupancy();
+        for(std::size_t s = 0; s < occ.size(); ++s)
+            print("table.occupancy." + std::to_string(s), occ[s]);
+    }
 
     for(std::size_t q = 0; q < cfg.query.size(); ++q)
     {

@@ -185,6 +185,8 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
 
         if(T[i].key == empty_key_)
         {
+            if constexpr(instrument)
+                Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             if(T[i].key == empty_key_)
                 T[i].key = key, T[i].val = val,
@@ -228,6 +230,8 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
 
         if(T[i].key == empty_key_)
         {
+            if constexpr(instrument)
+                Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             if(T[i].key == empty_key_)
                 T[i].key = key, T[i].val = val,
@@ -245,7 +249,7 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
         if(T[i].key == key)
         {
             if constexpr(instrument)
-                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val));
+                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val)), Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             const auto old_val = T[i].val;
             T[i].val = val;
@@ -275,7 +279,7 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
         if(T[i].key == key)
         {
             if constexpr(instrument)
-                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val));
+                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val)), Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock(); // To ensure that some other thread is not updating this val atm—a stable value is guaranteed.
             val_ptr = &T[i].val;
             lock[i].unlock();
