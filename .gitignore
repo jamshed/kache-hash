@@ -38,3 +38,10 @@ external/
 
 # clangd
 .cache/
+
+# agent, editor state, and local content
+local/
+settings.json
+
+# datasets
+data/
