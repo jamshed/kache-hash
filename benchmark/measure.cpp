@@ -1,6 +1,7 @@
 
 #include "harness.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
+#include "Op_Stats.hpp"
 #include "utility.hpp"
 
 #include <cstdint>
@@ -93,6 +94,8 @@ void measure(const Config& cfg, Perf_Group* const perf)
     print("threads", cfg.thread_c);
     if(cfg.perf)
         print("perf.events", *cfg.perf);
+    if constexpr(instrument)
+        print("instrument", instrument);
 
     const Fragments index(cfg.index);
     report_input("index", cfg.index, index);
@@ -115,6 +118,9 @@ void measure(const Config& cfg, Perf_Group* const perf)
     std::vector<typename ht_t::Token> token(cfg.thread_c);
     std::for_each(token.begin(), token.end(), [&](auto& t){ t = M.register_user(); });
 
+    if constexpr(instrument)
+        Op_Stats::reset();
+
     const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
     {
         for_each_window(s, n, [&](const Kmer_Window<k, l>& w)
@@ -129,6 +135,8 @@ void measure(const Config& cfg, Perf_Group* const perf)
     report_phase("build", index.kmer_count(), t_build);
     if(perf)
         report_perf("build", *perf);
+    if constexpr(instrument)
+        Op_Stats::total().report(std::cout, "inst.build.");
 
     print("table.capacity", M.capacity());
     print("table.size", M.size());
@@ -146,6 +154,9 @@ void measure(const Config& cfg, Perf_Group* const perf)
         report_input(name, cfg.query[q], query);
 
         std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
+        if constexpr(instrument)
+            Op_Stats::reset();
+
         const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
         {
             std::size_t h = 0;
@@ -159,6 +170,8 @@ void measure(const Config& cfg, Perf_Group* const perf)
         print(name + ".hits", hit_c);
         if(perf)
             report_perf(name, *perf);
+        if constexpr(instrument)
+            Op_Stats::total().report(std::cout, "inst." + name + ".");
     }
 
     report_memory();

@@ -113,6 +113,10 @@ if(AVX_512)
     add_compile_definitions(AVX_512)
 endif()
 
+if(INSTRUMENT)
+    add_compile_definitions(INSTRUMENT)
+endif()
+
 
 if(MIN_SIZE_EXP)
     add_compile_definitions(MIN_SIZE_EXP=${MIN_SIZE_EXP})
