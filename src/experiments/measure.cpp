@@ -1,0 +1,406 @@
+
+#include "Streaming_Kmer_Hash_Table.hpp"
+#include "Parser.hpp"
+#include "utility.hpp"
+
+#include <cstdint>
+#include <cstddef>
+#include <string>
+#include <vector>
+#include <utility>
+#include <type_traits>
+#include <iostream>
+#include <fstream>
+#include <cstdlib>
+#include <thread>
+#include <algorithm>
+
+#include <sys/resource.h>
+
+
+using namespace kache_hash;
+
+
+constexpr uint16_t k = 31;  // k-mer size.
+constexpr uint16_t l = 19;  // Minimizer size.
+
+
+// Measurement configuration, from the command line.
+struct Config
+{
+    std::string index;  // Path to the input to build the table on.
+    std::vector<std::string> query; // Paths to the inputs to query the table with.
+    bool scan = false;  // Whether to scan the index k-mers without the table.
+    std::size_t thread_c = 1;   // Number of user threads.
+    bool seq = false;   // Whether to use the non-concurrent table.
+    bool set = false;   // Whether to use a hash set instead of a hash map of k-mer counts.
+    std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
+};
+
+
+// Fragments of the sequences in an input: their maximal stretches of at least
+// `k` bases without placeholders.
+class Fragments
+{
+private:
+
+    std::string seq;    // Concatenated fragments.
+    std::vector<std::size_t> off;   // `off[i]` is the offset of the `i`'th fragment in `seq`; the last entry is the size of `seq`.
+    std::size_t seq_c;  // Number of sequences in the input.
+    std::size_t base_c; // Number of bases in the input.
+
+public:
+
+    // Reads the fragments of the input at path `path`.
+    Fragments(const std::string& path);
+
+    // Returns the number of fragments.
+    std::size_t size() const { return off.size() - 1; }
+
+    // Returns the `i`'th fragment.
+    const char* operator[](const std::size_t i) const { return seq.data() + off[i]; }
+
+    // Returns the number of k-mers in the `i`'th fragment.
+    std::size_t kmer_count(const std::size_t i) const { return off[i + 1] - off[i] - (k - 1); }
+
+    // Returns the number of k-mers in the fragments.
+    std::size_t kmer_count() const { return seq.size() - size() * (k - 1); }
+
+    // Returns the number of sequences in the input.
+    std::size_t seq_count() const { return seq_c; }
+
+    // Returns the number of bases in the input.
+    std::size_t base_count() const { return base_c; }
+
+    // Returns the number of bases in the input that are not in any fragment.
+    std::size_t skipped_base_count() const { return base_c - seq.size(); }
+};
+
+
+Fragments::Fragments(const std::string& path):
+      seq_c(0)
+    , base_c(0)
+{
+    Parser input(path);
+    while(input.read_next_seq())
+    {
+        const auto s = input.seq();
+        const auto len = input.seq_len();
+        seq_c++, base_c += len;
+
+        std::size_t start = 0;  // Start of the current stretch without placeholders.
+        for(std::size_t i = 0; i <= len; ++i)
+            if(i == len || DNA_Utility::is_placeholder(s[i]))
+            {
+                if(i - start >= k)
+                    off.push_back(seq.size()), seq.append(s + start, i - start);
+
+                start = i + 1;
+            }
+    }
+
+    input.close();
+    off.push_back(seq.size());
+}
+
+
+// Prints the measurement `key` with value `val`.
+template <typename T_>
+void print(const std::string& key, const T_& val)
+{
+    std::cout << key << "\t" << val << std::endl;
+}
+
+
+// Prints the statistics of the input `name` at path `path`, having the
+// fragments `F`.
+void report_input(const std::string& name, const std::string& path, const Fragments& F)
+{
+    print(name, path);
+    print(name + ".sequences", F.seq_count());
+    print(name + ".bases", F.base_count());
+    print(name + ".skipped_bases", F.skipped_base_count());
+    print(name + ".fragments", F.size());
+    print(name + ".kmers", F.kmer_count());
+}
+
+
+// Prints the measurements of the phase `name` that performed `op_c` operations
+// in `t` seconds.
+void report_phase(const std::string& name, const std::size_t op_c, const double t)
+{
+    print(name + ".ops", op_c);
+    print(name + ".seconds", t);
+    print(name + ".mops", op_c / (t * 1'000'000.0));
+}
+
+
+// Prints the memory statistics of the process.
+void report_memory()
+{
+#ifdef __APPLE__
+    constexpr std::size_t rss_unit = 1; // `ru_maxrss` is in bytes on macOS, and in kilobytes on Linux.
+#else
+    constexpr std::size_t rss_unit = 1024;
+#endif
+
+    rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    print("memory.max_rss_bytes", ru.ru_maxrss * rss_unit);
+
+#ifdef __linux__
+    std::ifstream thp("/sys/kernel/mm/transparent_hugepage/enabled");   // Lists the modes, e.g. "always [madvise] never".
+    std::string mode;
+    while(thp >> mode)
+        if(mode.front() == '[')
+            print("memory.thp", mode.substr(1, mode.size() - 2));
+
+    std::ifstream smaps("/proc/self/smaps_rollup");
+    std::string field;
+    std::size_t kb;
+    while(smaps >> field)
+        if(field == "AnonHugePages:" && smaps >> kb)
+            print("memory.anon_huge_pages_kb", kb);
+#endif
+}
+
+
+// Runs `f(t_id, s, n)` in parallel with `thread_c` threads, where the `t_id`'th
+// thread gets the `t_id`'th contiguous share of the k-mers in the fragments
+// `F`, in runs of `n` k-mers starting at `s`, each within a fragment. Returns
+// the elapsed time in seconds.
+template <typename F_>
+double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f)
+{
+    const auto kmer_c = F.kmer_count();
+    const auto share_start = [&](const std::size_t t){ return t * kmer_c / thread_c; };
+
+    std::vector<std::pair<std::size_t, std::size_t>> first(thread_c);   // The `t`'th share starts at the `first[t].second`'th k-mer of the `first[t].first`'th fragment.
+    std::size_t frag = 0;
+    std::size_t pre = 0;    // Number of k-mers in the fragments before the `frag`'th.
+    for(std::size_t t = 0; t < thread_c; ++t)
+    {
+        while(frag < F.size() && pre + F.kmer_count(frag) <= share_start(t))
+            pre += F.kmer_count(frag++);
+
+        first[t] = {frag, share_start(t) - pre};
+    }
+
+    std::vector<std::thread> W;
+    W.reserve(thread_c);
+
+    const auto t_s = now();
+
+    for(std::size_t t = 0; t < thread_c; ++t)
+        W.emplace_back([&](const std::size_t t_id)
+        {
+            auto [i, p] = first[t_id];
+            for(auto n = share_start(t_id + 1) - share_start(t_id); n > 0; i++, p = 0)
+            {
+                const auto m = std::min(n, F.kmer_count(i) - p);
+                f(t_id, F[i] + p, m);
+                n -= m;
+            }
+        }, t);
+
+    std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+
+    const auto t_e = now();
+    return duration(t_e - t_s);
+}
+
+
+// Applies `f` to each of the `n` k-mer windows of the sequence `s`.
+template <typename F_>
+void for_each_window(const char* const s, const std::size_t n, const F_& f)
+{
+    Kmer_Window<k, l> w;
+    w.init(s);
+    std::size_t kmer_idx = 0;
+    while(true)
+    {
+        f(w);
+        if(kmer_idx + 1 == n)
+            break;
+
+        w.advance(s[kmer_idx + k]);
+        kmer_idx++;
+    }
+}
+
+
+// Scans the k-mers in the fragments `F` with `thread_c` threads, computing all
+// that the table operations extract from the k-mer windows, without the table:
+// the canonical k-mer, its checksum, and its minimizer hash and coordinate.
+// Puts a digest of these at `digest`, and returns the elapsed time in seconds.
+double scan(const Fragments& F, const std::size_t thread_c, std::size_t& digest)
+{
+    std::vector<Padded<std::size_t>> D(thread_c, Padded<std::size_t>(0));
+    const auto t = run_parallel(F, thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+    {
+        // Mirrors `Kmer_Window`, so that none of its computations are optimized out.
+        Directed_Vertex<k> v(Kmer<k>{s});
+        Rolling_Hash<k, true> rh;
+        Min_Iterator<k, l> min_it;
+        rh.init(s), min_it.reset(s);
+
+        std::size_t d = 0;
+        std::size_t kmer_idx = 0;
+        while(true)
+        {
+            uint8_t m;
+            const auto c = std::max(rh.checksum<8>(), uint64_t(1));
+            const auto h = min_it.hash(m);
+            m = v.in_canonical_form() ? m : (m ^ Min_Iterator<k, l>::min_orientation_mask());
+            d += v.canonical().as_int() ^ h ^ (c << 8) ^ m;
+            if(kmer_idx + 1 == n)
+                break;
+
+            const auto ch = s[kmer_idx + k];
+            v.roll_forward(DNA_Utility::map_base(ch));
+            min_it.advance(ch);
+            rh.advance(ch);
+            kmer_idx++;
+        }
+
+        D[t_id].unwrap() += d;
+    });
+
+    digest = 0;
+    std::for_each(D.cbegin(), D.cend(), [&](const auto& d){ digest += d.unwrap(); });
+    return t;
+}
+
+
+// Measures the table operations per the configuration `cfg`, on a table that is
+// concurrent iff `mt_`, and that maps k-mers to `T_` values—a set if `T_` is
+// `void`.
+template <bool mt_, typename T_>
+void measure(const Config& cfg)
+{
+    typedef Streaming_Kmer_Hash_Table<k, mt_, T_, l> ht_t;
+    constexpr bool is_set = std::is_void_v<T_>;
+
+    print("k", k);
+    print("l", l);
+    print("table", is_set ? "set" : "map");
+    print("concurrent", mt_);
+    print("threads", cfg.thread_c);
+
+    const Fragments index(cfg.index);
+    report_input("index", cfg.index, index);
+
+    if(cfg.scan)
+    {
+        std::size_t digest;
+        const auto t = scan(index, cfg.thread_c, digest);
+        report_phase("scan", index.kmer_count(), t);
+        print("scan.digest", digest);
+    }
+
+    const auto init_cap = (cfg.init_cap > 0 ? cfg.init_cap : index.kmer_count());
+    ht_t M(init_cap, cfg.thread_c);
+    print("table.init_cap", init_cap);
+    print("table.init_capacity", M.capacity());
+
+    std::vector<typename ht_t::Token> token(cfg.thread_c);
+    std::for_each(token.begin(), token.end(), [&](auto& t){ t = M.register_user(); });
+
+    const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+    {
+        for_each_window(s, n, [&](const Kmer_Window<k, l>& w)
+        {
+            if constexpr(is_set)
+                M.insert(w, token[t_id]);
+            else
+                M.upsert(w, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
+        });
+    });
+
+    report_phase("build", index.kmer_count(), t_build);
+    print("table.capacity", M.capacity());
+    print("table.size", M.size());
+    print("table.overflow_size", M.overflow_size());
+
+    const auto [primary, secondary, overflow] = M.key_distribution();
+    print("table.primary_pct", primary);
+    print("table.secondary_pct", secondary);
+    print("table.overflow_pct", overflow);
+
+    for(std::size_t q = 0; q < cfg.query.size(); ++q)
+    {
+        const auto name = "query" + std::to_string(q);
+        const Fragments query(cfg.query[q]);
+        report_input(name, cfg.query[q], query);
+
+        std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
+        const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+        {
+            std::size_t h = 0;
+            for_each_window(s, n, [&](const Kmer_Window<k, l>& w){ h += static_cast<bool>(M.find(w)); });
+            H[t_id].unwrap() += h;
+        });
+
+        std::size_t hit_c = 0;
+        std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
+        report_phase(name, query.kmer_count(), t_query);
+        print(name + ".hits", hit_c);
+    }
+
+    report_memory();
+}
+
+
+// Returns the measurement configuration from the command line arguments
+// `argv`, exiting on invalid ones.
+Config parse_config(const int argc, char* argv[])
+{
+    const auto usage = [&]()
+    {
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--scan] [--threads <count>] [--seq] [--set] [--init-cap <count>]\n";
+        std::exit(EXIT_FAILURE);
+    };
+
+    Config cfg;
+    for(int i = 1; i < argc; ++i)
+    {
+        const std::string arg(argv[i]);
+        const bool has_val = (i + 1 < argc);
+        if(arg == "--index" && has_val)
+            cfg.index = argv[++i];
+        else if(arg == "--query" && has_val)
+            cfg.query.emplace_back(argv[++i]);
+        else if(arg == "--scan")
+            cfg.scan = true;
+        else if(arg == "--threads" && has_val)
+            cfg.thread_c = std::strtoull(argv[++i], nullptr, 10);
+        else if(arg == "--seq")
+            cfg.seq = true;
+        else if(arg == "--set")
+            cfg.set = true;
+        else if(arg == "--init-cap" && has_val)
+            cfg.init_cap = std::strtoull(argv[++i], nullptr, 10);
+        else
+            usage();
+    }
+
+    // The table supports up to 64 users, and no more than the hardware threads.
+    const std::size_t max_thread_c = std::min(64u, std::thread::hardware_concurrency());
+    if(cfg.index.empty() || cfg.thread_c == 0 || cfg.thread_c > max_thread_c || (cfg.seq && cfg.thread_c > 1))
+        usage();
+
+    return cfg;
+}
+
+
+int main(int argc, char* argv[])
+{
+    const auto cfg = parse_config(argc, argv);
+
+    if(cfg.set)
+        cfg.seq ? measure<false, void>(cfg) : measure<true, void>(cfg);
+    else
+        cfg.seq ? measure<false, uint64_t>(cfg) : measure<true, uint64_t>(cfg);
+
+    return 0;
+}
