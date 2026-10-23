@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <thread>
 #include <algorithm>
+#include <optional>
+#include <memory>
 
 
 // A table to benchmark is driven through an adapter type `Table_` that has:
@@ -41,6 +43,7 @@ struct Config
     bool seq = false;   // Whether to use the sequential variant of the table.
     bool set = false;   // Whether to use a set instead of a map of k-mer counts.
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
+    std::optional<std::string> perf;    // Raw hardware events to count per phase, as `name=rCODE` items, if any.
 };
 
 
@@ -50,7 +53,7 @@ inline Config parse_config(const int argc, char* argv[])
 {
     const auto usage = [&]()
     {
-        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--init-cap <count>]\n";
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--init-cap <count>] [--perf <events>]\n";
         std::exit(EXIT_FAILURE);
     };
 
@@ -71,6 +74,8 @@ inline Config parse_config(const int argc, char* argv[])
             cfg.set = true;
         else if(arg == "--init-cap" && has_val)
             cfg.init_cap = std::strtoull(argv[++i], nullptr, 10);
+        else if(arg == "--perf" && has_val)
+            cfg.perf = argv[++i];
         else
             usage();
     }
@@ -93,15 +98,21 @@ inline void reject(const std::string& reason)
 
 // Benchmarks the table `Table_` per the configuration `cfg`: builds it over the
 // k-mers of the index, and then looks up the k-mers of each query input in it.
+// Counts the configured hardware events per phase, if any.
 template <typename Table_>
 void bench(const Config& cfg)
 {
+    // The counters only follow the threads spawned after they are opened.
+    const auto perf = (cfg.perf ? std::make_unique<Perf_Group>(*cfg.perf) : nullptr);
+
     print("structure", Table_::name);
     print("k", k);
     Table_::report_params();
     print("table", Table_::is_set ? "set" : "map");
     print("concurrent", Table_::concurrent);
     print("threads", cfg.thread_c);
+    if(cfg.perf)
+        print("perf.events", *cfg.perf);
 
     const auto t_load_s = now();
     const Fragments index(cfg.index);
@@ -121,9 +132,12 @@ void bench(const Config& cfg)
     const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
     {
         M.insert(t_id, s, n);
-    });
+    }, perf.get());
 
     report_phase("build", index.kmer_count(), t_build);
+    if(perf)
+        report_perf("build", *perf);
+
     report_rss("build");
     print("table.capacity", M.capacity());
     print("table.size", M.size());
@@ -139,12 +153,14 @@ void bench(const Config& cfg)
         const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
         {
             H[t_id].unwrap() += M.find(t_id, s, n);
-        });
+        }, perf.get());
 
         std::size_t hit_c = 0;
         std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
         report_phase(name, query.kmer_count(), t_query);
         print(name + ".hits", hit_c);
+        if(perf)
+            report_perf(name, *perf);
     }
 
     report_memory();
