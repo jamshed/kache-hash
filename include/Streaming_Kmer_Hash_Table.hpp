@@ -154,7 +154,8 @@ private:
     std::size_t main_table_size() const;
 
     // Locks the `b`'th bucket for exclusive-write access in concurrent
-    // settings. `resize_` denotes whether the bucket requires to be locked for
+    // settings, i.e. in a concurrent table, or in a resize with multiple
+    // workers. `resize_` denotes whether the bucket requires to be locked for
     // resizing or not.
     template <bool resize_ = false> void lock(std::size_t b);
 
@@ -545,28 +546,29 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
 {
-    if constexpr(mt_)
-        while(true)
-        {
-            if constexpr(!resize_)
+    if constexpr(mt_ || resize_)
+        if(mt_ || resize_worker_c > 1)
+            while(true)
             {
-                if constexpr(instrument)
-                    Op_Stats::local().lock_bucket(&M[b]);
+                if constexpr(!resize_)
+                {
+                    if constexpr(instrument)
+                        Op_Stats::local().lock_bucket(&M[b]);
 
-                const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
-                if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
-                    break;
+                    const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
+                    if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                        break;
 
-                if constexpr(instrument)
-                    Op_Stats::local().fail_bucket_lock();
+                    if constexpr(instrument)
+                        Op_Stats::local().fail_bucket_lock();
+                }
+                else
+                {
+                    const auto exp_unlocked = M_new[b].min_coord[0] & ~Metadata::lock_mask;
+                    if(__sync_bool_compare_and_swap(&M_new[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                        break;
+                }
             }
-            else
-            {
-                const auto exp_unlocked = M_new[b].min_coord[0] & ~Metadata::lock_mask;
-                if(__sync_bool_compare_and_swap(&M_new[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
-                    break;
-            }
-        }
 }
 
 
@@ -574,7 +576,7 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock_ordered(const std::size_t p, const std::size_t q)
 {
-    if constexpr(mt_)
+    if constexpr(mt_ || resize_)
         KACHE_HASH_LIKELY(p != q) ?
             lock<resize_>(std::min(p, q)), lock<resize_>(std::max(p, q)) :
             lock<resize_>(p);
@@ -585,19 +587,20 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b)
 {
-    if constexpr(mt_)
-    {
-        if constexpr(!resize_)
+    if constexpr(mt_ || resize_)
+        if(mt_ || resize_worker_c > 1)
         {
-            assert(M[b].min_coord[0] & Metadata::lock_mask);
-            M[b].min_coord[0] &= ~Metadata::lock_mask;
+            if constexpr(!resize_)
+            {
+                assert(M[b].min_coord[0] & Metadata::lock_mask);
+                M[b].min_coord[0] &= ~Metadata::lock_mask;
+            }
+            else
+            {
+                assert(M_new[b].min_coord[0] & Metadata::lock_mask);
+                M_new[b].min_coord[0] &= ~Metadata::lock_mask;
+            }
         }
-        else
-        {
-            assert(M_new[b].min_coord[0] & Metadata::lock_mask);
-            M_new[b].min_coord[0] &= ~Metadata::lock_mask;
-        }
-    }
 }
 
 
@@ -605,7 +608,7 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <bool resize_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock_ordered(const std::size_t p, const std::size_t q)
 {
-    if constexpr(mt_)
+    if constexpr(mt_ || resize_)
         KACHE_HASH_LIKELY(p != q) ?
                 unlock<resize_>(std::max(p, q)), unlock<resize_>(std::min(p, q)) :
                 unlock<resize_>(p);
