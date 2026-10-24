@@ -190,19 +190,20 @@ private:
     val_t find_and_update(Kmer<k> key, uint8_t c, std::size_t i, const F& f) requires (is_map_);
 
     // Directly places the element `e` with checksum `c` and minimizer-
-    // coordinate `m` into the `i`'th bucket at index `j`.
+    // coordinate `m` into the `i`'th bucket at index `j`. The bucket's lock-bit
+    // in `min_coord[0]` is kept as is.
     void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
     {
-        T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m;
+        T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m | (M[i].min_coord[j] & Metadata::lock_mask);
         if constexpr(instrument)
             Op_Stats::local().place_key(Op_Stats::slot_write, &T[i * B + j]);
     }
 
     // Directly places the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket at index `j` of the new resized
-    // table.
+    // table. The bucket's lock-bit in `min_coord[0]` is kept as is.
     void place_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
-    { T_new[i * B + j] = e, M_new[i].cs[j] = c, M_new[i].min_coord[j] = m; }
+    { T_new[i * B + j] = e, M_new[i].cs[j] = c, M_new[i].min_coord[j] = m | (M_new[i].min_coord[j] & Metadata::lock_mask); }
 
     // Tries to insert the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket. It succeeds iff the key was absent
