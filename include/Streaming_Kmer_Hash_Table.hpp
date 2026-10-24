@@ -1103,7 +1103,7 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
                 if constexpr(instrument)
                     Op_Stats::local().reach(Op_Stats::overflow);
 
-                const auto r = ov->upsert(key, Overflow_Map_Val(c, m, val));
+                const auto r = ov->upsert(key, Overflow_Map_Val(c, m, val), [&](const Overflow_Map_Val& v){ return Overflow_Map_Val(v.cs, v.min_coord, f(v.val)); });
                 return !r ? null_val : val_t(r->val);
             }
 

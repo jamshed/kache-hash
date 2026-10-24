@@ -92,9 +92,9 @@ public:
     const T_val_* insert(T_key_ key, T_val_ val);
 
     // Inserts the key `key` with value `val` into the table if it is absent and
-    // returns `null_opt`. Otherwise updates the associated value to `val` and
-    // returns the old value.
-    std::optional<T_val_> upsert(T_key_ key, T_val_ val);
+    // returns `null_opt`. Otherwise updates the associated value `v` to `f(v)`
+    // and returns the old value.
+    template <typename F_> std::optional<T_val_> upsert(T_key_ key, T_val_ val, const F_& f);
 
     // Searches for `key` in the table and returns the address of the value
     // associated to it iff it is found. Returns `nullptr` otherwise.
@@ -214,7 +214,8 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val)
+template <typename F_>
+inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val, const F_& f)
 {
 #ifndef NDEBUG
     std::size_t tried_slots = 0;
@@ -252,7 +253,7 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
                 Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val)), Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             const auto old_val = T[i].val;
-            T[i].val = val;
+            T[i].val = f(old_val);
             lock[i].unlock();
 
             return old_val;
