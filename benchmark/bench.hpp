@@ -20,14 +20,17 @@
 
 
 // A table to benchmark is driven through an adapter type `Table_` that has:
-// - `name`, `is_set`, and `concurrent`: static constants for its name, whether
-//   it is a set rather than a map of k-mer counts, and whether it is safe for
-//   multiple user threads;
+// - `name`, `is_set`, `concurrent`, and `is_static`: static constants for its
+//   name, whether it is a set rather than a map of k-mer counts, whether it is
+//   safe for multiple user threads, and whether it is static—loaded from an
+//   index file rather than built;
 // - `report_params()`: a static function printing its parameters;
 // - `Table_(init_cap, thread_c)`: a constructor sizing it for `init_cap` k-mers
-//   and `thread_c` user threads;
+//   and `thread_c` user threads—in a static table, `Table_(path, thread_c)`,
+//   loading it from the index file at path `path`;
 // - `insert(t_id, s, n)`: adds the `n` k-mers of the sequence `s`, for the
-//   `t_id`'th user thread—incrementing their counts in a map;
+//   `t_id`'th user thread—incrementing their counts in a map; not in a static
+//   table;
 // - `find(t_id, s, n)`: returns the number of the `n` k-mers of the sequence `s`
 //   present in it, for the `t_id`'th user thread;
 // - `size()`: its number of k-mers;
@@ -116,24 +119,40 @@ void for_each_canonical(const char* const s, const std::size_t n, const F_& f)
 }
 
 
-// Benchmarks the table `Table_` per the configuration `cfg`: builds it over the
-// k-mers of the index, and then looks up the k-mers of each query input in it.
-// Counts the configured hardware events per phase, if any.
+// Looks up the k-mers of each query input of the configuration `cfg` in the
+// table `M`, a phase per input. Counts the events of the group `perf` per phase,
+// if provided.
 template <typename Table_>
-void bench(const Config& cfg)
+void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf)
 {
-    // The counters only follow the threads spawned after they are opened.
-    const auto perf = (cfg.perf ? std::make_unique<Perf_Group>(*cfg.perf) : nullptr);
+    for(std::size_t q = 0; q < cfg.query.size(); ++q)
+    {
+        const auto name = "query" + std::to_string(q);
+        const Fragments query(cfg.query[q]);
+        report_input(name, cfg.query[q], query);
 
-    print("structure", Table_::name);
-    print("k", k);
-    Table_::report_params();
-    print("table", Table_::is_set ? "set" : "map");
-    print("concurrent", Table_::concurrent);
-    print("threads", cfg.thread_c);
-    if(cfg.perf)
-        print("perf.events", *cfg.perf);
+        std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
+        const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+        {
+            H[t_id].unwrap() += M.find(t_id, s, n);
+        }, perf);
 
+        std::size_t hit_c = 0;
+        std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
+        report_phase(name, query.kmer_count(), t_query);
+        print(name + ".hits", hit_c);
+        if(perf)
+            report_perf(name, *perf);
+    }
+}
+
+
+// Builds the table `Table_` over the k-mers of the index of the configuration
+// `cfg`, and then queries it. Counts the events of the group `perf` per phase,
+// if provided.
+template <typename Table_>
+void build_and_query(const Config& cfg, Perf_Group* const perf)
+{
     const auto t_load_s = now();
     const Fragments index(cfg.index);
     const auto t_load_e = now();
@@ -153,7 +172,7 @@ void bench(const Config& cfg)
     const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
     {
         M.insert(t_id, s, n);
-    }, perf.get());
+    }, perf);
 
     report_phase("build", index.kmer_count(), t_build);
     if(perf)
@@ -165,25 +184,53 @@ void bench(const Config& cfg)
     print("table.size", M.size());
     M.report();
 
-    for(std::size_t q = 0; q < cfg.query.size(); ++q)
-    {
-        const auto name = "query" + std::to_string(q);
-        const Fragments query(cfg.query[q]);
-        report_input(name, cfg.query[q], query);
+    run_queries(cfg, M, perf);
+}
 
-        std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
-        const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
-        {
-            H[t_id].unwrap() += M.find(t_id, s, n);
-        }, perf.get());
 
-        std::size_t hit_c = 0;
-        std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
-        report_phase(name, query.kmer_count(), t_query);
-        print(name + ".hits", hit_c);
-        if(perf)
-            report_perf(name, *perf);
-    }
+// Loads the static table `Table_` from the index file of the configuration
+// `cfg`, and then queries it. Counts the events of the group `perf` per phase,
+// if provided.
+template <typename Table_>
+void load_and_query(const Config& cfg, Perf_Group* const perf)
+{
+    const auto t_init_s = now();
+    const Table_ M(cfg.index, cfg.thread_c);
+    const auto t_init_e = now();
+    print("index", cfg.index);
+    print("init.seconds", duration(t_init_e - t_init_s));
+
+    report_rss("build");    // The loaded table is a built one.
+    print("table.size", M.size());
+    M.report();
+
+    run_queries(cfg, M, perf);
+}
+
+
+// Benchmarks the table `Table_` per the configuration `cfg`: builds it over the
+// k-mers of the index—or loads it from the index, if static—and then looks up
+// the k-mers of each query input in it. Counts the configured hardware events
+// per phase, if any.
+template <typename Table_>
+void bench(const Config& cfg)
+{
+    // The counters only follow the threads spawned after they are opened.
+    const auto perf = (cfg.perf ? std::make_unique<Perf_Group>(*cfg.perf) : nullptr);
+
+    print("structure", Table_::name);
+    print("k", k);
+    Table_::report_params();
+    print("table", Table_::is_set ? "set" : "map");
+    print("concurrent", Table_::concurrent);
+    print("threads", cfg.thread_c);
+    if(cfg.perf)
+        print("perf.events", *cfg.perf);
+
+    if constexpr(Table_::is_static)
+        load_and_query<Table_>(cfg, perf.get());
+    else
+        build_and_query<Table_>(cfg, perf.get());
 
     report_memory();
 }

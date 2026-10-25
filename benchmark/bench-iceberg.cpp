@@ -33,6 +33,7 @@ public:
     static constexpr auto name = "iceberg"; // Name of the structure.
     static constexpr bool is_set = true;    // Whether a set.
     static constexpr bool concurrent = true;    // Whether safe for multiple user threads.
+    static constexpr bool is_static = false;    // Whether loaded from an index file rather than built.
 
     // Prints the parameters of the table.
     static void report_params() {}

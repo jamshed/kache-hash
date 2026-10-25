@@ -37,6 +37,7 @@ public:
     static constexpr auto name = "cbl"; // Name of the structure.
     static constexpr bool is_set = true;    // Whether a set.
     static constexpr bool concurrent = false;   // Whether safe for multiple user threads.
+    static constexpr bool is_static = false;    // Whether loaded from an index file rather than built.
 
     // Prints the parameters of the set.
     static void report_params() { print("cbl.prefix_bits", cbl_prefix_bits()); }
