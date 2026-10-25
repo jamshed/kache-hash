@@ -121,3 +121,43 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             DESTINATION bin
     )
 endif()
+
+
+# The CBL set's benchmark, if `CBL` is set. CBL is a Rust library; the crate in `cbl/` builds it, with a C interface,
+# into a static library. Building it needs `rustup`, for the nightly toolchain pinned in `cbl/rust-toolchain.toml`, and
+# libclang, which is looked up in `LIBCLANG_PATH` first. A libclang without its builtin headers, as anaconda's, needs
+# some through `BINDGEN_EXTRA_CLANG_ARGS`, e.g. `-isystem $(gcc -print-file-name=include)`.
+if(CBL)
+    find_program(CARGO cargo HINTS $ENV{CARGO_HOME}/bin $ENV{HOME}/.cargo/bin)
+    if(NOT CARGO)
+        message(FATAL_ERROR "Building `bench_cbl` requires `cargo`, from `rustup`.")
+    endif()
+
+    message("Build system will build the CBL library")
+    ExternalProject_Add(prj_cbl
+        SOURCE_DIR          ${CMAKE_CURRENT_SOURCE_DIR}/cbl
+        BUILD_IN_SOURCE     TRUE    # For `rustup` to pick the pinned toolchain.
+        CONFIGURE_COMMAND   ""
+        # Make's jobserver is not passed down; Cargo warns of it in `MAKEFLAGS` and `MFLAGS`.
+        BUILD_COMMAND       ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS RUSTFLAGS=-Ctarget-cpu=native
+                            ${CARGO} build --release --locked --target-dir ${CMAKE_CURRENT_BINARY_DIR}/cbl
+        BUILD_ALWAYS        TRUE    # Cargo tracks the crate's changes itself.
+        INSTALL_COMMAND     ${CMAKE_COMMAND} -E copy_if_different
+                            ${CMAKE_CURRENT_BINARY_DIR}/cbl/release/libbench_cbl.a ${EXT_LIB}
+    )
+
+    add_library(cbl STATIC IMPORTED)
+    set_target_properties(cbl PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libbench_cbl.a)
+    add_dependencies(cbl prj_cbl)
+
+    add_executable(bench_cbl bench-cbl.cpp)
+
+    target_include_directories(bench_cbl PRIVATE ${INCLUDE_DIR})
+    target_compile_options(bench_cbl PRIVATE ${COMPILE_FLAGS})
+    target_link_libraries(bench_cbl PRIVATE ${LINK_FLAGS})
+    target_link_libraries(bench_cbl PRIVATE cbl jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
+
+    install(TARGETS bench_cbl
+            DESTINATION bin
+    )
+endif()

@@ -30,7 +30,8 @@
 //   `t_id`'th user thread—incrementing their counts in a map;
 // - `find(t_id, s, n)`: returns the number of the `n` k-mers of the sequence `s`
 //   present in it, for the `t_id`'th user thread;
-// - `size()` and `capacity()`: its numbers of k-mers and of k-mer slots;
+// - `size()`: its number of k-mers;
+// - `capacity()`: its number of k-mer slots—only if it has slots;
 // - `report()`: prints its statistics.
 
 
@@ -145,7 +146,8 @@ void bench(const Config& cfg)
     Table_ M(init_cap, cfg.thread_c);
     const auto t_init_e = now();
     print("table.init_cap", init_cap);
-    print("table.init_capacity", M.capacity());
+    if constexpr(requires { M.capacity(); })
+        print("table.init_capacity", M.capacity());
     print("init.seconds", duration(t_init_e - t_init_s));
 
     const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
@@ -158,7 +160,8 @@ void bench(const Config& cfg)
         report_perf("build", *perf);
 
     report_rss("build");
-    print("table.capacity", M.capacity());
+    if constexpr(requires { M.capacity(); })
+        print("table.capacity", M.capacity());
     print("table.size", M.size());
     M.report();
 

@@ -35,6 +35,7 @@
 build/
 bin/
 external/
+target/
 
 # clangd
 .cache/
