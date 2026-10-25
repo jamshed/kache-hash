@@ -146,7 +146,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-# find_package(PFM REQUIRED)
 
 # Required external projects.
 include(ExternalProject)
@@ -155,34 +154,6 @@ set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
 set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
-
-#[[
-set(BENCHMARK_MIN_VERSION "v1.9.4")
-message("Build system will fetch and install Google Benchmark.")
-ExternalProject_Add(prj_benchmark
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/google/benchmark/archive/refs/tags/${BENCHMARK_MIN_VERSION}.tar.gz -o benchmark-${BENCHMARK_MIN_VERSION}.tar.gz &&
-                        tar -xzf benchmark-${BENCHMARK_MIN_VERSION}.tar.gz -C benchmark-${BENCHMARK_MIN_VERSION} --strip-components 1 &&
-                        rm benchmark-${BENCHMARK_MIN_VERSION}.tar.gz
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/benchmark-${BENCHMARK_MIN_VERSION}
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-                        -D BENCHMARK_DOWNLOAD_DEPENDENCIES=on -D CMAKE_BUILD_TYPE=Release -D BENCHMARK_ENABLE_LIBPFM=ON
-                        -S . -B "build"
-    BUILD_COMMAND       cmake --build "build" --config Release
-    INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
-                        cp -rf include/benchmark ${EXT_INCLUDE}
-)
-
-set(BENCHMARK_LIB ${EXT_LIB}/libbenchmark.a)
-
-add_library(benchmark STATIC IMPORTED)
-set_target_properties(benchmark PROPERTIES IMPORTED_LOCATION ${BENCHMARK_LIB})
-add_dependencies(benchmark prj_benchmark)
-#]]
 
 
 set(MALLOC_LIB "")
@@ -228,29 +199,6 @@ ExternalProject_Add(prj_parlaylib
     BUILD_COMMAND       ""
     INSTALL_COMMAND     cp -rf include/parlay ${EXT_INCLUDE}
 )
-
-
-#[[
-set(NTHASH_LIB "")
-set(NTHASH_MIN_VERSION "v2.3.0")
-message("Build system will fetch and install ntHash for benchmarking.")
-ExternalProject_Add(prj_nthash
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    git clone git@github.com:bcgsc/ntHash.git
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/ntHash
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   meson setup --buildtype=release --prefix=${CMAKE_SOURCE_DIR}/external/ build
-    BUILD_COMMAND       meson install -C build
-    INSTALL_COMMAND     ""
-)
-
-set(NTHASH_LIB ${EXT_LIB}/libnthash.a)
-add_library(nthash STATIC IMPORTED)
-set_target_properties(nthash PROPERTIES IMPORTED_LOCATION ${NTHASH_LIB})
-add_dependencies(nthash prj_nthash)
-#]]
 
 
 # Build type.
