@@ -95,16 +95,16 @@ install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo
 )
 
 
-# The iceberg table's benchmark, on Linux only. It builds the vendored iceberg sources as iceberg's own Makefile does by
-# default—vectorized, with block locks and resizes—and links them with the driver under LTO.
+# The iceberg table's benchmark, on Linux only. It builds the vendored iceberg sources, in `icebergHT/`, as iceberg's
+# own Makefile does by default—vectorized, with block locks and resizes—and links them with the driver under LTO.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    file(GLOB ICEBERG_SRC ${CMAKE_SOURCE_DIR}/src/icebergHT/*.c)
+    file(GLOB ICEBERG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/icebergHT/*.c)
     set_source_files_properties(${ICEBERG_SRC} PROPERTIES COMPILE_OPTIONS -w)  # Third-party sources; their warnings are not ours.
 
     add_executable(bench_iceberg bench-iceberg.cpp ${ICEBERG_SRC})
 
     target_compile_definitions(bench_iceberg PRIVATE USE_AVX ENABLE_BLOCK_LOCKING ENABLE_RESIZE)
-    target_include_directories(bench_iceberg PRIVATE ${INCLUDE_DIR} ${INCLUDE_DIR}/icebergHT)
+    target_include_directories(bench_iceberg PRIVATE ${INCLUDE_DIR})
     target_compile_options(bench_iceberg PRIVATE ${COMPILE_FLAGS})
     target_link_libraries(bench_iceberg PRIVATE ${LINK_FLAGS})
     target_link_libraries(bench_iceberg PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
