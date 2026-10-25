@@ -96,6 +96,25 @@ inline void reject(const std::string& reason)
 }
 
 
+// Applies `f` to the canonical form of each of the `n` k-mers of the sequence
+// `s`.
+template <typename F_>
+void for_each_canonical(const char* const s, const std::size_t n, const F_& f)
+{
+    Directed_Vertex<k> v(Kmer<k>{s});
+    std::size_t kmer_idx = 0;
+    while(true)
+    {
+        f(v.canonical());
+        if(kmer_idx + 1 == n)
+            break;
+
+        v.roll_forward(DNA_Utility::map_base(s[kmer_idx + k]));
+        kmer_idx++;
+    }
+}
+
+
 // Benchmarks the table `Table_` per the configuration `cfg`: builds it over the
 // k-mers of the index, and then looks up the k-mers of each query input in it.
 // Counts the configured hardware events per phase, if any.

@@ -216,51 +216,6 @@ if(NOT JEMALLOC_FOUND)
 endif()
 
 
-# Prepare the `boost` library. It provides a scalable concurrent hashmap.
-set(BOOST_MIN_VERSION "1.89.0")
-find_package(Boost ${BOOST_MIN_VERSION} CONFIG)
-if(BOOST_FOUND)
-    message("Found boost (v${BOOST_VERSION}) in the system at ${BOOST_LIBRARIES}")
-else()
-    message("Build system will fetch and install required Boost libraries")
-    ExternalProject_Add(prj_boost
-        DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-        DOWNLOAD_COMMAND    curl -k -L https://github.com/boostorg/boost/releases/download/boost-${BOOST_MIN_VERSION}/boost-${BOOST_MIN_VERSION}-cmake.tar.gz -o boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
-                            tar -xzf boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
-                            rm boost-${BOOST_MIN_VERSION}-cmake.tar.gz
-
-        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}
-        BUILD_IN_SOURCE     TRUE
-        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-        CONFIGURE_COMMAND   mkdir -p build && cd build &&
-                            cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-                            -D BOOST_INCLUDE_LIBRARIES=unordered
-                            -D CMAKE_BUILD_TYPE=Release
-                            -D CMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}/build/ ..
-        BUILD_COMMAND       cd build && cmake --build . --target install --config Release
-        INSTALL_COMMAND     cp -rf build/include/boost ${EXT_INCLUDE}/
-    )
-endif()
-
-
-# Prepare the `libcuckoo` library.
-set(LIBCUCKOO_MIN_VERSION "0.3.1")
-message("Build system will fetch and install the `libcuckoo` library")
-ExternalProject_Add(prj_libcuckoo
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/efficient/libcuckoo/archive/refs/tags/v${LIBCUCKOO_MIN_VERSION}.tar.gz -o libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
-                        tar -xzf libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
-                        rm libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/libcuckoo-${LIBCUCKOO_MIN_VERSION}
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       ""
-    INSTALL_COMMAND     cp -rf libcuckoo/ ${EXT_INCLUDE}/
-)
-
-
 # Prepare the `parlay` library—a parallel algorithms programming toolkit.
 message("Build system will fetch and install parlaylib")
 ExternalProject_Add(prj_parlaylib
