@@ -11,7 +11,8 @@
 
 # Runs `run.sh` on a whole Cascade Lake node of explorer: builds every benchmark natively in the job, from a copy of the
 # repository it is submitted from, runs them, and collates the outputs. The matrix variables of `run.sh` pass through;
-# `LAUNCH` defaults to the CPUs of socket 0, with memory preferred there.
+# `LAUNCH` defaults to the CPUs of socket 0, with memory preferred there—or with `MEMORY=interleave`, interleaved over
+# all sockets, for tables beyond a socket's memory.
 # Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <workload>...
 
 data_dir="${1}"
@@ -48,7 +49,9 @@ if ! { cmake -S "${build}/src" -B "${build}/build" -DCMAKE_BUILD_TYPE=Release -D
 fi
 
 s0=$(lscpu -p=NODE,SOCKET | grep -v "^#" | awk -F, '$2 == 0 { print $1 }' | sort -un | paste -sd,)
-export LAUNCH="${LAUNCH-numactl --cpunodebind=${s0} --preferred=${s0%%,*}}"
+memory="--preferred=${s0%%,*}"
+[ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
+export LAUNCH="${LAUNCH-numactl --cpunodebind=${s0} ${memory}}"
 
 "${build}/src/scripts/bench/run.sh" "${build}/build/benchmark" "${data_dir}" "${out_dir}" "$@"
 status=$?

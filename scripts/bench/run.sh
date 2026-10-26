@@ -7,10 +7,12 @@
 #   KINDS:   `set` and `map` (default: both);
 #   SIZINGS: `presized`, for the input's distinct k-mers, and `half`, for half of them (default: both);
 #   THREADS: the thread counts (default: 16); the sequential variants run at 1;
+#   THREADS_<table>: the thread counts of one table, e.g. `THREADS_sshash`, instead of THREADS;
 #   REPS:    the repetitions of each run (default: 3);
 #   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none).
 # The tables skip the configurations they do not support. Per input, the distinct k-mer count comes from a kache-hash
-# set run grown from a small capacity, and the SSHash index from `sshash-index.sh`; both are kept in <data-dir>.
+# set run grown from a small capacity, and the SSHash index from `sshash-index.sh`, both with the most threads of
+# THREADS; both are kept in <data-dir>.
 
 bin_dir="${1}"
 data_dir="${2}"
@@ -110,7 +112,7 @@ index_sshash()
 # Prints the run configurations of the matrix, as lines of table, kind, variant, sizing, and threads.
 configs()
 {
-    local table kind t variant sizings sizing
+    local table kind threads t variant sizings sizing
 
     for table in ${tables}; do
         case "${table}" in
@@ -121,8 +123,9 @@ configs()
             *) sizings="${SIZINGS}" ;;
         esac
 
+        threads="THREADS_${table//-/_}"
         for kind in ${KINDS}; do
-            for t in ${THREADS}; do
+            for t in ${!threads:-${THREADS}}; do
                 for variant in mt $([ "${t}" -eq 1 ] && echo seq); do
                     for sizing in ${sizings}; do
                         echo "${table} ${kind} ${variant} ${sizing} ${t}"
