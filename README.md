@@ -37,6 +37,23 @@ class Streaming_Kmer_Hash_Table
 - The `T` parameter defines the type of the associated value, if a *hash map* is used; it is set to `void` otherwise, i.e. a *hash set* is used.
 - The `l` parameter defines the minimizer size used in internal hash table operations, with `16 ≤ l < k`.
 
+## Benchmarks
+
+The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), CBL, and SSHash.
+Each builds its table over the *k*-mers of an input and queries it with other inputs, and prints its measurements as TSV.
+CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's eulertigs of the input by `scripts/bench/sshash-index.sh`.
+
+```bash
+cmake -S . -B build -DCBL=ON -DSSHASH=ON && cmake --build build -j
+scripts/fetch-data.sh data small
+scripts/bench/run.sh build/benchmark data out chr21 srr5833294-1m ecoli-32
+scripts/bench/collate.py out
+```
+
+`run.sh` takes its matrix of tables, workloads, sizings, thread counts, and repetitions from the environment, as its header describes.
+`collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree.
+On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <workload>...` builds and runs them on a whole Cascade Lake node.
+
 <!-- ## Citation
 
 If you use this library in academic work, please cite the associated research paper (pending publication). -->
