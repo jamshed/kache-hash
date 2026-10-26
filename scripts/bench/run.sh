@@ -91,14 +91,17 @@ count_distinct()
 }
 
 
-# Builds the SSHash index of the workload's input, if not built yet: its cost's last line marks it complete.
+# Builds the SSHash index of the workload's input, if not built yet: its cost's last line marks it complete. Sets
+# `indexed` to whether it is built.
 index_sshash()
 {
+    indexed=1
     if ! grep -q "^sshash.index_bytes" "${out}/index.cost.tsv" 2> /dev/null; then
         if ! GGCAT="${bin_dir}/ggcat" SSHASH="${bin_dir}/sshash" "$(dirname "${0}")/sshash-index.sh" \
                 "${data_dir}/${index}" "${out}/index" "${max_t}" "${SSHASH_M:-}"; then
-            echo "Failed building the SSHash index of ${index}" >&2
-            exit 1
+            echo "Failed building the SSHash index of ${index}; skipping its SSHash runs" >&2
+            failed=$(( failed + 1 ))
+            indexed=0
         fi
     fi
 }
@@ -187,12 +190,14 @@ for wl in "$@"; do
         count_distinct
     fi
 
+    indexed=0
     if configs | grep -q "^sshash "; then
         index_sshash
     fi
 
     for rep in $(seq 1 "${REPS}"); do   # Repetitions interleave, to spread drifts over configurations.
         while read -r table kind variant sizing t; do
+            [ "${table}" == "sshash" ] && (( ! indexed )) && continue
             run "${table}" "${kind}" "${variant}" "${sizing}" "${t}" "${rep}" < /dev/null
         done < <(configs)
     done

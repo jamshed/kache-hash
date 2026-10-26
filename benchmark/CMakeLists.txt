@@ -179,6 +179,7 @@ if(SSHASH)
         DOWNLOAD_COMMAND    git clone --recursive --depth 1 --branch v${GGCAT_VERSION}
                             https://github.com/algbio/ggcat.git ggcat-${GGCAT_VERSION}
         SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/ggcat-${GGCAT_VERSION}
+        PATCH_COMMAND       git apply ${CMAKE_CURRENT_SOURCE_DIR}/ggcat-eulertigs-underflow.patch  # A pending fix.
         BUILD_IN_SOURCE     TRUE    # For `rustup` to pick its toolchain.
         CONFIGURE_COMMAND   ""
         BUILD_COMMAND       ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS RUSTFLAGS=-Ctarget-cpu=native

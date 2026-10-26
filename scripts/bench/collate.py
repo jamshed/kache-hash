@@ -61,7 +61,9 @@ def main():
                 cfg = (wl, m["table"], m["kind"], m["variant"], m["sizing"], int(m["threads"]))
                 configs.setdefault(cfg, []).append(load(path))
             elif os.path.basename(path) == "index.cost.tsv":
-                costs[wl] = load(path)
+                cost = load(path)
+                if "sshash.index_bytes" in cost:    # Its last line; a failed build leaves it out.
+                    costs[wl] = cost
 
     if not configs:
         sys.exit("No runs found.")
