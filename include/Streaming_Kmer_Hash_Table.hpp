@@ -283,12 +283,45 @@ private:
         uint8_t m;  // Coordinate of its minimizer, oriented per the canonical form.
     };
 
+    static constexpr std::size_t line_slots = std::max<std::size_t>(1, L1_CACHE_LINE_SIZE / sizeof(flat_t));  // Number of slots in a cache line.
+    static constexpr std::size_t slot_dist = 16;    // How many k-mers ahead of their table operations the streaming
+                                                    // operations prefetch the slots of their keys in their primary
+                                                    // buckets, or else what they touch beyond.
+
     // Applies `op(d, q, i)` to the descriptor `d` of each k-mer of the
     // sequences `seqs[0..c)` of lengths `lens[0..c)`, the k-mer being at index
     // `i` of the `q`'th sequence, in order. Non-ACGT characters split the
-    // sequences. The k-mers of a stretch of ACGT bases are described in chunks.
-    template <typename Op_>
-    static void stream(const char* const* seqs, const std::size_t* lens, std::size_t c, const Op_& op);
+    // sequences. Applies `pre_meta(d)` to each descriptor some k-mers ahead of
+    // `op`, and `pre_slot(make)` `slot_dist` k-mers ahead, where `make()`
+    // returns the descriptor. Skipping a prefetch then skips making its
+    // descriptor. Iff `pipe_`, the stretches of ACGT bases go through one
+    // pipeline of the batch describer, else a pipeline each.
+    template <bool pipe_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+    static void stream(const char* const* seqs, const std::size_t* lens, std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
+
+    // Applies `stream`'s callbacks to the `n` k-mers of the ACGT stretch `t`,
+    // whose first k-mer has index `base` in the `q`'th sequence, describing
+    // them in chunks: the metadata of a chunk's buckets is prefetched one to
+    // two chunks ahead.
+    template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+    static void stream_batched(const char* t, std::size_t n, std::size_t q, std::size_t base, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
+
+    // A stretch of ACGT bases: at `t`, of `len` bases, and its first k-mer at
+    // index `base` of the `q`'th sequence.
+    struct Stretch
+    {
+        const char* t;
+        std::size_t len;
+        std::size_t q;
+        std::size_t base;
+    };
+
+    // Applies `stream`'s callbacks to the k-mers of the stretches `S[0..c)` in
+    // order, describing them in chunks as `stream_batched` does, but in one
+    // pipeline: the next stretch is described, and its metadata prefetched,
+    // while operating on the current one.
+    template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+    static void stream_stretches(const Stretch* S, std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
 
     // Returns the index of the slot holding the k-mer `key` with checksum `c`
     // in the `i`'th bucket, or `B` if it is absent there. Puts the index of the
@@ -300,6 +333,37 @@ private:
     // absent there. Puts the index of the bucket's first empty slot at `e`, `B`
     // if it is full.
     uint32_t probe(Kmer<k> key, uint8_t c, std::size_t i, cs_vec c_vec, uint32_t& e) const;
+
+    // Prefetches the metadata of the bucket of the k-mer `d`, with write
+    // intent iff `write_`.
+    template <bool write_> void prefetch_meta(const Kmer_Desc& d) const;
+
+    // Secondary buckets of the latest minimizer run seen by a prefetch stage.
+    struct Sec_Cache
+    {
+        uint64_t h = 0; // Minimizer hash of the run.
+        std::size_t cap = 0;    // Table capacity, in buckets, when they were computed; 0 if never.
+        std::size_t p, q;   // The secondary buckets.
+    };
+
+    // Returns the secondary buckets of the minimizer hash `h`, through the
+    // cache `sc`.
+    std::pair<std::size_t, std::size_t> secondaries(uint64_t h, Sec_Cache& sc) const;
+
+    // Prefetches the slot where an operation on the k-mer `d` likely ends in
+    // its primary bucket: its key's, by checksum, or else the first empty one
+    // iff `write_`, with write intent iff `write_`. If the operation goes
+    // beyond the bucket, prefetches its secondary buckets' metadata instead,
+    // computing them through the cache `sc`, and its overflow-table slot.
+    template <bool write_> void prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const;
+
+    // Prefetches what an operation on the k-mer `key` with minimizer hash `h`
+    // touches beyond its full primary bucket, as `prefetch_slot` does,
+    // computing the secondary buckets through the cache `sc`.
+    // NB: Out of line, as inlined it bloats the operations' loops by 12-18
+    // instructions per k-mer. It takes the k-mer and the hash by value, as a
+    // descriptor by reference would be kept in memory for the call.
+    template <bool write_> __attribute__((noinline, cold)) void prefetch_spill(Kmer<k> key, uint64_t h, Sec_Cache& sc) const;
 
     // Inserts the k-mer `key` with checksum `c` and coordinate `m` into the
     // overflow table iff it is absent there, with value `val` in a map; also in
@@ -797,9 +861,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-template <typename Op_>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const Op_& op)
+template <bool pipe_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
 {
+    constexpr std::size_t group_sz = 64;    // Most stretches gathered for one pipeline.
+    Stretch S[group_sz];
+    std::size_t s_c = 0;
     for(std::size_t q = 0; q < c; ++q)
     {
         const char* const seq = seqs[q];
@@ -810,16 +877,132 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* 
 
             if(e - s >= k)
             {
-                Kmer_Batch<k, l> kb;
-                typename Kmer_Batch<k, l>::Chunk ch;
-                kb.reset(seq + s, e - s - (k - 1));
-                for(std::size_t i = s; kb.next(ch); i += ch.n)
-                    for(std::size_t j = 0; j < ch.n; ++j)
-                        op(Kmer_Desc{Kmer<k>(ch.key[j]), ch.h[j], ch.c[j], ch.m[j]}, q, i + j);
+                if constexpr(!pipe_)
+                    stream_batched(seq + s, e - s - (k - 1), q, s, pre_meta, pre_slot, op);
+                else
+                {
+                    S[s_c++] = {seq + s, e - s, q, s};
+                    if(s_c == group_sz)
+                        stream_stretches(S, s_c, pre_meta, pre_slot, op), s_c = 0;
+                }
             }
 
             s = e + 1;
         }
+    }
+
+    if(s_c > 0)
+        stream_stretches(S, s_c, pre_meta, pre_slot, op);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_batched(const char* const t, const std::size_t n, const std::size_t q, const std::size_t base, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
+{
+    typedef Kmer_Batch<k, l> batch_t;
+    batch_t kb;
+    typename batch_t::Chunk ch[2];  // The chunk being operated on, and the next; each is refilled two chunks ahead once done.
+
+    const auto desc = [](const typename batch_t::Chunk& c, const std::size_t j){ return Kmer_Desc{Kmer<k>(c.key[j]), c.h[j], c.c[j], c.m[j]}; };
+    const auto fill = [&](typename batch_t::Chunk& c)
+    {
+        kb.next(c);
+        for(std::size_t j = 0; j < c.n; ++j)
+            if(j == 0 || c.h[j] != c.h[j - 1])
+                pre_meta(desc(c, j));
+    };
+
+    kb.reset(t, n);
+    fill(ch[0]), fill(ch[1]);
+    std::size_t first = base;   // Index of the current chunk's first k-mer.
+    for(std::size_t cur = 0; ch[cur].n > 0; cur ^= 1)
+    {
+        const auto& A = ch[cur];
+        const auto& A_next = ch[cur ^ 1];
+        for(std::size_t j = 0; j < A.n; ++j)
+        {
+            const auto x = j + slot_dist;
+            if(x < A.n)
+                pre_slot([&](){ return desc(A, x); });
+            else if(x - A.n < A_next.n)
+                pre_slot([&](){ return desc(A_next, x - A.n); });
+
+            op(desc(A, j), q, first + j);
+        }
+
+        first += A.n;
+        fill(ch[cur]);
+    }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_stretches(const Stretch* const S, const std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
+{
+    typedef Kmer_Batch<k, l> batch_t;
+    constexpr std::size_t depth = 3;    // Number of chunks in flight: the one operated on, and the next ones, whose metadata is being prefetched. Short stretches make short chunks, so two ahead keep the prefetches early enough.
+    batch_t kb;
+    typename batch_t::Chunk ch[depth];  // Each is refilled `depth` chunks ahead once done.
+    std::size_t ch_s[depth];    // Stretch of each chunk; chunks don't span stretches.
+    std::size_t ch_first[depth];    // Index of each chunk's first k-mer in its stretch.
+
+    std::size_t s_next = 0; // Next stretch to describe.
+    std::size_t s_cur = 0;  // Stretch being described.
+    std::size_t at = 0; // Number of k-mers of the stretch described.
+    bool active = false;    // Whether a stretch is being described.
+
+    const auto desc = [](const typename batch_t::Chunk& x, const std::size_t j){ return Kmer_Desc{Kmer<k>(x.key[j]), x.h[j], x.c[j], x.m[j]}; };
+    const auto fill = [&](const std::size_t x)
+    {
+        while(true)
+        {
+            if(!active)
+            {
+                if(s_next == c)
+                {
+                    ch[x].n = 0;
+                    return;
+                }
+
+                s_cur = s_next++, at = 0, active = true;
+                kb.reset(S[s_cur].t, S[s_cur].len - (k - 1));
+            }
+
+            if(kb.next(ch[x]) == 0)
+            {
+                active = false;
+                continue;
+            }
+
+            ch_s[x] = s_cur, ch_first[x] = at, at += ch[x].n;
+            for(std::size_t j = 0; j < ch[x].n; ++j)
+                if(j == 0 || ch[x].h[j] != ch[x].h[j - 1])
+                    pre_meta(desc(ch[x], j));
+            return;
+        }
+    };
+
+    for(std::size_t x = 0; x < depth; ++x)
+        fill(x);
+    for(std::size_t cur = 0; ch[cur].n > 0; cur = (cur + 1) % depth)
+    {
+        const auto& A = ch[cur];
+        const auto& A_next = ch[(cur + 1) % depth];
+        const auto& st = S[ch_s[cur]];
+        for(std::size_t j = 0; j < A.n; ++j)
+        {
+            const auto x = j + slot_dist;
+            if(x < A.n)
+                pre_slot([&](){ return desc(A, x); });
+            else if(x - A.n < A_next.n)
+                pre_slot([&](){ return desc(A_next, x - A.n); });
+
+            op(desc(A, j), st.q, st.base + ch_first[cur] + j);
+        }
+
+        fill(cur);
     }
 }
 
@@ -849,6 +1032,75 @@ std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::se
 {
     const auto idx_mask = cap_ - 1;
     return {XXH3_64bits_withSeed(&h, sizeof(h), 0) & idx_mask, XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63) & idx_mask};
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool write_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_meta(const Kmer_Desc& d) const
+{
+    const auto& meta = md(d.h & (cap_ - 1));
+    __builtin_prefetch(meta.cs, write_, 3);
+    if constexpr(write_ && sizeof(Metadata) > L1_CACHE_LINE_SIZE)  // Updates lock and write the coordinates too.
+        __builtin_prefetch(meta.min_coord, write_, 3);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::secondaries(const uint64_t h, Sec_Cache& sc) const
+{
+    if(sc.cap != cap_ || sc.h != h)
+    {
+        sc.h = h, sc.cap = cap_;
+        std::tie(sc.p, sc.q) = secondaries(h);
+    }
+
+    return {sc.p, sc.q};
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool write_>
+void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_spill(const Kmer<k> key, const uint64_t h, Sec_Cache& sc) const
+{
+    // The secondary buckets' metadata, once per minimizer run: with the overflow-table slot.
+    if(sc.h != h || sc.cap != cap_)
+    {
+        const auto [p, q] = secondaries(h, sc);
+        __builtin_prefetch(&md(p), write_, 3), __builtin_prefetch(&md(q), write_, 3);
+    }
+
+    ov->template prefetch<write_>(key);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool write_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const
+{
+    const auto i = d.h & (cap_ - 1);
+    const auto c_vec = load_cs(md(i));
+    const auto cand = eq_mask(c_vec, splat_cs(d.c));
+    if(!cand)
+    {
+        const auto empty = eq_mask(c_vec, zero_cs());
+        if(!empty)  // The operation goes beyond the primary bucket.
+            return prefetch_spill<write_>(d.key, d.h, sc);
+
+        // Updates predicted to insert prefetch the line after their predicted slot's too: a run's insertions cross
+        // into it, and with the insertion-frontier prefetches alone, their stores still filled the store buffer.
+        if constexpr(write_)
+        {
+            const auto e = std::countr_zero(empty);
+            __builtin_prefetch(&slot(i, e), write_, 3);
+            if(e + line_slots < B)
+                __builtin_prefetch(&slot(i, e + line_slots), write_, 3);
+        }
+
+        return;
+    }
+
+    __builtin_prefetch(&slot(i, std::countr_zero(cand)), write_, 3);
 }
 
 
@@ -956,6 +1208,12 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
             {
                 place(d, b, e);
                 cs_b = set_cs(cs_b, e, d.c);
+
+                // A run's insertions fill its bucket's lines in order, and the slot prefetches predict the run's
+                // first only: placing a key at a line's first slot prefetches the next line.
+                if(e % line_slots == 0 && e + line_slots < B)
+                    __builtin_prefetch(&slot(b, e + line_slots), 1, 3);
+
                 return inserted();
             }
 
@@ -986,19 +1244,25 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
 
     if constexpr(mt_)   table_lock.lock_shared(token.id);
 
-    stream(seqs, lens, c, [&](const Kmer_Desc& d, std::size_t, std::size_t)
-    {
-        if constexpr(mt_)
-            if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize.
-            {
-                release();
-                table_lock.unlock_shared(token.id);
-                table_lock.lock_shared(token.id);
-                in_run = false;
-            }
+    // A call's stretches go through one pipeline of the batch describer; once the slot prefetches cover their
+    // insertions, it gains build performance.
+    Sec_Cache sc_slot;
+    stream<true>(seqs, lens, c,
+        [&](const Kmer_Desc& d){ prefetch_meta<true>(d); },
+        [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
+        [&](const Kmer_Desc& d, std::size_t, std::size_t)
+        {
+            if constexpr(mt_)
+                if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize.
+                {
+                    release();
+                    table_lock.unlock_shared(token.id);
+                    table_lock.lock_shared(token.id);
+                    in_run = false;
+                }
 
-        apply(d);
-    });
+            apply(d);
+        });
 
     release();
     if constexpr(mt_)   table_lock.unlock_shared(token.id);
@@ -1025,28 +1289,42 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
         else                    return true;
     };
 
-    stream(seqs, lens, c, [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
-    {
-        if(!in_run || d.h != run_h)
-            in_run = true, run_h = d.h, sec = false, b = d.h & (cap_ - 1);
+    // Positive queries gain from prefetching their slots, and negative ones lose the work, so the slots are prefetched
+    // while the last query hit; queries tend to come in streaks. A call's stretches go through a pipeline each, one
+    // pipeline for all costs query performance.
+    bool hit = true;
+    Sec_Cache sc_slot;
+    stream<false>(seqs, lens, c,
+        [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
+        [&](const auto& make)
+        {
+            if(hit)
+                prefetch_slot<false>(make(), sc_slot);
+        },
+        [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
+        {
+            if(!in_run || d.h != run_h)
+                in_run = true, run_h = d.h, sec = false, b = d.h & (cap_ - 1);
 
-        uint32_t e;
-        if(const auto j = probe(d.key, d.c, b, e); j < B)
-            return g(seq_i, i, present(b, j));
-        if(e < B)
-            return g(seq_i, i, find_ret_t(null_val));
+            uint32_t e;
+            if(const auto j = probe(d.key, d.c, b, e); j < B)
+                return hit = true, g(seq_i, i, present(b, j));
+            if(e < B)
+                return hit = false, g(seq_i, i, find_ret_t(null_val));
 
-        if(!sec)
-            std::tie(p, q) = secondaries(d.h), sec = true;
+            if(!sec)
+                std::tie(p, q) = secondaries(d.h), sec = true;
 
-        uint32_t e_p, e_q;
-        if(const auto j = probe(d.key, d.c, p, e_p); j < B)
-            return g(seq_i, i, present(p, j));
-        if(const auto j = probe(d.key, d.c, q, e_q); j < B)
-            return g(seq_i, i, present(q, j));
+            uint32_t e_p, e_q;
+            if(const auto j = probe(d.key, d.c, p, e_p); j < B)
+                return hit = true, g(seq_i, i, present(p, j));
+            if(const auto j = probe(d.key, d.c, q, e_q); j < B)
+                return hit = true, g(seq_i, i, present(q, j));
 
-        g(seq_i, i, (e_p == B && e_q == B) ? find_in_overflow(d.key) : find_ret_t(null_val));
-    });
+            const auto r = (e_p == B && e_q == B) ? find_in_overflow(d.key) : find_ret_t(null_val);
+            hit = static_cast<bool>(r);
+            g(seq_i, i, r);
+        });
 }
 
 

@@ -100,6 +100,10 @@ public:
     // associated to it iff it is found. Returns `nullptr` otherwise.
     const T_val_* find(T_key_ key) const;
 
+    // Prefetches the first slot probed for `key`, and its lock iff `write_`,
+    // with write intent iff `write_`.
+    template <bool write_> void prefetch(T_key_ key) const;
+
     // Returns an iterator for the key-value pairs in the table that belongs to
     // a group of `it_count` iterators and has an ID `it_id` in the group.
     Iterator iterator(const std::size_t it_count, const std::size_t it_id) { return Iterator(*this, it_count, it_id); }
@@ -280,6 +284,17 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
     }
 
     return val_ptr;
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+template <bool write_>
+inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::prefetch(const T_key_ key) const
+{
+    const auto i = hash_to_idx(hash(key));
+    __builtin_prefetch(&T[i], write_, 3);
+    if constexpr(write_)
+        __builtin_prefetch(&lock[i], write_, 3);
 }
 
 
