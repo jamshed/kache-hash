@@ -20,7 +20,6 @@
 #include <optional>
 #include <utility>
 #include <type_traits>
-#include <cstring>
 #include <vector>
 #include <cstdlib>
 #include <thread>
@@ -110,25 +109,53 @@ private:
         Concurrent_Hash_Table<Kmer<k>, Overflow_Map_Val, Hash<Kmer<k>>> > ov_t; // The overflow table type.
 
 
-    flat_t* T;  // Flat table of size `cap x B`.
-    Metadata* M;    // Metadata table of the buckets.
+    // Storage of a table's buckets: each bucket holds the metadata of its
+    // keys, then their slots, so that an operation finds both on one page. The
+    // buckets sit on huge pages where supported.
+    class Store
+    {
+        // A bucket: the metadata of its keys, then their slots.
+        struct alignas(L1_CACHE_LINE_SIZE) Bucket
+        {
+            Metadata md;    // Metadata of the keys.
+            flat_t slot[B]; // The keys, with their values in a map.
+        };
+
+        Bucket* T = nullptr;    // The buckets.
+
+    public:
+
+        // Returns the metadata of the `i`'th bucket.
+        Metadata& md(const std::size_t i) const { return T[i].md; }
+
+        // Returns the `j`'th slot of the `i`'th bucket.
+        flat_t& slot(const std::size_t i, const std::size_t j) const { return T[i].slot[j]; }
+
+        // Allocates the storage of `n` buckets, zeroed, and maps it in
+        // parallel with `t_c` threads.
+        void allocate(std::size_t n, std::size_t t_c);
+
+        // Deallocates the storage of `n` buckets.
+        void deallocate(std::size_t n);
+    };
+
+    Store T;    // The table's `cap_` buckets.
     ov_t* ov;   // The overflow table.
 
-    flat_t* T_new;  // New flat table after a resize.
-    Metadata* M_new;    // New metadata table of buckets after a resize.
+    Store T_new;    // New buckets after a resize.
     ov_t* ov_new;    // New overflow table after a resize.
 
     // Returns the metadata of the `i`'th bucket.
-    Metadata& md(const std::size_t i) const { return M[i]; }
+    Metadata& md(const std::size_t i) const { return T.md(i); }
 
     // Returns the `j`'th slot of the `i`'th bucket.
-    flat_t& slot(const std::size_t i, const std::size_t j) const { return T[i * B + j]; }
+    flat_t& slot(const std::size_t i, const std::size_t j) const { return T.slot(i, j); }
 
     // Returns the metadata of the `i`'th new bucket in a resize.
-    Metadata& md_new(const std::size_t i) const { return M_new[i]; }
+    Metadata& md_new(const std::size_t i) const { return T_new.md(i); }
 
     // Returns the `j`'th slot of the `i`'th new bucket in a resize.
-    flat_t& slot_new(const std::size_t i, const std::size_t j) const { return T_new[i * B + j]; }
+    flat_t& slot_new(const std::size_t i, const std::size_t j) const { return T_new.slot(i, j); }
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
 
@@ -398,11 +425,7 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
       lf(lf)
     , cap_(ceil_pow_2(std::max<std::size_t>(1, (max_sz / lf) / B)))
     , resize_th(capacity() * lf)
-    , T(aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE))
-    , M(aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE))
-    , ov(new ov_t(capacity() * of_default))
-    , T_new(nullptr)
-    , M_new(nullptr)
+    , ov(new ov_t(capacity() * of_default, resize_worker_c))
     , ov_new(nullptr)
     , registered_thread_count(0)
     , approx_sz(0)
@@ -410,14 +433,32 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , checkpoint_step(step_for(resize_th))
     , resize_worker_c(resize_worker_c)
 {
-    std::memset(M, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
+    // Map the table up front, in parallel, rather than on first touches by the updates. The metadata comes zeroed:
+    // checksum `0` denotes absence of a key.
+    T.allocate(cap_, resize_worker_c);
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::~Streaming_Kmer_Hash_Table()
 {
-    deallocate(T), deallocate(M), delete(ov);
+    T.deallocate(cap_), delete(ov);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::allocate(const std::size_t n, const std::size_t t_c)
+{
+    T = allocate_huge<Bucket>(n);
+    parallel_prefault(T, n * sizeof(Bucket), t_c);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::deallocate(const std::size_t n)
+{
+    deallocate_huge(T, n);
+    T = nullptr;
 }
 
 
@@ -487,10 +528,15 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
         if(mt_ || resize_worker_c > 1)
             while(true)
             {
+                // A waiter spins on loads, pausing, and tries the CAS only once the bucket looks unlocked: spinning
+                // CASes would take the metadata line from the holder, which works on it; builds collapsed on hot
+                // buckets at 56–128 threads.
                 auto& w = (resize_ ? md_new(b) : md(b)).min_coord[0];
-                const auto exp_unlocked = w & ~Metadata::lock_mask;
-                if(__sync_bool_compare_and_swap(&w, exp_unlocked, exp_unlocked | Metadata::lock_mask))
+                const auto cur = __atomic_load_n(&w, __ATOMIC_RELAXED);
+                if(!(cur & Metadata::lock_mask) && __sync_bool_compare_and_swap(&w, cur, cur | Metadata::lock_mask))
                     break;
+
+                _mm_pause();
             }
 }
 
@@ -713,10 +759,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 {
     const auto old_cap = cap_;
     cap_ *= 2;
-    T_new = aligned_allocate<flat_t>(cap_ * B, L1_CACHE_LINE_SIZE);
-    M_new = aligned_allocate<Metadata>(cap_, L1_CACHE_LINE_SIZE);
-    ov_new = new ov_t(capacity() * of_default);
-    std::memset(M_new, 0, cap_ * sizeof(Metadata)); // Checksum `0` denotes absence of a key.
+    T_new.allocate(cap_, resize_worker_c);  // Zeroed: checksum `0` denotes absence of a key.
+    ov_new = new ov_t(capacity() * of_default, resize_worker_c);
 
     std::vector<std::thread> W;
     W.reserve(resize_worker_c);
@@ -743,9 +787,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
 
-    std::swap(M, M_new), std::swap(T, T_new), std::swap(ov, ov_new);
-    deallocate(M_new), deallocate(T_new), delete(ov_new);
-    M_new = nullptr, T_new = nullptr, ov_new = nullptr;
+    std::swap(T, T_new), std::swap(ov, ov_new);
+    T_new.deallocate(old_cap), delete(ov_new);
+    ov_new = nullptr;
 
     resize_th = capacity() * lf;
     checkpoint_step = step_for(resize_th);
