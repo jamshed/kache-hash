@@ -43,6 +43,11 @@ public:
 
     // Releases shared ownership of the lock from worker `w_id`.
     void unlock_shared(std::size_t w_id);
+
+    // Returns whether some worker owns the lock exclusively or is waiting to.
+    // Workers holding shared ownership across many operations poll this to
+    // yield to writers.
+    bool writer_pending() const { return writer.test(std::memory_order_relaxed); }
 };
 
 
