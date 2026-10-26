@@ -1,7 +1,6 @@
 
 #include "harness.hpp"
 #include "Streaming_Kmer_Hash_Table.hpp"
-#include "Op_Stats.hpp"
 #include "utility.hpp"
 
 #include <cstdint>
@@ -31,6 +30,7 @@ struct Config
     bool set = false;   // Whether to use a hash set instead of a hash map of k-mer counts.
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
     std::optional<std::string> perf;    // Raw hardware events to count per phase, as `name=rCODE` items, if any.
+    std::size_t reps = 1;   // Number of repetitions of the build and the queries, each on a fresh table.
 };
 
 
@@ -94,10 +94,6 @@ void measure(const Config& cfg, Perf_Group* const perf)
     print("threads", cfg.thread_c);
     if(cfg.perf)
         print("perf.events", *cfg.perf);
-    if constexpr(instrument)
-        print("instrument", instrument);
-    if constexpr(no_table_lock)
-        print("no_table_lock", no_table_lock);
 
     const Fragments index(cfg.index);
     report_input("index", cfg.index, index);
@@ -112,78 +108,76 @@ void measure(const Config& cfg, Perf_Group* const perf)
             report_perf("scan", *perf);
     }
 
-    const auto init_cap = (cfg.init_cap > 0 ? cfg.init_cap : index.kmer_count());
-    ht_t M(init_cap, cfg.thread_c);
-    print("table.init_cap", init_cap);
-    print("table.init_capacity", M.capacity());
-
-    std::vector<typename ht_t::Token> token(cfg.thread_c);
-    std::for_each(token.begin(), token.end(), [&](auto& t){ t = M.register_user(); });
-
-    if constexpr(instrument)
-        Op_Stats::reset();
-
-    const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
-    {
-        for_each_window(s, n, [&](const Kmer_Window<k, l>& w)
-        {
-            if constexpr(is_set)
-                M.insert(w, token[t_id]);
-            else
-                M.upsert(w, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
-        });
-    }, perf);
-
-    report_phase("build", index.kmer_count(), t_build);
-    if(perf)
-        report_perf("build", *perf);
-    if constexpr(instrument)
-        Op_Stats::total().report(std::cout, "inst.build.");
-
-    print("table.capacity", M.capacity());
-    print("table.size", M.size());
-    print("table.overflow_size", M.overflow_size());
-
-    const auto [primary, secondary, overflow] = M.key_distribution();
-    print("table.primary_pct", primary);
-    print("table.secondary_pct", secondary);
-    print("table.overflow_pct", overflow);
-    if constexpr(instrument)
-    {
-        print("table.overflow_capacity", M.overflow_capacity());
-        const auto occ = M.occupancy();
-        for(std::size_t s = 0; s < occ.size(); ++s)
-            print("table.occupancy." + std::to_string(s), occ[s]);
-    }
-
+    std::vector<std::unique_ptr<const Fragments>> query_own;    // Query inputs other than the index.
+    std::vector<const Fragments*> query;    // `query[q]` is the `q`'th query input.
     for(std::size_t q = 0; q < cfg.query.size(); ++q)
     {
-        const auto name = "query" + std::to_string(q);
-        const Fragments query(cfg.query[q]);
-        report_input(name, cfg.query[q], query);
-
-        std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
-        if constexpr(instrument)
-            Op_Stats::reset();
-
-        const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
-        {
-            std::size_t h = 0;
-            for_each_window(s, n, [&](const Kmer_Window<k, l>& w){ h += static_cast<bool>(M.find(w)); });
-            H[t_id].unwrap() += h;
-        }, perf);
-
-        std::size_t hit_c = 0;
-        std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
-        report_phase(name, query.kmer_count(), t_query);
-        print(name + ".hits", hit_c);
-        if(perf)
-            report_perf(name, *perf);
-        if constexpr(instrument)
-            Op_Stats::total().report(std::cout, "inst." + name + ".");
+        if(cfg.query[q] != cfg.index)
+            query_own.emplace_back(std::make_unique<const Fragments>(cfg.query[q]));
+        query.push_back(cfg.query[q] == cfg.index ? &index : query_own.back().get());
+        report_input("query" + std::to_string(q), cfg.query[q], *query.back());
     }
 
-    report_memory();
+    for(std::size_t rep = 0; rep < cfg.reps; ++rep)
+    {
+        print("rep", rep);
+
+        const auto init_cap = (cfg.init_cap > 0 ? cfg.init_cap : index.kmer_count());
+        const auto t_init_s = now();
+        ht_t M(init_cap, cfg.thread_c);
+        const auto t_init_e = now();
+        print("table.init_cap", init_cap);
+        print("table.init_capacity", M.capacity());
+        print("init.seconds", duration(t_init_e - t_init_s));
+
+        std::vector<typename ht_t::Token> token(cfg.thread_c);
+        std::for_each(token.begin(), token.end(), [&](auto& t){ t = M.register_user(); });
+
+        const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+        {
+            for_each_window(s, n, [&](const Kmer_Window<k, l>& w)
+            {
+                if constexpr(is_set)
+                    M.insert(w, token[t_id]);
+                else
+                    M.upsert(w, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
+            });
+        }, perf);
+
+        report_phase("build", index.kmer_count(), t_build);
+        if(perf)
+            report_perf("build", *perf);
+
+        print("table.capacity", M.capacity());
+        print("table.size", M.size());
+        print("table.overflow_size", M.overflow_size());
+
+        const auto [primary, secondary, overflow] = M.key_distribution();
+        print("table.primary_pct", primary);
+        print("table.secondary_pct", secondary);
+        print("table.overflow_pct", overflow);
+
+        for(std::size_t q = 0; q < query.size(); ++q)
+        {
+            const auto name = "query" + std::to_string(q);
+            std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
+            const auto t_query = run_parallel(*query[q], cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+            {
+                std::size_t h = 0;
+                for_each_window(s, n, [&](const Kmer_Window<k, l>& w){ h += static_cast<bool>(M.find(w)); });
+                H[t_id].unwrap() += h;
+            }, perf);
+
+            std::size_t hit_c = 0;
+            std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
+            report_phase(name, query[q]->kmer_count(), t_query);
+            print(name + ".hits", hit_c);
+            if(perf)
+                report_perf(name, *perf);
+        }
+
+        report_memory();    // With the table still in place.
+    }
 }
 
 
@@ -193,7 +187,7 @@ Config parse_config(const int argc, char* argv[])
 {
     const auto usage = [&]()
     {
-        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--scan] [--threads <count>] [--seq] [--set] [--init-cap <count>] [--perf <events>]\n";
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--scan] [--threads <count>] [--seq] [--set] [--init-cap <count>] [--perf <events>] [--reps <count>]\n";
         std::exit(EXIT_FAILURE);
     };
 
@@ -218,13 +212,15 @@ Config parse_config(const int argc, char* argv[])
             cfg.init_cap = std::strtoull(argv[++i], nullptr, 10);
         else if(arg == "--perf" && has_val)
             cfg.perf = argv[++i];
+        else if(arg == "--reps" && has_val)
+            cfg.reps = std::strtoull(argv[++i], nullptr, 10);
         else
             usage();
     }
 
     // The table supports up to 64 users, and no more than the hardware threads.
     const std::size_t max_thread_c = std::min(64u, std::thread::hardware_concurrency());
-    if(cfg.index.empty() || cfg.thread_c == 0 || cfg.thread_c > max_thread_c || (cfg.seq && cfg.thread_c > 1))
+    if(cfg.index.empty() || cfg.thread_c == 0 || cfg.reps == 0 || cfg.thread_c > max_thread_c || (cfg.seq && cfg.thread_c > 1))
         usage();
 
     return cfg;

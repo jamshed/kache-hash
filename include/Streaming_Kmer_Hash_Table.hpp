@@ -12,7 +12,6 @@
 #include "Minimizer_Iterator.hpp"
 #include "Concurrent_Hash_Table.hpp"
 #include "RW_Lock.hpp"
-#include "Op_Stats.hpp"
 #include "utility.hpp"
 
 #include <cstdint>
@@ -40,13 +39,6 @@ namespace kache_hash
 
 #define KACHE_HASH_LIKELY(cond)     __builtin_expect(cond, 1)
 #define KACHE_HASH_UNLIKELY(cond)   __builtin_expect(cond, 0)
-
-
-#ifdef NO_TABLE_LOCK
-constexpr bool no_table_lock = true;    // Whether concurrent updates skip the table lock, for measurement only: the table can't resize then.
-#else
-constexpr bool no_table_lock = false;   // Whether concurrent updates skip the table lock, for measurement only: the table can't resize then.
-#endif
 
 
 template <uint16_t k, uint16_t l> class Kmer_Window;
@@ -194,11 +186,7 @@ private:
     // coordinate `m` into the `i`'th bucket at index `j`. The bucket's lock-bit
     // in `min_coord[0]` is kept as is.
     void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
-    {
-        T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m | (M[i].min_coord[j] & Metadata::lock_mask);
-        if constexpr(instrument)
-            Op_Stats::local().place_key(Op_Stats::slot_write, &T[i * B + j]);
-    }
+    { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m | (M[i].min_coord[j] & Metadata::lock_mask); }
 
     // Directly places the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket at index `j` of the new resized
@@ -282,9 +270,6 @@ public:
     // Returns the size of the overflow table.
     std::size_t overflow_size() const { return ov->size();  }
 
-    // Returns the capacity of the overflow table.
-    std::size_t overflow_capacity() const { return ov->capacity(); }
-
     // Clears the table.
     void clear();
 
@@ -327,10 +312,6 @@ public:
     // Returns the percentages of keys in the table that are placed into their
     // primary bucket, their secondary buckets, and the overflow table.
     std::tuple<double, double, double> key_distribution() const;
-
-    // Returns the histogram of the bucket sizes: its `s`'th entry is the number
-    // of buckets holding `s` keys.
-    std::vector<std::size_t> occupancy() const;
 
     // Serializes the table to the stream `os`.
     // void serialize(std::ofstream& os) const;
@@ -552,15 +533,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
             {
                 if constexpr(!resize_)
                 {
-                    if constexpr(instrument)
-                        Op_Stats::local().lock_bucket(&M[b]);
-
                     const auto exp_unlocked = M[b].min_coord[0] & ~Metadata::lock_mask;
                     if(__sync_bool_compare_and_swap(&M[b].min_coord[0], exp_unlocked, exp_unlocked | Metadata::lock_mask))
                         break;
-
-                    if constexpr(instrument)
-                        Op_Stats::local().fail_bucket_lock();
                 }
                 else
                 {
@@ -629,18 +604,12 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, const uint8_t c, const std::size_t i) const -> find_ret_t
 {
     assert(i < cap_);
-    if constexpr(instrument)
-        Op_Stats::local().touch(Op_Stats::meta, &M[i]);
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
     const auto cmp = eq_mask(c_vec, query);
 
     const auto j = cmp ? __builtin_ctz(cmp) : 0;
-    if constexpr(instrument)
-        if(M[i].cs[j])
-            Op_Stats::local().read_key(&T[i * B + j], cmp != 0, key_equals(T[i * B + j], key));
-
     if(M[i].cs[j] && key_equals(T[i * B + j], key))
     {
         if constexpr(is_map_)   return T[i * B + j].second;
@@ -651,9 +620,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
     while(cmp_rem)
     {
         const auto j = __builtin_ctz(cmp_rem);
-        if constexpr(instrument)
-            Op_Stats::local().read_key(&T[i * B + j], true, key_equals(T[i * B + j], key));
-
         if(key_equals(T[i * B + j], key))
         {
             if constexpr(is_map_)   return T[i * B + j].second;
@@ -670,9 +636,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer<k> key, co
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
-    if constexpr(instrument)
-        Op_Stats::local().reach(Op_Stats::overflow);
-
     if constexpr(is_set_)
         return ov->find(key);
     else
@@ -688,8 +651,6 @@ template <typename F, typename V>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer<k> key, const uint8_t c, const std::size_t i, const F& f) -> val_t requires (is_map_)
 {
     assert(i < cap_);
-    if constexpr(instrument)
-        Op_Stats::local().touch(Op_Stats::meta, &M[i]);
 
     const auto c_vec = _mm256_load_si256(reinterpret_cast<const __m256i*>(M[i].cs));
     const auto query = _mm256_set1_epi8(static_cast<char>(c));
@@ -698,9 +659,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_and_update(const Kmer
     while(cmp)
     {
         const auto j = __builtin_ctz(cmp);
-        if constexpr(instrument)
-            Op_Stats::local().read_key(&T[i * B + j], true, key_equals(T[i * B + j], key));
-
         if(key_equals(T[i * B + j], key))
         {
             const auto prev_val = T[i * B + j].second;
@@ -808,12 +766,9 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
 
-    if constexpr(instrument)
-        Op_Stats::local().begin_op(Op_Stats::update, h);
-
-    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = insert(w.v.canonical(), c, h, m);
-    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -838,12 +793,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
 
-    if constexpr(instrument)
-        Op_Stats::local().begin_op(Op_Stats::update, h);
-
-    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = insert(std::make_pair(w.v.canonical(), val), c, h, m);
-    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -869,12 +821,9 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer_Window<k
     const auto h = w.min_it.hash(m);
     m = w.v.in_canonical_form() ? m : (m ^ min_orientation_mask);
 
-    if constexpr(instrument)
-        Op_Stats::local().begin_op(Op_Stats::update, h);
-
-    if constexpr(mt_ && !no_table_lock)   table_lock.lock_shared(token.id);
+    if constexpr(mt_)   table_lock.lock_shared(token.id);
     const auto r = upsert(w.v.canonical(), c, h, m, f, val);
-    if constexpr(mt_ && !no_table_lock)   table_lock.unlock_shared(token.id);
+    if constexpr(mt_)   table_lock.unlock_shared(token.id);
 
     auto& cp = checkpoint[token.id].unwrap();
     cp -= (r == null_val);
@@ -903,9 +852,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
         return v;
     else
     {
-        if constexpr(instrument)
-            Op_Stats::local().reach(Op_Stats::secondary);
-
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
         const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
@@ -954,9 +900,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert(const flat_t& x, co
             else
             {
                 unlock_ordered(p, q);
-                if constexpr(instrument)
-                    Op_Stats::local().reach(Op_Stats::overflow);
-
                 if constexpr(is_set_)
                     return ov->insert(x, Overflow_Set_Val(c, m));
                 else
@@ -986,11 +929,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
 
     const auto b = h & idx_mask;
     if(try_insert_at_resize(x, c, m, b))
-    {
-        if constexpr(instrument)
-            Op_Stats::local().reinsert_key(Op_Stats::primary);
         return;
-    }
 
     const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
     const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
@@ -1016,22 +955,15 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     {
         place_at_resize(x, c, m, p, sz_p);
         unlock_ordered<true>(p, q);
-        if constexpr(instrument)
-            Op_Stats::local().reinsert_key(Op_Stats::secondary);
     }
     else if(sz_q < B)
     {
         place_at_resize(x, c, m, q, sz_q);
         unlock_ordered<true>(p, q);
-        if constexpr(instrument)
-            Op_Stats::local().reinsert_key(Op_Stats::secondary);
     }
     else
     {
         unlock_ordered<true>(p, q);
-        if constexpr(instrument)
-            Op_Stats::local().reinsert_key(Op_Stats::overflow);
-
         if constexpr(is_set_)
             ov_new->insert(x, Overflow_Set_Val(c, m));
         else
@@ -1052,9 +984,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
         return old_val;
     else
     {
-        if constexpr(instrument)
-            Op_Stats::local().reach(Op_Stats::secondary);
-
         // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
         const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
         const auto h_2 = XXH3_64bits_withSeed(&h, sizeof(h), 1llu << 63);
@@ -1100,9 +1029,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
             else
             {
                 unlock_ordered(p, q);
-                if constexpr(instrument)
-                    Op_Stats::local().reach(Op_Stats::overflow);
-
                 const auto r = ov->upsert(key, Overflow_Map_Val(c, m, val), [&](const Overflow_Map_Val& v){ return Overflow_Map_Val(v.cs, v.min_coord, f(v.val)); });
                 return !r ? null_val : val_t(r->val);
             }
@@ -1116,12 +1042,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::upsert(const Kmer<k> key, 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 {
-    if constexpr(mt_ && no_table_lock)
-    {
-        std::cerr << "A concurrent table can't resize without the table lock, which this build skips. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
     if constexpr(mt_)   table_lock.lock();
 
     if(approx_sz >= resize_th)
@@ -1177,8 +1097,6 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
     const auto t_e = now();
     (void)t_s, (void)t_e;
-    if constexpr(instrument)
-        Op_Stats::local().resize_table(t_e - t_s);
     // std::cerr << "Resize is triggered at size: " << size() << "; main table size: " << main_table_size() << "; overflow size: " << overflow_size() << "\n";
     // std::cerr << "Time taken: " << duration(t_e - t_s) << "s.\n";
 }
@@ -1191,9 +1109,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
     const auto h = w.min_it.hash();
     const auto idx_mask = cap_ - 1;
 
-    if constexpr(instrument)
-        Op_Stats::local().begin_op(Op_Stats::query, h);
-
     const auto b = h & idx_mask;
     const auto c = std::max(w.rh.template checksum<8>(), uint64_t(1));    // Avoiding checksum 0 by overloading checksum 1.
     if(const auto r = find(key, c, b))
@@ -1201,9 +1116,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const Kmer_Window<k, 
 
     if(bucket_size(b) < B)
         return null_val;
-
-    if constexpr(instrument)
-        Op_Stats::local().reach(Op_Stats::secondary);
 
     // TODO: get the following hashes from the minimizer iterator (rolling hashes), instead of full-blown xxHash computations.
     const auto h_1 = XXH3_64bits_withSeed(&h, sizeof(h), 0);
@@ -1234,17 +1146,6 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::key_distribution() const -
     const auto o = overflow_size();
     const auto sz = p + s + o;
     return {p * 100.0 / sz, s * 100.0 / sz, o * 100.0 / sz};
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::occupancy() const -> std::vector<std::size_t>
-{
-    std::vector<std::size_t> H(B + 1, 0);
-    for(std::size_t b = 0; b < cap_; ++b)
-        H[bucket_size(b)]++;
-
-    return H;
 }
 
 

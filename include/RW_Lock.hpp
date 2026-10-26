@@ -4,7 +4,6 @@
 
 
 
-#include "Op_Stats.hpp"
 #include "utility.hpp"
 
 #include <cstddef>
@@ -58,9 +57,6 @@ inline constexpr RW_Lock<N>::RW_Lock():
 template <std::size_t N>
 inline void RW_Lock<N>::lock()
 {
-    if constexpr(instrument)
-        Op_Stats::local().begin_writer_lock();
-
     while(writer.test_and_set(std::memory_order_acquire))   // Wait until the ongoing write finishes, if any.
         writer.wait(true, std::memory_order_acquire);
 
@@ -71,9 +67,6 @@ inline void RW_Lock<N>::lock()
         std::for_each(reader, reader + N, [&](const auto& r){ read = read || r.unwrap(); });
     }
     while(read);
-
-    if constexpr(instrument)
-        Op_Stats::local().end_writer_lock();
 }
 
 
@@ -96,29 +89,17 @@ inline void RW_Lock<N>::lock_shared(const std::size_t w_id)
     {
         while(writer.test(std::memory_order_acq_rel))   // Some write is either (1) ongoing, in that case wait until it finishes; or
                                                         // (2) has signalled that it trying to start, in that case prioritize the write.
-        {
-            if constexpr(instrument)
-                Op_Stats::local().wait_for_writer();
-
             writer.wait(true, std::memory_order_acq_rel);
-        }
         // Write(s) have finished.
 
         r = true;   // Declare intention to read. It is unsafe to exit right away, as some other writer may have started in between.
         if(writer.test(std::memory_order_acq_rel)) // A new writer has, observably, sneaked in in the mean time of read-declaration; unsafe to grab a read-lock.
-        {
-            if constexpr(instrument)
-                Op_Stats::local().retract_reader();
-
             r = false;  // Give up the read-intention until the new writer finishes; unfair—continual stream of writers will starve readers.
                         // A strategy to prioritize reads can starve the writes, but writes typically being much more infrequent, read-starvation is preferable.
                         // A fair policy requires shared counters, incurring performance-hits.
-        }
     }
 
     // Committed to reading.
-    if constexpr(instrument)
-        Op_Stats::local().lock_reader();
 }
 
 

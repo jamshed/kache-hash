@@ -32,7 +32,7 @@
 *.app
 
 # Build and binaries
-build/
+build*/
 bin/
 external/
 target/

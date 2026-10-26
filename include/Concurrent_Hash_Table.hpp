@@ -5,7 +5,6 @@
 
 
 #include "Spin_Lock.hpp"
-#include "Op_Stats.hpp"
 #include "utility.hpp"
 #include "xxHash/xxhash.h"
 
@@ -180,13 +179,9 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
         assert(++tried_slots <= capacity_);
-        if constexpr(instrument)
-            Op_Stats::local().probe_overflow(&T[i].key);
 
         if(T[i].key == empty_key_)
         {
-            if constexpr(instrument)
-                Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             if(T[i].key == empty_key_)
                 T[i].key = key, T[i].val = val,
@@ -194,19 +189,11 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
             lock[i].unlock();
 
             if(success)
-            {
-                if constexpr(instrument)
-                    Op_Stats::local().place_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val));
                 return nullptr;
-            }
         }
 
         if(T[i].key == key)
-        {
-            if constexpr(instrument)
-                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val));
             return &T[i].val;
-        }
     }
 
     return &T[0].val;   // Placeholder.
@@ -226,13 +213,9 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
         assert(++tried_slots <= capacity_);
-        if constexpr(instrument)
-            Op_Stats::local().probe_overflow(&T[i].key);
 
         if(T[i].key == empty_key_)
         {
-            if constexpr(instrument)
-                Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             if(T[i].key == empty_key_)
                 T[i].key = key, T[i].val = val,
@@ -240,17 +223,11 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
             lock[i].unlock();
 
             if(success)
-            {
-                if constexpr(instrument)
-                    Op_Stats::local().place_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val));
                 return std::nullopt;
-            }
         }
 
         if(T[i].key == key)
         {
-            if constexpr(instrument)
-                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val)), Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock();
             const auto old_val = T[i].val;
             T[i].val = f(old_val);
@@ -274,13 +251,8 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
     const T_val_* val_ptr = nullptr;
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
-        if constexpr(instrument)
-            Op_Stats::local().probe_overflow(&T[i].key);
-
         if(T[i].key == key)
         {
-            if constexpr(instrument)
-                Op_Stats::local().find_key(Op_Stats::overflow_line, &T[i].val, sizeof(T[i].val)), Op_Stats::local().lock_overflow(&lock[i]);
             lock[i].lock(); // To ensure that some other thread is not updating this val atm—a stable value is guaranteed.
             val_ptr = &T[i].val;
             lock[i].unlock();

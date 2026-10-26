@@ -37,8 +37,6 @@ class Streaming_Kmer_Hash_Table
 - The `T` parameter defines the type of the associated value, if a *hash map* is used; it is set to `void` otherwise, i.e. a *hash set* is used.
 - The `l` parameter defines the minimizer size used in internal hash table operations, with `16 ≤ l < k`.
 
-Some examples of the hash table usage are provided at the file `examples/example.cpp`.
-
 <!-- ## Citation
 
 If you use this library in academic work, please cite the associated research paper (pending publication). -->
