@@ -2,7 +2,7 @@
 # Builds test/check.cpp and test/describers.cpp locally, as x86_64 (under Rosetta on Apple silicon), and runs the
 # describers' check on E. coli, chr21 and 1M SRR5833294 reads, then the tables' correctness matrix: E. coli and chr21,
 # each against the other as negatives; sets and maps; sequential, and concurrent at 1 and all threads; presized, and
-# resizing from 100,000 and from 1,000 k-mers; whole fragments, raw sequences, and ragged batches.
+# resizing from 100,000 and from 10 k-mers; whole fragments, raw sequences, and ragged batches.
 # Usage: test/check.sh [quick] [extra compile flags...]; quick skips chr21 and the reads.
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,7 +21,7 @@ run() { "${out}/check" "$@" || fail=$((fail + 1)); }
 for g in ecoli chr21; do
     neg=chr21; [ ${g} = chr21 ] && neg=ecoli
     [ ${quick} = 1 ] && [ ${g} = chr21 ] && continue
-    for cap in 0 100000 1000; do
+    for cap in 0 100000 10; do
         for mode in stream raw multi; do
             run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" seq-set 1 ${cap} ${mode}
             run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" seq-map 1 ${cap} ${mode}

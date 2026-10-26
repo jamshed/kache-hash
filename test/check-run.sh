@@ -17,7 +17,7 @@ done
 fail=0; c=0
 ${b}/describers ${data}/ecoli.fa.gz ${data}/chr21.fa.gz ${data}/SRR5833294.1M.fastq.gz || fail=$((fail + 1))
 run() { c=$((c + 1)); ${b}/check "$@" > ${b}/last.txt 2>&1 || { fail=$((fail + 1)); cat ${b}/last.txt; }; }
-for cap in 0 100000 1000; do
+for cap in 0 100000 10; do
     for mode in stream raw multi; do
         run ${data}/ecoli.fa.gz ${data}/chr21.fa.gz seq-set 1 ${cap} ${mode}
         run ${data}/ecoli.fa.gz ${data}/chr21.fa.gz seq-map 1 ${cap} ${mode}
