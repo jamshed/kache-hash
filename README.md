@@ -37,6 +37,32 @@ class Streaming_Kmer_Hash_Table
 - The `T` parameter defines the type of the associated value, if a *hash map* is used; it is set to `void` otherwise, i.e. a *hash set* is used.
 - The `l` parameter defines the minimizer size used in internal hash table operations, with `16 ≤ l < k`.
 
+The table operates on whole sequences: an operation goes through all the *k*-mers of a sequence, or of a batch of sequences such as reads, and characters other than `ACGT` (in either case) split the sequences.
+Each user thread registers once for a token, which its updates take:
+
+```cpp
+#include "Streaming_Kmer_Hash_Table.hpp"
+
+using namespace kache_hash;
+
+// A concurrent map from 31-mers to their counts, sized for 100M k-mers; it grows as needed.
+Streaming_Kmer_Hash_Table<31, true, uint64_t> counts(100'000'000);
+const auto token = counts.register_user();  // One per user thread.
+
+counts.upsert(seq, len, [](const uint64_t c){ return c + 1; }, 1, token);   // Count the k-mers of `seq`.
+counts.upsert(seqs, lens, n, [](const uint64_t c){ return c + 1; }, 1, token);  // Of `n` sequences at once.
+
+counts.find(seq, len, [&](const std::size_t i, const std::optional<uint64_t>& c){ /* The k-mer at `seq + i`. */ });
+const auto present = counts.count(seq, len);    // Number of k-mers of `seq` in the map.
+
+// A set of 31-mers.
+Streaming_Kmer_Hash_Table<31, true> set(100'000'000);
+const auto set_token = set.register_user();
+const auto inserted = set.insert(seq, len, set_token);  // Number of k-mers newly inserted.
+```
+
+Queries must not overlap updates that can resize the table.
+
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), CBL, and SSHash.
