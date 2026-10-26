@@ -78,7 +78,7 @@ scripts/bench/collate.py out
 
 `run.sh` takes its matrix of tables, workloads, sizings, thread counts, and repetitions from the environment, as its header describes.
 `collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree.
-On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <workload>...` builds and runs them on a whole Cascade Lake node.
+On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`.
 
 <!-- ## Citation
 

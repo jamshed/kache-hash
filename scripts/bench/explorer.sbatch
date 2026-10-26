@@ -9,27 +9,30 @@
 #SBATCH --exclude=d3230,d3231,d3204,d3233,d4041,d4100,d3091,d3092,d3093,d3094
 #SBATCH --output=bench-%j.out
 
-# Runs `run.sh` on a whole Cascade Lake node of explorer: builds every benchmark natively in the job, from a copy of the
-# repository it is submitted from, runs them, and collates the outputs. The matrix variables of `run.sh` pass through;
-# `LAUNCH` defaults to the CPUs of socket 0, with memory preferred there—or with `MEMORY=interleave`, interleaved over
-# all sockets, for tables beyond a socket's memory.
-# Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <workload>...
+# Runs a plan of benchmarks on a whole node of explorer: builds every benchmark natively in the job, from a copy of the
+# repository it is submitted from, runs `run.sh` for each line of the plan, and collates the outputs. A plan's line is
+# the variables of a `run.sh` matrix, as assignments, and then its workloads. Besides those of `run.sh`, the variables
+# include `MEMORY`: by default, `LAUNCH` binds to the CPUs of socket 0, with memory preferred there—or with
+# `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory; and `TIMEOUT`, a limit of each
+# run, e.g. `3h`. The job exits unless the node's CPU model contains `CPU_MODEL` (default: Platinum 8276).
+# Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>
 
 data_dir="${1}"
 out_dir="${2}"
+plan="${3}"
 
 if [ $# -lt 3 ]; then
-    echo "Usage: sbatch $0 <data-dir> <out-dir> <workload>..." >&2
+    echo "Usage: sbatch $0 <data-dir> <out-dir> <plan>" >&2
     exit 1
 fi
-
-shift 2
 
 module load cmake/3.30.2
 export LIBCLANG_PATH=/shared/EL9/explorer/anaconda3/2024.06/lib # CBL's bindings need a libclang; the system has none.
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include)"  # That one lacks its builtin headers.
 
-lscpu | grep -q "Platinum 8276" || { echo "Not a Cascade Lake node: $(lscpu | grep '^Model name')"; exit 3; }
+cpu_model="${CPU_MODEL:-Platinum 8276}"
+model=$(lscpu | grep "^Model name")
+[[ "${model}" == *"${cpu_model}"* ]] || { echo "Not a ${cpu_model} node: ${model}"; exit 3; }
 
 build="/tmp/kache-hash-bench-${SLURM_JOB_ID}"   # Node-local, as concurrent jobs would clash in a shared one.
 mkdir -p "${out_dir}" "${build}"
@@ -49,12 +52,30 @@ if ! { cmake -S "${build}/src" -B "${build}/build" -DCMAKE_BUILD_TYPE=Release -D
 fi
 
 s0=$(lscpu -p=NODE,SOCKET | grep -v "^#" | awk -F, '$2 == 0 { print $1 }' | sort -un | paste -sd,)
-memory="--preferred=${s0%%,*}"
-[ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
-export LAUNCH="${LAUNCH-numactl --cpunodebind=${s0} ${memory}}"
+status=0
+while read -r line; do
+    [[ "${line}" =~ ^[[:space:]]*(#|$) ]] && continue
 
-"${build}/src/scripts/bench/run.sh" "${build}/build/benchmark" "${data_dir}" "${out_dir}" "$@"
-status=$?
+    echo "Running ${line}"
+    (
+        eval "set -- ${line}"
+        workloads=()
+        for arg in "$@"; do
+            if [[ "${arg}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                export "${arg}"
+            else
+                workloads+=("${arg}")
+            fi
+        done
+
+        memory="--preferred=${s0%%,*}"
+        [ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
+        export LAUNCH="${LAUNCH-${TIMEOUT:+timeout ${TIMEOUT} }numactl --cpunodebind=${s0} ${memory}}"
+
+        "${build}/src/scripts/bench/run.sh" "${build}/build/benchmark" "${data_dir}" "${out_dir}" "${workloads[@]}"
+    ) < /dev/null || status=1
+done < "${plan}"
+
 python3 "${build}/src/scripts/bench/collate.py" "${out_dir}" || status=1
 
 rm -rf "${build}"

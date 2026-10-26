@@ -60,7 +60,7 @@ def main():
             if m:
                 cfg = (wl, m["table"], m["kind"], m["variant"], m["sizing"], int(m["threads"]))
                 configs.setdefault(cfg, []).append(load(path))
-            elif os.path.basename(path) == "sshash-build.tsv":
+            elif os.path.basename(path) == "index.cost.tsv":
                 costs[wl] = load(path)
 
     if not configs:

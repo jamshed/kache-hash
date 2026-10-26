@@ -9,10 +9,11 @@
 #   THREADS: the thread counts (default: 16); the sequential variants run at 1;
 #   THREADS_<table>: the thread counts of one table, e.g. `THREADS_sshash`, instead of THREADS;
 #   REPS:    the repetitions of each run (default: 3);
-#   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none).
-# The tables skip the configurations they do not support. Per input, the distinct k-mer count comes from a kache-hash
+#   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none);
+#   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
+# The tables skip the configurations they do not support. Per workload, the distinct k-mer count comes from a kache-hash
 # set run grown from a small capacity, and the SSHash index from `sshash-index.sh`, both with the most threads of
-# THREADS; both are kept in <data-dir>.
+# THREADS; they are kept with the outputs, as `distinct.tsv` and `index.*`, so that each machine measures its own.
 
 bin_dir="${1}"
 data_dir="${2}"
@@ -72,39 +73,33 @@ workload()
 }
 
 
-# Sets `distinct` to the distinct k-mer count of the workload's input, counting it if not kept yet.
+# Sets `distinct` to the distinct k-mer count of the workload's input, counting it if not counted yet.
 count_distinct()
 {
-    local kept="${data_dir}/${base}.distinct"
-
-    if [ ! -s "${kept}" ]; then
+    if [ ! -s "${out}/distinct.tsv" ]; then
         echo "Counting the distinct k-mers of ${index}"
         if ! ${LAUNCH} "${bin_dir}/bench_kache_hash" --index "${data_dir}/${index}" --set --threads "${max_t}" \
-                --init-cap 1048576 > "${out}/distinct.tsv"; then
+                --init-cap 1048576 > "${out}/distinct.tsv.tmp"; then
             echo "Failed counting the distinct k-mers of ${index}" >&2
             exit 1
         fi
 
-        awk -F'\t' '$1 == "table.size" { print $2 }' "${out}/distinct.tsv" > "${kept}"
+        mv "${out}/distinct.tsv.tmp" "${out}/distinct.tsv"
     fi
 
-    distinct=$(cat "${kept}")
+    distinct=$(awk -F'\t' '$1 == "table.size" { print $2 }' "${out}/distinct.tsv")
 }
 
 
-# Builds the SSHash index of the workload's input, if not kept yet, and copies its cost to the output.
+# Builds the SSHash index of the workload's input, if not built yet: its cost's last line marks it complete.
 index_sshash()
 {
-    if [ ! -s "${data_dir}/${base}.sshash" ]; then
+    if ! grep -q "^sshash.index_bytes" "${out}/index.cost.tsv" 2> /dev/null; then
         if ! GGCAT="${bin_dir}/ggcat" SSHASH="${bin_dir}/sshash" "$(dirname "${0}")/sshash-index.sh" \
-                "${data_dir}/${index}" "${data_dir}/${base}" "${max_t}"; then
+                "${data_dir}/${index}" "${out}/index" "${max_t}" "${SSHASH_M:-}"; then
             echo "Failed building the SSHash index of ${index}" >&2
             exit 1
         fi
-    fi
-
-    if [ -s "${data_dir}/${base}.cost.tsv" ]; then
-        cp "${data_dir}/${base}.cost.tsv" "${out}/sshash-build.tsv"
     fi
 }
 
@@ -146,7 +141,7 @@ run()
     [ -s "${out}/${name}.tsv" ] && return
 
     if [ "${table}" == "sshash" ]; then
-        args+=(--index "${data_dir}/${base}.sshash")
+        args+=(--index "${out}/index.sshash")
     else
         args+=(--index "${data_dir}/${index}")
     fi
@@ -185,9 +180,6 @@ done
 
 for wl in "$@"; do
     workload "${wl}"
-    base="${index%.gz}"
-    base="${base%.fa}"
-    base="${base%.fastq}"
     out="${out_dir}/${wl}"
     mkdir -p "${out}"
 

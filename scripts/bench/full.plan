@@ -1,0 +1,13 @@
+# The full workloads, for one machine. A `run.sh` matrix per line: its variables, then its workloads.
+
+# Every dynamic table at 16 threads, presized and half-sized, and SSHash at 1 and 16 threads. SSHash's minimizer length
+# is the one its benchmarks use at the size: 21 for the human genome, 20 for 0.5–1.15B k-mers. GRCh38's tables outgrow
+# a socket's memory, so its memory interleaves over the sockets.
+MEMORY=interleave TABLES="kache-hash boost libcuckoo iceberg sshash" THREADS=16 THREADS_sshash="1 16" SSHASH_M=21 grch38
+TABLES="kache-hash boost libcuckoo iceberg sshash" THREADS=16 THREADS_sshash="1 16" SSHASH_M=20 srr5833294
+
+# Sets with one thread, against the sequential tables and CBL; SSHash at 1 and 16 threads.
+TABLES="kache-hash boost cbl sshash" KINDS=set SIZINGS=presized THREADS=1 THREADS_sshash="1 16" chr1 srr5901135 ecoli-1024
+
+# One attempt of CBL on GRCh38, last: the paper's, at PREFIX_BITS = 24, passed 400 GB and was killed at 71 minutes.
+MEMORY=interleave TABLES=cbl KINDS=set THREADS=1 REPS=1 TIMEOUT=3h grch38
