@@ -4,6 +4,7 @@
 
 
 
+#include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -74,6 +75,61 @@ inline void deallocate_huge(T_* const ptr, const std::size_t size)
 #else
     (void)size;
     std::free(ptr);
+#endif
+}
+
+
+// Grows the allocation of `allocate_huge` at `ptr` from `old_size` to
+// `new_size` elements of type `T_`, keeping its contents, and returns its
+// possibly moved address; the elements added are zeroed. On Linux the pages
+// move to an aligned range of their own without copying, huge pages
+// included.
+template <typename T_>
+inline T_* grow_huge(T_* const ptr, const std::size_t old_size, const std::size_t new_size)
+{
+    const auto old_bytes = huge_bytes<T_>(old_size), new_bytes = huge_bytes<T_>(new_size);
+#ifdef __linux__
+    // Reserve an aligned range, then move the pages there, extended.
+    auto* const raw = static_cast<char*>(mmap(nullptr, new_bytes + huge_page_sz, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0));
+    if(raw == MAP_FAILED)
+        return nullptr;
+
+    auto* const dst = reinterpret_cast<char*>((reinterpret_cast<uintptr_t>(raw) + huge_page_sz - 1) & ~(huge_page_sz - 1));
+    if(dst > raw)
+        munmap(raw, dst - raw);
+    munmap(dst + new_bytes, (raw + new_bytes + huge_page_sz) - (dst + new_bytes));
+
+    void* const p = mremap(static_cast<void*>(ptr), old_bytes, new_bytes, MREMAP_MAYMOVE | MREMAP_FIXED, dst);
+    if(p == MAP_FAILED)
+        return nullptr;
+
+    madvise(p, new_bytes, MADV_HUGEPAGE);
+    return static_cast<T_*>(p);
+#else
+    (void)new_bytes;
+    auto* const p = allocate_huge<T_>(new_size);
+    if(p)
+        std::memcpy(static_cast<void*>(p), static_cast<const void*>(ptr), old_bytes);
+    deallocate_huge(ptr, old_size);
+    return p;
+#endif
+}
+
+
+// Returns the memory of the `size` elements of type `T_` at `ptr`, within an
+// allocation of `allocate_huge`, to the operating system, where supported:
+// they read as zeros thereafter. The whole huge pages within the range are
+// released.
+template <typename T_>
+inline void release_huge(T_* const ptr, const std::size_t size)
+{
+#ifdef __linux__
+    const auto b = (reinterpret_cast<uintptr_t>(ptr) + huge_page_sz - 1) & ~(huge_page_sz - 1);
+    const auto e = (reinterpret_cast<uintptr_t>(ptr + size)) & ~(huge_page_sz - 1);
+    if(b < e)
+        madvise(reinterpret_cast<void*>(b), e - b, MADV_DONTNEED);
+#else
+    (void)ptr, (void)size;
 #endif
 }
 
