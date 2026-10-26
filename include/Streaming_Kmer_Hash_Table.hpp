@@ -7,9 +7,7 @@
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Utility.hpp"
-#include "Directed_Vertex.hpp"
-#include "Rolling_Hash.hpp"
-#include "Minimizer_Iterator.hpp"
+#include "Kmer_Batch.hpp"
 #include "Concurrent_Hash_Table.hpp"
 #include "RW_Lock.hpp"
 #include "utility.hpp"
@@ -38,9 +36,6 @@ namespace kache_hash
 
 #define KACHE_HASH_LIKELY(cond)     __builtin_expect(cond, 1)
 #define KACHE_HASH_UNLIKELY(cond)   __builtin_expect(cond, 0)
-
-
-template <uint16_t k, uint16_t l> class Kmer_Window;
 
 
 // Hash table particularly suited for streaming `k`-mer operations, for
@@ -76,8 +71,6 @@ private:
     static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt;   else return false; }(); // Marker for absent keys (also values).
 
     static constexpr auto& key(const flat_t& e) { if constexpr(is_map_) return e.first; else return e; }    // Returns the key from a table-element `e`.
-
-    static constexpr auto min_orientation_mask = Min_Iterator<k, l>::min_orientation_mask();
 
     const double lf;    // Load factor.
 
@@ -263,13 +256,10 @@ private:
         uint8_t m;  // Coordinate of its minimizer, oriented per the canonical form.
     };
 
-    // Puts the descriptor of the k-mer in the window `w` at `d`.
-    static void describe(const Kmer_Window<k, l>& w, Kmer_Desc& d);
-
     // Applies `op(d, q, i)` to the descriptor `d` of each k-mer of the
     // sequences `seqs[0..c)` of lengths `lens[0..c)`, the k-mer being at index
     // `i` of the `q`'th sequence, in order. Non-ACGT characters split the
-    // sequences.
+    // sequences. The k-mers of a stretch of ACGT bases are described in chunks.
     template <typename Op_>
     static void stream(const char* const* seqs, const std::size_t* lens, std::size_t c, const Op_& op);
 
@@ -400,39 +390,6 @@ public:
 
     Token(): id(0)
     {}
-};
-
-
-// A window definining a k-mer with its associated metadata: its hash and
-// minimizer.
-template <uint16_t k, uint16_t l>
-class Kmer_Window
-{
-    template <uint16_t k_, bool mt_, typename T_, uint16_t l_> friend class Streaming_Kmer_Hash_Table;
-
-    Directed_Vertex<k> v;
-    Rolling_Hash<k, true> rh;
-    Min_Iterator<k, l> min_it;
-
-public:
-
-    // Initializes the k-mer window at the beginning of the sequence `s`.
-    void init(const char* const s)
-    {
-        v = Directed_Vertex<k>(Kmer<k>(s));
-        rh.init(s);
-        min_it.reset(s);
-    }
-
-    // Advances the window by one k-mer, by the character `ch`.
-    void advance(const char ch)
-    {
-        assert(!DNA_Utility::is_placeholder(ch));
-
-        v.roll_forward(DNA_Utility::map_base(ch));
-        min_it.advance(ch);
-        rh.advance(ch);
-    }
 };
 
 
@@ -743,11 +700,11 @@ void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline uint64_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::minimizer_hash(const Kmer<k> key, const uint8_t m)
 {
-    const uint8_t min_idx = m & Min_Iterator<k, l>::min_index_mask();
-    const bool in_fwd = m & Min_Iterator<k, l>::min_orientation_mask();
+    const uint8_t min_idx = m & coord_idx_mask;
+    const bool in_fwd = m & coord_fwd_mask;
     const auto min = in_fwd ?
                         key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
-    return Min_Iterator<k, l>::lmer_hash(min);
+    return wang_u64(min);
 }
 
 
@@ -796,16 +753,6 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::describe(const Kmer_Window<k, l>& w, Kmer_Desc& d)
-{
-    d.c = static_cast<uint8_t>(std::max(w.rh.template checksum<8>(), uint64_t(1)));    // Avoiding checksum 0 by overloading checksum 1.
-    d.h = w.min_it.hash(d.m);
-    d.m = w.v.in_canonical_form() ? d.m : (d.m ^ min_orientation_mask);
-    d.key = w.v.canonical();
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename Op_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const Op_& op)
 {
@@ -819,18 +766,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* 
 
             if(e - s >= k)
             {
-                Kmer_Window<k, l> w;
-                Kmer_Desc d;
-                w.init(seq + s);
-                for(std::size_t i = s; ; ++i)
-                {
-                    describe(w, d);
-                    op(d, q, i);
-                    if(i + k == e)
-                        break;
-
-                    w.advance(seq[i + k]);
-                }
+                Kmer_Batch<k, l> kb;
+                typename Kmer_Batch<k, l>::Chunk ch;
+                kb.reset(seq + s, e - s - (k - 1));
+                for(std::size_t i = s; kb.next(ch); i += ch.n)
+                    for(std::size_t j = 0; j < ch.n; ++j)
+                        op(Kmer_Desc{Kmer<k>(ch.key[j]), ch.h[j], ch.c[j], ch.m[j]}, q, i + j);
             }
 
             s = e + 1;
