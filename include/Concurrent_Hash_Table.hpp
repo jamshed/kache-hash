@@ -50,7 +50,7 @@ private:
     // Returns the bitwise complement of the key `key`: a key's stored form.
     static T_key_ stored(T_key_ key);
 
-    static constexpr double lf_default = 0.8;   // Default maximum load-factor supported.
+    static constexpr double lf_default_ = 0.8;  // Default maximum load-factor supported.
 
     T_key_ empty_key_;  // The stored form of empty slots: all 0-bits, the stored form of the all-1-bits key.
 
@@ -76,25 +76,31 @@ public:
     // Constructs a concurrent hash table to support upto `max_n` elements, with
     // a maximum load-factor of `load_factor`. The object `hasher` is used to
     // hash the keys in the table. Mapping the table takes `thread_c` threads.
-    Concurrent_Hash_Table(std::size_t max_n, std::size_t thread_c = 1, double load_factor = lf_default, T_hasher_ hasher = T_hasher_());
+    Concurrent_Hash_Table(std::size_t max_n, std::size_t thread_c = 1, double load_factor = lf_default_, T_hasher_ hasher = T_hasher_());
 
     ~Concurrent_Hash_Table();
 
     // Returns the capacity of the hash table.
     std::size_t capacity() const { return capacity_; }
 
+    // Returns the default maximum load-factor.
+    static constexpr double lf_default() { return lf_default_; }
+
     // Returns the size of the table. It costs linear in the size of the table.
     std::size_t size() const;
 
     // Inserts the key `key` with value `val` into the table. Returns `nullptr`
     // iff the insertion succeeds, i.e. the key was absent in the table. Returns
-    // the address of the associated value otherwise.
-    const T_val_* insert(T_key_ key, T_val_ val);
+    // the address of the associated value otherwise. Sets `full` iff the key
+    // is absent and the table has no slot left for it; then nothing changes
+    // and `nullptr` is returned.
+    const T_val_* insert(T_key_ key, T_val_ val, bool& full);
 
     // Inserts the key `key` with value `val` into the table if it is absent and
     // returns `null_opt`. Otherwise updates the associated value `v` to `f(v)`
-    // and returns the old value.
-    template <typename F_> std::optional<T_val_> upsert(T_key_ key, T_val_ val, const F_& f);
+    // and returns the old value. Sets `full` iff the key is absent and the
+    // table has no slot left for it; then nothing changes.
+    template <typename F_> std::optional<T_val_> upsert(T_key_ key, T_val_ val, const F_& f, bool& full);
 
     // Searches for `key` in the table and returns the address of the value
     // associated to it iff it is found. Returns `nullptr` otherwise.
@@ -107,6 +113,11 @@ public:
     // Returns an iterator for the key-value pairs in the table that belongs to
     // a group of `it_count` iterators and has an ID `it_id` in the group.
     Iterator iterator(const std::size_t it_count, const std::size_t it_id) { return Iterator(*this, it_count, it_id); }
+
+    // Returns the memory of the range of slots of the iterator with ID `it_id`
+    // in a group of `it_count` to the operating system, where supported, which
+    // empties them. For a table about to be discarded.
+    void release(std::size_t it_count, std::size_t it_id);
 };
 
 
@@ -186,19 +197,15 @@ inline std::size_t Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::size() cons
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key_ key, const T_val_ val)
+inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key_ key, const T_val_ val, bool& full)
 {
-#ifndef NDEBUG
-    std::size_t tried_slots = 0;
-#endif
-
     bool success = false;
+    full = false;
     const auto key_st = stored(key);
 
-    for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
+    std::size_t i = hash_to_idx(hash(key));
+    for(std::size_t tried_slots = 0; tried_slots < capacity_; ++tried_slots, i = next_index(i))
     {
-        assert(++tried_slots <= capacity_);
-
         if(T[i].key == empty_key_)
         {
             lock[i].lock();
@@ -215,25 +222,22 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
             return &T[i].val;
     }
 
-    return &T[0].val;   // Placeholder.
+    full = true;
+    return nullptr;
 }
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
 template <typename F_>
-inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val, const F_& f)
+inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::upsert(const T_key_ key, const T_val_ val, const F_& f, bool& full)
 {
-#ifndef NDEBUG
-    std::size_t tried_slots = 0;
-#endif
-
     bool success = false;
+    full = false;
     const auto key_st = stored(key);
 
-    for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
+    std::size_t i = hash_to_idx(hash(key));
+    for(std::size_t tried_slots = 0; tried_slots < capacity_; ++tried_slots, i = next_index(i))
     {
-        assert(++tried_slots <= capacity_);
-
         if(T[i].key == empty_key_)
         {
             lock[i].lock();
@@ -257,20 +261,18 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
         }
     }
 
-    return T[0].val;    // Placeholder.
+    full = true;
+    return std::nullopt;
 }
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
 inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_key_ key) const
 {
-#ifndef NDEBUG
-    std::size_t tried_slots = 0;
-#endif
-
     const auto key_st = stored(key);
     const T_val_* val_ptr = nullptr;
-    for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
+    std::size_t i = hash_to_idx(hash(key));
+    for(std::size_t tried_slots = 0; tried_slots < capacity_; ++tried_slots, i = next_index(i))
     {
         if(T[i].key == key_st)
         {
@@ -279,8 +281,6 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
         }
         else if(T[i].key == empty_key_)
             break;
-        else
-            assert(++tried_slots <= capacity_);
     }
 
     return val_ptr;
@@ -295,6 +295,15 @@ inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::prefetch(const T_k
     __builtin_prefetch(&T[i], write_, 3);
     if constexpr(write_)
         __builtin_prefetch(&lock[i], write_, 3);
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::release(const std::size_t it_count, const std::size_t it_id)
+{
+    const auto range_sz = (capacity_ + it_count - 1) / it_count;
+    const auto b = std::min(it_id * range_sz, capacity_), e = std::min((it_id + 1) * range_sz, capacity_);
+    release_huge(T + b, e - b), release_huge(lock + b, e - b);
 }
 
 

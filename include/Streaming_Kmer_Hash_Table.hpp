@@ -20,10 +20,12 @@
 #include <optional>
 #include <utility>
 #include <type_traits>
+#include <iostream>
 #include <vector>
 #include <cstdlib>
 #include <thread>
 #include <algorithm>
+#include <barrier>
 #include <cassert>
 
 #include <immintrin.h>
@@ -57,7 +59,10 @@ public:
 private:
 
     static constexpr double lf_default_ = 0.8;  // Default load factor: 80%.
-    static constexpr double of_default = 0.1;   // Fixed overflow factor: 10%.
+    static constexpr double of_default = 1.0 / 32;  // Initial overflow factor: the overflow table starts with room for
+                                                    // this fraction of the main table's capacity, and grows on its own.
+    static constexpr double ov_lf = 0.75;   // Load factor at which the overflow table grows.
+    static constexpr std::size_t ov_min_cap = 1024; // Fewest keys the overflow table has room for.
     static constexpr std::size_t B = 32;    // Bucket size: a bucket's checksums fill a 256-bit vector.
 
     typedef uint32_t mask_t;    // A bit per slot of a bucket.
@@ -135,6 +140,10 @@ private:
         // parallel with `t_c` threads.
         void allocate(std::size_t n, std::size_t t_c);
 
+        // Grows the storage from `n` to `m` buckets, keeping the first `n`
+        // buckets; the new ones come zeroed. Returns whether it succeeded.
+        bool grow(std::size_t n, std::size_t m);
+
         // Deallocates the storage of `n` buckets.
         void deallocate(std::size_t n);
     };
@@ -166,6 +175,11 @@ private:
     RW_Lock<max_user> table_lock; // Readers-writers lock to resize the table exclusively.
 
     const uint64_t resize_worker_c; // Number of worker threads to spawn for a concurrent resize.
+
+    std::atomic_uint64_t ov_sz; // Size of the overflow table, short of the user-local counts not yet flushed into it.
+    std::vector<Padded<uint64_t>> ov_checkpoint;    // `ov_checkpoint[i]` is the number of keys the `i`'th user has added to the overflow table and not yet flushed into `ov_sz`.
+    std::atomic_uint64_t ov_th; // Size of the overflow table at which it grows.
+    std::atomic_uint64_t ov_step;   // Number of keys a user adds to the overflow table before flushing its count and checking for growth.
 
 
     // Returns `true` iff `key` matches to the key of the element `e`.
@@ -247,9 +261,10 @@ private:
     // Returns `false` otherwise.
     bool try_insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, std::size_t i);
 
-    // Inserts the element `x` with checksum `c` and minimizer-coordinate `m`
-    // into the resized table.
-    void insert_at_resize(const flat_t& x, uint8_t c, uint8_t m);
+    // Inserts the element `x` with checksum `c`, minimizer-coordinate `m`, and
+    // minimizer hash `h` into the resized table. Returns whether it goes to the
+    // overflow table.
+    bool insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, uint64_t h);
 
     // Returns the minimizer hash of the canonical k-mer `key` with the
     // minimizer-coordinate `m`.
@@ -266,11 +281,34 @@ private:
     // is due for a resize.
     bool add_key(uint16_t id);
 
+    // Counts a key newly added to the overflow table by the `id`'th user.
+    // Returns whether the overflow table is due to grow.
+    bool add_ov_key(uint16_t id);
+
+    // Sets the overflow table's growth threshold and checkpoint step, for its
+    // current capacity.
+    void set_ov_th();
+
+    // Returns the number of keys to size a resize's new overflow table for: as
+    // many as the current one, as most of its keys stay overflowed; and at
+    // least the overflow factor's share of the new capacity.
+    std::size_t new_ov_size() const;
+
+    // Resets the overflow table's size to `sz`, after a resize: none of the
+    // users' counts are unflushed then.
+    void reset_ov_size(uint64_t sz);
+
+    // Doubles the overflow table iff it is due, or iff it is still `ov_seen`
+    // and `full`, i.e. found full by an insertion.
+    __attribute__((noinline, cold)) void try_grow_ov(const ov_t* ov_seen, bool full);
+
     // Tries to resize the hash table to double its capacity: does so iff it is
     // due.
     __attribute__((noinline, cold)) void try_resize();
 
-    // Resizes the hash table to double its capacity.
+    // Resizes the hash table to double its capacity in place: the arrays grow,
+    // and a key at the old bucket `b` stays there or moves to `b + old_cap`,
+    // if it is at its primary bucket; else it is set aside and re-inserted.
     void resize();
 
     // Descriptor of a k-mer for the streaming operations: what the table
@@ -368,11 +406,12 @@ private:
     // Inserts the k-mer `key` with checksum `c` and coordinate `m` into the
     // overflow table iff it is absent there, with value `val` in a map; also in
     // a map, updates the value `v` of a present one to `f(v)`. Returns whether
-    // it was absent.
+    // it was absent. Sets `full` iff it is absent and finds no room; then
+    // nothing changes.
     // NB: Out of line, as the streaming updates rarely reach the overflow
     // table.
     template <typename F, typename V>
-    __attribute__((noinline)) bool ov_update(Kmer<k> key, uint8_t c, uint8_t m, const F& f, const V& val);
+    __attribute__((noinline)) bool ov_update(Kmer<k> key, uint8_t c, uint8_t m, const F& f, const V& val, bool& full);
 
     // Updates the table with the k-mers of the sequences `seqs[0..c)` of
     // lengths `lens[0..c)`: inserts each absent k-mer with value `val`, and in
@@ -489,14 +528,18 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
       lf(lf)
     , cap_(ceil_pow_2(std::max<std::size_t>(1, (max_sz / lf) / B)))
     , resize_th(capacity() * lf)
-    , ov(new ov_t(capacity() * of_default, resize_worker_c))
+    , ov(new ov_t(std::max<std::size_t>(ov_min_cap, capacity() * of_default), resize_worker_c))
     , ov_new(nullptr)
     , registered_thread_count(0)
     , approx_sz(0)
     , checkpoint(max_user, Padded<uint64_t>(0))
     , checkpoint_step(step_for(resize_th))
     , resize_worker_c(resize_worker_c)
+    , ov_sz(0)
+    , ov_checkpoint(max_user, Padded<uint64_t>(0))
 {
+    set_ov_th();
+
     // Map the table up front, in parallel, rather than on first touches by the updates. The metadata comes zeroed:
     // checksum `0` denotes absence of a key.
     T.allocate(cap_, resize_worker_c);
@@ -515,6 +558,14 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::allocate(const std:
 {
     T = allocate_huge<Bucket>(n);
     parallel_prefault(T, n * sizeof(Bucket), t_c);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::grow(const std::size_t n, const std::size_t m)
+{
+    T = grow_huge(T, n, m);
+    return T != nullptr;
 }
 
 
@@ -735,14 +786,13 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const flat_t& x, const uint8_t c, const uint8_t m)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const flat_t& x, const uint8_t c, const uint8_t m, const uint64_t h)
 {
     const auto idx_mask = cap_ - 1;
-    const auto h = minimizer_hash(key(x), m);
 
     const auto b = h & idx_mask;
     if(try_insert_at_resize(x, c, m, b))
-        return;
+        return false;
 
     const auto [s_1, s_2] = secondaries(h);
     const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
@@ -774,11 +824,23 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     else
     {
         unlock_ordered<true>(p, q);
+
+        bool full;
         if constexpr(is_set_)
-            ov_new->insert(x, Overflow_Set_Val(c, m));
+            ov_new->insert(x, Overflow_Set_Val(c, m), full);
         else
-            ov_new->insert(x.first, Overflow_Map_Val(c, m, x.second));
+            ov_new->insert(x.first, Overflow_Map_Val(c, m, x.second), full);
+
+        if(full)
+        {
+            std::cerr << "Overflow table of capacity " << ov_new->capacity() << " is full in a resize. Aborting.\n";
+            std::abort();
+        }
+
+        return true;
     }
+
+    return false;
 }
 
 
@@ -792,6 +854,79 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::add_key(const uint16_t id)
     const auto sz = (approx_sz += cp);
     cp = 0;
     return sz >= resize_th.load(std::memory_order_relaxed);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::add_ov_key(const uint16_t id)
+{
+    auto& cp = ov_checkpoint[id].unwrap();
+    if(KACHE_HASH_LIKELY(++cp < ov_step.load(std::memory_order_relaxed)))
+        return false;
+
+    const auto sz = (ov_sz += cp);
+    cp = 0;
+    return sz >= ov_th.load(std::memory_order_relaxed);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::new_ov_size() const
+{
+    const auto base = std::max<std::size_t>(ov_min_cap, capacity() * of_default);
+    return std::max<std::size_t>(base, ov->capacity() * ov_t::lf_default());
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::reset_ov_size(const uint64_t sz)
+{
+    ov_sz = sz;
+    std::for_each(ov_checkpoint.begin(), ov_checkpoint.end(), [](auto& c){ c = 0; });
+    set_ov_th();
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::set_ov_th()
+{
+    ov_th = static_cast<uint64_t>(ov->capacity() * ov_lf);
+    ov_step = std::clamp<uint64_t>(ov_th / (8 * max_user), 1, 1024);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_grow_ov(const ov_t* const ov_seen, const bool full)
+{
+    if constexpr(mt_)   table_lock.lock();
+
+    if(ov == ov_seen && (full || ov_sz >= ov_th))
+    {
+        // Re-insert the keys into a table of twice the capacity, in parallel.
+        auto* ov_2 = new ov_t(ov->capacity() * 2 * ov_t::lf_default(), resize_worker_c);
+        std::vector<std::thread> W;
+        W.reserve(resize_worker_c);
+        for(uint64_t w = 0; w < resize_worker_c; ++w)
+            W.emplace_back([&](const uint64_t w_id)
+            {
+                auto it = ov->iterator(resize_worker_c, w_id);
+                typedef std::conditional_t<!is_map_, Overflow_Set_Val, Overflow_Map_Val> ov_val_t;
+                Kmer<k> key;
+                ov_val_t val;
+                bool full_2;
+                while(it.next(key, val))
+                    ov_2->insert(key, val, full_2);
+
+                ov->release(resize_worker_c, w_id);
+            }, w);
+
+        std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+        std::swap(ov, ov_2);
+        delete(ov_2);
+        set_ov_th();
+    }
+
+    if constexpr(mt_)   table_lock.unlock();
 }
 
 
@@ -822,38 +957,118 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 {
     const auto old_cap = cap_;
-    cap_ *= 2;
-    T_new.allocate(cap_, resize_worker_c);  // Zeroed: checksum `0` denotes absence of a key.
-    ov_new = new ov_t(capacity() * of_default, resize_worker_c);
+    if(!T.grow(old_cap, 2 * old_cap))   // The new buckets come zeroed: checksum `0` denotes absence of a key.
+    {
+        std::cerr << "Growing the table to " << 2 * old_cap * B << " slots failed. Aborting.\n";
+        std::abort();
+    }
 
+    cap_ *= 2;
+    T_new = T;  // The resize-insertion helpers act on this.
+    ov_new = new ov_t(new_ov_size(), resize_worker_c);
+    std::atomic<uint64_t> ov_new_c{0};  // Number of keys moved into the new overflow table.
+
+    // In the first phase, a worker owns its range of old buckets `b` and their new halves `b + old_cap`: the keys
+    // at their primary buckets stay, compacted, or move to the new half, without locks. The keys at secondary
+    // buckets are set aside, and with the overflow table's, re-inserted with locks in the second phase.
+    const auto worker_c = resize_worker_c;
+    std::barrier phase_end(static_cast<std::ptrdiff_t>(worker_c));
     std::vector<std::thread> W;
-    W.reserve(resize_worker_c);
-    for(uint64_t i = 0; i < resize_worker_c; ++i)
+    W.reserve(worker_c);
+    for(uint64_t i = 0; i < worker_c; ++i)
         W.emplace_back([&](const auto w_id)
         {
-            const auto stride = resize_worker_c;
-            for(std::size_t b = w_id; b < old_cap; b += stride)
-                for(std::size_t j = 0; j < B; ++j)
-                    if(md(b).cs[j])
-                        insert_at_resize(slot(b, j), md(b).cs[j], md(b).min_coord[j] & ~Metadata::lock_mask);
+            struct Held { flat_t x; uint8_t c, m; };
+            std::vector<Held> held; // This worker's keys at secondary buckets.
 
-            auto it = ov->iterator(resize_worker_c, w_id);
+            const auto b_s = old_cap * w_id / worker_c, b_e = old_cap * (w_id + 1) / worker_c;
+            for(std::size_t b = b_s; b < b_e; ++b)
+            {
+                const auto nb = b + old_cap;
+                std::size_t lo = 0, hi = 0; // Numbers of keys kept at `b`, and moved to `nb`.
+                const auto n = bucket_size(b);
+                for(std::size_t j = 0; j < n; ++j)
+                {
+                    const uint8_t c = md(b).cs[j];
+                    const uint8_t m = md(b).min_coord[j] & ~Metadata::lock_mask;
+                    const auto h = minimizer_hash(key(slot(b, j)), m);
+                    if((h & (old_cap - 1)) != b)
+                    {
+                        held.push_back({slot(b, j), c, m});
+                        continue;
+                    }
+
+                    if(h & old_cap)
+                        slot(nb, hi) = slot(b, j), md(nb).cs[hi] = c, md(nb).min_coord[hi] = m, hi++;
+                    else
+                    {
+                        if(lo != j)
+                            slot(b, lo) = slot(b, j), md(b).cs[lo] = c, md(b).min_coord[lo] = m;
+                        lo++;
+                    }
+                }
+
+                for(std::size_t j = lo; j < n; ++j)
+                    md(b).cs[j] = 0, md(b).min_coord[j] = 0;
+            }
+
+            phase_end.arrive_and_wait();
+
+            // The rest go through a pipeline: a key's new primary bucket is prefetched `pipe_sz` keys ahead of its
+            // insertion.
+            constexpr std::size_t pipe_sz = 16;
+            struct Pending { flat_t x; uint64_t h; uint8_t c, m; };
+            Pending pipe[pipe_sz];
+            std::size_t pipe_c = 0;
+            uint64_t ov_n = 0;  // Number of keys this worker moves into the new overflow table.
+            const auto push = [&](const flat_t& x, const uint8_t c, const uint8_t m)
+            {
+                const auto h = minimizer_hash(key(x), m);
+                const auto& meta = md(h & (cap_ - 1));
+                __builtin_prefetch(meta.cs, 1, 3);
+                if constexpr(sizeof(Metadata) > L1_CACHE_LINE_SIZE)
+                    __builtin_prefetch(meta.min_coord, 1, 3);
+
+                auto& slot = pipe[pipe_c % pipe_sz];
+                if(pipe_c >= pipe_sz)
+                    ov_n += insert_at_resize(slot.x, slot.c, slot.m, slot.h);
+                slot = Pending{x, h, c, m};
+                pipe_c++;
+            };
+
+            for(const auto& e : held)
+                push(e.x, e.c, e.m);
+            std::vector<Held>().swap(held);
+
+            auto it = ov->iterator(worker_c, w_id);
             typedef std::conditional_t<!is_map_, Overflow_Set_Val, Overflow_Map_Val> ov_val_t;
             Kmer<k> key;
             ov_val_t val;
             while(it.next(key, val))
+            {
                 if constexpr(is_set_)
-                    insert_at_resize(key, val.cs, val.min_coord);
+                    push(key, val.cs, val.min_coord);
                 else
-                    insert_at_resize(flat_t(key, val.val), val.cs, val.min_coord);
+                    push(flat_t(key, val.val), val.cs, val.min_coord);
+            }
+
+            for(std::size_t e = (pipe_c > pipe_sz ? pipe_c - pipe_sz : 0); e < pipe_c; ++e)
+            {
+                const auto& slot = pipe[e % pipe_sz];
+                ov_n += insert_at_resize(slot.x, slot.c, slot.m, slot.h);
+            }
+
+            ov_new_c += ov_n;
+
+            ov->release(worker_c, w_id);
         }, i);
 
     std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
-
-    std::swap(T, T_new), std::swap(ov, ov_new);
-    T_new.deallocate(old_cap), delete(ov_new);
-    ov_new = nullptr;
+    std::swap(ov, ov_new);
+    delete(ov_new);
+    T_new = Store(), ov_new = nullptr;
+    reset_ov_size(ov_new_c);
 
     resize_th = capacity() * lf;
     checkpoint_step = step_for(resize_th);
@@ -1106,12 +1321,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::ov_update(const Kmer<k> key, const uint8_t c, const uint8_t m, const F& f, const V& val)
+bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::ov_update(const Kmer<k> key, const uint8_t c, const uint8_t m, const F& f, const V& val, bool& full)
 {
     if constexpr(is_set_)
-        return (void)f, (void)val, !ov->insert(key, Overflow_Set_Val(c, m));
+        return (void)f, (void)val, !ov->insert(key, Overflow_Set_Val(c, m), full);
     else
-        return !ov->upsert(key, Overflow_Map_Val(c, m, val), [&](const Overflow_Map_Val& v){ return Overflow_Map_Val(v.cs, v.min_coord, f(v.val)); });
+        return !ov->upsert(key, Overflow_Map_Val(c, m, val), [&](const Overflow_Map_Val& v){ return Overflow_Map_Val(v.cs, v.min_coord, f(v.val)); }, full);
 }
 
 
@@ -1152,6 +1367,17 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
         in_run = false;
     };
 
+    // Grows the overflow table, as `try_grow_ov(ov, full)` does.
+    const auto grow_ov_now = [&](const bool full)
+    {
+        const auto* const ov_seen = ov;
+        release();
+        if constexpr(mt_)   table_lock.unlock_shared(token.id);
+        try_grow_ov(ov_seen, full);
+        if constexpr(mt_)   table_lock.lock_shared(token.id);
+        in_run = false;
+    };
+
     // Accounts for a k-mer inserted, resizing the table if it is due.
     const auto inserted = [&]()
     {
@@ -1178,15 +1404,28 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
             (void)i, (void)j;
     };
 
-    // Applies the overflow table's update with the k-mer `d`, holding no lock.
-    const auto apply_overflow = [&](const Kmer_Desc& d)
+    // Applies the overflow table's update with the k-mer `d`, holding no lock. Returns `false` iff it found the
+    // overflow table full, having grown it instead; the update is to be retried then.
+    const auto apply_overflow = [&](const Kmer_Desc& d) -> bool
     {
-        if(ov_update(d.key, d.c, d.m, f, val))
+        bool full;
+        const auto absent = ov_update(d.key, d.c, d.m, f, val, full);
+        if(KACHE_HASH_UNLIKELY(full))
+            return grow_ov_now(true), false;
+
+        if(absent)
+        {
             inserted();
+            if(add_ov_key(token.id))
+                grow_ov_now(false);
+        }
+
+        return true;
     };
 
-    // Applies the update with the k-mer `d`.
-    const auto apply = [&](const Kmer_Desc& d)
+    // Applies the update with the k-mer `d`. Returns `false` iff it found the overflow table full, having grown it
+    // instead; the update is to be retried then.
+    const auto apply = [&](const Kmer_Desc& d) -> bool
     {
         if(!in_run || d.h != run_h)
         {
@@ -1202,7 +1441,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
 
             uint32_t e;
             if(const auto j = probe(d.key, d.c, b, cs_b, e); j < B)
-                return found(b, j);
+                return found(b, j), true;
 
             if(e < B)
             {
@@ -1214,7 +1453,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
                 if(e % line_slots == 0 && e + line_slots < B)
                     __builtin_prefetch(&slot(b, e + line_slots), 1, 3);
 
-                return inserted();
+                return inserted(), true;
             }
 
             unlock(b), held = 0;
@@ -1227,19 +1466,19 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
 
         uint32_t e_b, e_p, e_q;
         if(const auto j = probe(d.key, d.c, b, e_b); j < B)
-            return found(b, j);
+            return found(b, j), true;
         if(const auto j = probe(d.key, d.c, p, e_p); j < B)
-            return found(p, j);
+            return found(p, j), true;
         if(const auto j = probe(d.key, d.c, q, e_q); j < B)
-            return found(q, j);
+            return found(q, j), true;
 
         if(e_p < e_q)
-            return place(d, p, e_p), inserted();
+            return place(d, p, e_p), inserted(), true;
         if(e_q < B)
-            return place(d, q, e_q), inserted();
+            return place(d, q, e_q), inserted(), true;
 
         release();
-        apply_overflow(d);
+        return apply_overflow(d);
     };
 
     if constexpr(mt_)   table_lock.lock_shared(token.id);
@@ -1261,7 +1500,8 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
                     in_run = false;
                 }
 
-            apply(d);
+            while(!apply(d))
+                ;
         });
 
     release();
