@@ -1,10 +1,11 @@
-// Checks the k-mer describers against a brute-force reference: for every k-mer of the inputs, its canonical form,
-// checksum, and minimizer hash, the least Wang hash over the canonical forms of all its l-mers; and that its minimizer
-// coordinate decodes to that hash, as the tables decode it. The inputs go whole, split at N, and cut into ragged
-// pieces, so that stretches end at every offset of a chunk.
+// Checks the k-mer describers, the batch and the SIMD lanes, against a brute-force reference: for every k-mer of the
+// inputs, its canonical form, checksum, and minimizer hash, the least Wang hash over the canonical forms of all its
+// l-mers; and that its minimizer coordinate decodes to that hash, as the tables decode it. The inputs go whole, split
+// at N, and cut into ragged pieces, so that stretches end at every offset of a chunk; the lanes take them 4 at a time.
 // Usage: describers <path>...
 
 #include "Kmer_Batch.hpp"
+#include "Kmer_Lanes.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Utility.hpp"
 #include "Parser.hpp"
@@ -147,6 +148,34 @@ int main(int argc, char* argv[])
             std::printf("describers %s, batch over %zu %s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu, coordinates %zu%s\n",
                         argv[a], S->size(), S == &F ? "stretches" : "pieces", t.kmer_c, expected, t.key, t.c, t.h, t.m, bad ? "  <-- WRONG" : "  ok");
             fail += bad;
+
+            typedef Kmer_Lanes<k, l> lanes_t;
+            constexpr auto L = lanes_t::L;
+            Tally u;
+            lanes_t kl;
+            typename lanes_t::Chunk lc;
+            for(std::size_t g = 0; g < S->size(); g += L)
+            {
+                const char* T[L];
+                std::size_t len[L];
+                const auto c = std::min(L, S->size() - g);
+                for(std::size_t j = 0; j < c; ++j)
+                    T[j] = (*S)[g + j].data(), len[j] = (*S)[g + j].size();
+
+                kl.reset(T, len, c);
+                while(kl.next(lc))
+                    for(std::size_t j = 0; j < c; ++j)
+                    {
+                        const auto [t_b, t_e] = lc.range(j);
+                        for(std::size_t t = t_b; t < t_e; ++t)
+                            u.check(T[j] + lc.first + static_cast<int64_t>(t), lc.key[t][j], lc.h[t][j], static_cast<uint8_t>(lc.c[t][j]), static_cast<uint8_t>(lc.m[t][j]));
+                    }
+            }
+
+            const bool l_bad = (u.bad() || u.kmer_c != expected);
+            std::printf("describers %s, lanes over %zu %s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu, coordinates %zu%s\n",
+                        argv[a], S->size(), S == &F ? "stretches" : "pieces", u.kmer_c, expected, u.key, u.c, u.h, u.m, l_bad ? "  <-- WRONG" : "  ok");
+            fail += l_bad;
         }
     }
 
