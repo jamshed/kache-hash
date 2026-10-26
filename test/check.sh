@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Builds test/check.cpp locally, as x86_64 (under Rosetta on Apple silicon), and runs the correctness matrix: E. coli
+# and chr21, each against the other as negatives; sets and maps; sequential, and concurrent at 1 and all threads;
+# presized, and resizing from 100,000 and from 1,000 k-mers; whole fragments, raw sequences, and ragged batches.
+# Usage: test/check.sh [quick] [extra compile flags...]; quick skips chr21.
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"
+quick=0; [ "${1:-}" = quick ] && { quick=1; shift; }
+out="${root}/build-local/check$(echo "$*" | tr -c 'A-Za-z0-9=' '_')"; mkdir -p "${out}"   # Per flags, so concurrent runs don't share a binary.
+clang++ -arch x86_64 -std=c++20 -O2 -march=haswell -DDEVELOP -DL1_CACHE_LINE_SIZE=64 -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY \
+    -DXXH_FORCE_MEMORY_ACCESS=0 -Wall -Wextra -Wno-unknown-attributes -I "${root}/include" -pthread "$@" \
+    "${root}/test/check.cpp" -o "${out}/check" -lz || exit 1
+T=$(sysctl -n hw.ncpu)
+fail=0
+run() { "${out}/check" "$@" || fail=$((fail + 1)); }
+for g in ecoli chr21; do
+    neg=chr21; [ ${g} = chr21 ] && neg=ecoli
+    [ ${quick} = 1 ] && [ ${g} = chr21 ] && continue
+    for cap in 0 100000 1000; do
+        for mode in stream raw multi; do
+            run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" seq-set 1 ${cap} ${mode}
+            run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" seq-map 1 ${cap} ${mode}
+            for t in 1 ${T}; do
+                run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" mt-set ${t} ${cap} ${mode}
+                run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" mt-map ${t} ${cap} ${mode}
+            done
+        done
+    done
+done
+echo "failures: ${fail}"
+exit ${fail}
