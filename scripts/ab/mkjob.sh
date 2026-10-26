@@ -5,12 +5,17 @@
 # line. The environment overrides the defaults for Cascade Lake nodes in `sharing`: KH_PARTITION, KH_TIME, KH_CPUS,
 # KH_CONSTRAINT and KH_EXCLUDE (empty to omit). KH_PRE is a command to run in the job first, e.g.
 # `bash ~/kh-perf/src/<source>/test/check-run.sh <source> 56` for the correctness matrix on the node.
-# The job directory is ~/kh-perf/jobs/<job-name>/; its Slurm log is job-<id>.out there. Submission goes through
-# ~/kache-hash-jobs/submit.sh, which retries sbatch's spurious failures.
+# The job directory is ~/kh-perf/jobs/<job-name>/; its Slurm log is job-<id>.out there. An existing one is refused,
+# as it may hold another job's outputs, unless KH_RESUME=1, to continue a job that ran out of time. Submission goes
+# through ~/kache-hash-jobs/submit.sh, which retries sbatch's spurious failures; check squeue for duplicates after.
 set -eu
 host=explorer-02
 name="$1"; variants="$2"; configs="$3"; params="$4"; shift 4
 jd="kh-perf/jobs/${name}"
+if [ "${KH_RESUME-0}" != 1 ] && ssh -o BatchMode=yes ${host} "test -e ~/${jd}"; then
+    echo "job directory ~/${jd} exists; pick another name, or set KH_RESUME=1 to continue it" >&2
+    exit 1
+fi
 ssh -o BatchMode=yes ${host} "mkdir -p ~/${jd}"
 scp -q -o BatchMode=yes "${variants}" "${host}:${jd}/variants"
 scp -q -o BatchMode=yes "${configs}" "${host}:${jd}/configs"
