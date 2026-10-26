@@ -9,7 +9,6 @@
 #include "xxHash/xxhash.h"
 
 #include <cstddef>
-#include <vector>
 #include <cstring>
 #include <optional>
 #include <cstdlib>
@@ -40,15 +39,20 @@ class Concurrent_Hash_Table
 
 private:
 
+    // A slot. Its key is stored complemented, so that zeroed memory, fresh from
+    // the operating system, holds empty slots.
     struct Key_Val_Pair
     {
         T_key_ key;
         T_val_ val;
     };
 
+    // Returns the bitwise complement of the key `key`: a key's stored form.
+    static T_key_ stored(T_key_ key);
+
     static constexpr double lf_default = 0.8;   // Default maximum load-factor supported.
 
-    T_key_ empty_key_;  // The empty key; currently it's set to all 1-bits.
+    T_key_ empty_key_;  // The stored form of empty slots: all 0-bits, the stored form of the all-1-bits key.
 
     const T_hasher_ hash;   // The hasher object.
 
@@ -57,7 +61,7 @@ private:
 
     Key_Val_Pair* const T;  // The flat table of key-value collection.
 
-    mutable std::vector<Spin_Lock> lock;    // Locks for atomic storing of key-value entries.
+    Spin_Lock* const lock;  // Locks for atomic storing of key-value entries; zeroed memory holds them unlocked.
     // TODO: experiment moving the spin-lock to the key-value structure for seemingly better cache-behavior.
 
     // Maps the hash value `h` to an index into the table.
@@ -71,16 +75,13 @@ public:
 
     // Constructs a concurrent hash table to support upto `max_n` elements, with
     // a maximum load-factor of `load_factor`. The object `hasher` is used to
-    // hash the keys in the table.
-    Concurrent_Hash_Table(std::size_t max_n, double load_factor = lf_default, T_hasher_ hasher = T_hasher_());
+    // hash the keys in the table. Mapping the table takes `thread_c` threads.
+    Concurrent_Hash_Table(std::size_t max_n, std::size_t thread_c = 1, double load_factor = lf_default, T_hasher_ hasher = T_hasher_());
 
-    ~Concurrent_Hash_Table() { deallocate(T); }
+    ~Concurrent_Hash_Table();
 
     // Returns the capacity of the hash table.
     std::size_t capacity() const { return capacity_; }
-
-    // Clears the hash table.
-    void clear();
 
     // Returns the size of the table. It costs linear in the size of the table.
     std::size_t size() const;
@@ -98,9 +99,6 @@ public:
     // Searches for `key` in the table and returns the address of the value
     // associated to it iff it is found. Returns `nullptr` otherwise.
     const T_val_* find(T_key_ key) const;
-
-    // Returns an iterator for the key-value pairs in the table.
-    Iterator iterator() { return Iterator(*this, 1, 0); }
 
     // Returns an iterator for the key-value pairs in the table that belongs to
     // a group of `it_count` iterators and has an ID `it_id` in the group.
@@ -136,23 +134,39 @@ public:
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Concurrent_Hash_Table(const std::size_t max_n, const double load_factor, const T_hasher_ hasher):
+inline Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Concurrent_Hash_Table(const std::size_t max_n, const std::size_t thread_c, const double load_factor, const T_hasher_ hasher):
       empty_key_()
     , hash(hasher)
     , capacity_(ceil_pow_2(static_cast<std::size_t>(std::ceil(max_n / load_factor))))
     , idx_wrapper_mask(capacity_ - 1)
-    , T(allocate<Key_Val_Pair>(capacity_))
-    , lock(capacity_)
+    , T(allocate_huge<Key_Val_Pair>(capacity_))
+    , lock(allocate_huge<Spin_Lock>(capacity_))
 {
-    std::memset(reinterpret_cast<char*>(&empty_key_), -1, sizeof(empty_key_));
+    std::memset(reinterpret_cast<char*>(&empty_key_), 0, sizeof(empty_key_));   // The fresh slots are empty already.
 
-    clear();
+    // Map the table up front, in parallel; else probes would first read its pages, mapping the shared huge zero page,
+    // which the first writes then split into small pages.
+    parallel_prefault(T, capacity_ * sizeof(Key_Val_Pair), thread_c);
+    parallel_prefault(lock, capacity_ * sizeof(Spin_Lock), thread_c);
 }
 
+
 template <typename T_key_, typename T_val_, typename T_hasher_>
-inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::clear()
+inline Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::~Concurrent_Hash_Table()
 {
-    std::memset(static_cast<void*>(T), -1, capacity_ * sizeof(Key_Val_Pair));
+    deallocate_huge(T, capacity_), deallocate_huge(lock, capacity_);
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline T_key_ Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::stored(const T_key_ key)
+{
+    T_key_ x;
+    auto* const b = reinterpret_cast<unsigned char*>(&x);
+    std::memcpy(b, &key, sizeof(key));
+    for(std::size_t i = 0; i < sizeof(key); ++i)
+        b[i] = ~b[i];
+    return x;
 }
 
 
@@ -175,6 +189,7 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
 #endif
 
     bool success = false;
+    const auto key_st = stored(key);
 
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
@@ -184,7 +199,7 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
         {
             lock[i].lock();
             if(T[i].key == empty_key_)
-                T[i].key = key, T[i].val = val,
+                T[i].key = key_st, T[i].val = val,
                 success = true;
             lock[i].unlock();
 
@@ -192,7 +207,7 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(co
                 return nullptr;
         }
 
-        if(T[i].key == key)
+        if(T[i].key == key_st)
             return &T[i].val;
     }
 
@@ -209,6 +224,7 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
 #endif
 
     bool success = false;
+    const auto key_st = stored(key);
 
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
@@ -218,7 +234,7 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
         {
             lock[i].lock();
             if(T[i].key == empty_key_)
-                T[i].key = key, T[i].val = val,
+                T[i].key = key_st, T[i].val = val,
                 success = true;
             lock[i].unlock();
 
@@ -226,7 +242,7 @@ inline std::optional<T_val_> Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::u
                 return std::nullopt;
         }
 
-        if(T[i].key == key)
+        if(T[i].key == key_st)
         {
             lock[i].lock();
             const auto old_val = T[i].val;
@@ -248,14 +264,13 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
     std::size_t tried_slots = 0;
 #endif
 
+    const auto key_st = stored(key);
     const T_val_* val_ptr = nullptr;
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     {
-        if(T[i].key == key)
+        if(T[i].key == key_st)
         {
-            lock[i].lock(); // To ensure that some other thread is not updating this val atm—a stable value is guaranteed.
-            val_ptr = &T[i].val;
-            lock[i].unlock();
+            val_ptr = &T[i].val;    // NB: The caller reads the value after the return anyway, so locking the slot here guards nothing.
             break;
         }
         else if(T[i].key == empty_key_)
@@ -284,7 +299,7 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::Iterator::next(T_k
     for(; idx < end; idx++)
         if(M.T[idx].key != M.empty_key_)
         {
-            key = M.T[idx].key, val = M.T[idx].val;
+            key = stored(M.T[idx].key), val = M.T[idx].val;
             idx++;
             return true;
         }
