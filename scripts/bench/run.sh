@@ -115,6 +115,9 @@ configs()
     for table in ${tables}; do
         case "${table}" in
             cbl | sshash) sizings="na" ;;   # They can not be sized.
+            iceberg)    # Its resizes duplicate and lose keys, even with one user thread.
+                sizings=""
+                [[ " ${SIZINGS} " == *" presized "* ]] && sizings="presized" ;;
             *) sizings="${SIZINGS}" ;;
         esac
 

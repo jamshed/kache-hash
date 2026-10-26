@@ -4,7 +4,7 @@
 # k-mer, and then the SSHash dictionary over them. Writes `<out-prefix>.eulertigs.fa`, `<out-prefix>.sshash`, and the
 # cost of each stage—wall time, CPU time, and max RSS—to `<out-prefix>.cost.tsv`. The minimizer length m defaults to
 # SSHash's lower bound for its input. The tools are `GGCAT` and `SSHASH` if set, or else `ggcat` and `sshash` from
-# `PATH`.
+# `PATH`. Temporary files go to `TMPDIR`, or else `/tmp`: on a network file system, GGCAT takes ten times longer.
 
 input="${1}"
 out_prefix="${2}"
@@ -22,7 +22,7 @@ k=31
 tigs="${out_prefix}.eulertigs.fa"
 index="${out_prefix}.sshash"
 cost="${out_prefix}.cost.tsv"
-tmp_dir="${out_prefix}.tmp"
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sshash-index.XXXXXX")
 
 
 # Runs the command $2... as the stage $1 under GNU `time`, and appends its cost to the cost file.
@@ -50,8 +50,6 @@ run_stage()
 }
 
 
-rm -rf "${tmp_dir}"
-mkdir -p "${tmp_dir}"
 printf "input\t%s\nk\t%s\nthreads\t%s\n" "${input}" "${k}" "${thread_c}" > "${cost}"
 
 # The minimum multiplicity 1 keeps every k-mer; eulertigs hold each one once.

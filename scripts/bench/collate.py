@@ -30,7 +30,20 @@ def load(path):
 
 def median(runs, key):
     vals = [float(run[key]) for run in runs if key in run]
-    return f"{statistics.median(vals):.6g}" if vals else ""
+    if not vals:
+        return ""
+    m = statistics.median(vals)
+    return str(int(m)) if m.is_integer() else f"{m:.6g}"
+
+
+def name(cfg):
+    """Returns the name of the run configuration `cfg` within its workload, as `run.sh` names its outputs."""
+    return f"{cfg[1]}.{cfg[2]}.{cfg[3]}.{cfg[4]}.T{cfg[5]}"
+
+
+def where(cfgs):
+    """Returns a description of the run configurations `cfgs`: their names, if few."""
+    return ", ".join(sorted(cfgs)) if len(cfgs) <= 3 else f"{len(cfgs)} configurations"
 
 
 def main():
@@ -60,15 +73,13 @@ def main():
         for key in sorted(keys):
             vals = {}
             for cfg, run in runs:
-                vals.setdefault(run.get(key, "missing"), set()).add(".".join(map(str, cfg[1:])))
+                vals.setdefault(run.get(key, "missing"), set()).add(name(cfg))
             if len(vals) > 1:
-                errors.append(f"{wl}: {key} differs: "
-                              + "; ".join(f"{v} in {', '.join(sorted(c))}" for v, c in vals.items()))
+                errors.append(f"{wl}: {key} differs: " + "; ".join(f"{v} in {where(c)}" for v, c in vals.items()))
 
         for cfg, run in runs:
             if "build.ops" in run and run["build.ops"] != run["index.kmers"]:
-                errors.append(f"{wl}: {'.'.join(map(str, cfg[1:]))} built {run['build.ops']} of"
-                              f" {run['index.kmers']} k-mers")
+                errors.append(f"{wl}: {name(cfg)} built {run['build.ops']} of {run['index.kmers']} k-mers")
 
     query_c = max(sum(1 for key in run if re.fullmatch(r"query\d+\.ops", key))
                   for R in configs.values() for run in R)

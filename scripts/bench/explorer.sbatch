@@ -31,11 +31,16 @@ export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include)"  # Th
 lscpu | grep -q "Platinum 8276" || { echo "Not a Cascade Lake node: $(lscpu | grep '^Model name')"; exit 3; }
 
 build="/tmp/kache-hash-bench-${SLURM_JOB_ID}"   # Node-local, as concurrent jobs would clash in a shared one.
-mkdir -p "${out_dir}"
+mkdir -p "${out_dir}" "${build}"
 { hostname; lscpu; numactl -H; cat /sys/kernel/mm/transparent_hugepage/enabled; } > "${out_dir}/node-${SLURM_JOB_ID}"
 
 echo "Building in ${build}"
-rsync -a --exclude "build*/" --exclude external/ --exclude data/ --exclude local/ "${SLURM_SUBMIT_DIR}/" "${build}/src/"
+if ! rsync -a --exclude "build*/" --exclude external/ --exclude data/ --exclude local/ \
+        "${SLURM_SUBMIT_DIR}/" "${build}/src/"; then
+    echo "Failed copying ${SLURM_SUBMIT_DIR}" >&2
+    exit 1
+fi
+
 if ! { cmake -S "${build}/src" -B "${build}/build" -DCMAKE_BUILD_TYPE=Release -DCBL=ON -DSSHASH=ON &&
         cmake --build "${build}/build" -j "$(nproc)"; } > "${out_dir}/build-${SLURM_JOB_ID}.log" 2>&1; then
     echo "Failed building; see ${out_dir}/build-${SLURM_JOB_ID}.log" >&2
