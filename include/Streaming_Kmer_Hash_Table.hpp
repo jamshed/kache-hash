@@ -619,7 +619,7 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::size() const
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
+auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> key) const -> find_ret_t
 {
     if constexpr(is_set_)
         return ov->find(key);
