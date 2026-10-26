@@ -68,22 +68,17 @@ inline Kache_Hash<mt_, T_>::Kache_Hash(const std::size_t init_cap, const std::si
 template <bool mt_, typename T_>
 inline void Kache_Hash<mt_, T_>::insert(const std::size_t t_id, const char* const s, const std::size_t n)
 {
-    for_each_window(s, n, [&](const Kmer_Window<k, l>& w)
-    {
-        if constexpr(is_set)
-            M.insert(w, token[t_id]);
-        else
-            M.upsert(w, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
-    });
+    if constexpr(is_set)
+        M.insert(s, n + k - 1, token[t_id]);
+    else
+        M.upsert(s, n + k - 1, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
 }
 
 
 template <bool mt_, typename T_>
 inline std::size_t Kache_Hash<mt_, T_>::find(const std::size_t, const char* const s, const std::size_t n) const
 {
-    std::size_t h = 0;
-    for_each_window(s, n, [&](const Kmer_Window<k, l>& w){ h += static_cast<bool>(M.find(w)); });
-    return h;
+    return M.count(s, n + k - 1);
 }
 
 
@@ -103,9 +98,10 @@ int main(int argc, char* argv[])
 {
     const auto cfg = parse_config(argc, argv);
 
-    // The table supports up to 64 users.
-    if(cfg.thread_c > 64)
-        reject("more than 64 threads");
+    // The table supports up to `max_user` users.
+    constexpr auto max_user = Streaming_Kmer_Hash_Table<k, true, uint64_t, l>::max_user;
+    if(cfg.thread_c > max_user)
+        reject("more than " + std::to_string(max_user) + " threads");
 
     if(cfg.set)
         cfg.seq ? bench<Kache_Hash<false, void>>(cfg) : bench<Kache_Hash<true, void>>(cfg);

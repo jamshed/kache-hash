@@ -3,7 +3,8 @@
 # Usage: scripts/ab/mkjob.sh <job-name> <variants-file> <configs-file> <params> [sbatch option...]
 # The files and the params are as ab-run.sh describes. Each extra option, e.g. `--nodelist=d0007`, becomes an `#SBATCH`
 # line. The environment overrides the defaults for Cascade Lake nodes in `sharing`: KH_PARTITION, KH_TIME, KH_CPUS,
-# KH_CONSTRAINT and KH_EXCLUDE (empty to omit). KH_PRE is a command to run in the job first.
+# KH_CONSTRAINT and KH_EXCLUDE (empty to omit). KH_PRE is a command to run in the job first, e.g.
+# `bash ~/kh-perf/src/<source>/test/check-run.sh <source> 56` for the correctness matrix on the node.
 # The job directory is ~/kh-perf/jobs/<job-name>/; its Slurm log is job-<id>.out there. Submission goes through
 # ~/kache-hash-jobs/submit.sh, which retries sbatch's spurious failures.
 set -eu

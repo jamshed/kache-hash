@@ -5,7 +5,6 @@
 
 
 #include "Perf_Group.hpp"
-#include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
 #include "DNA_Utility.hpp"
 #include "utility.hpp"
@@ -16,7 +15,6 @@
 #include <vector>
 #include <utility>
 #include <iostream>
-#include <fstream>
 #include <thread>
 #include <algorithm>
 
@@ -236,22 +234,44 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f,
 }
 
 
-// Applies `f` to each of the `n` k-mer windows of the sequence `s`.
+// Runs `f(t_id, seqs, lens, c)` in parallel with `thread_c` threads, where the
+// `t_id`'th thread gets the `t_id`'th contiguous share of the k-mers in the
+// fragments `F` as in `run_parallel`, in batches of up to `batch_sz` pieces of
+// fragments: `seqs[i]` and `lens[i]` are a piece's start and its length in
+// bases. Counts the events of the group `perf` over the run, if provided.
+// Returns the elapsed time in seconds.
 template <typename F_>
-void for_each_window(const char* const s, const std::size_t n, const F_& f)
+double run_parallel_batched(const Fragments& F, const std::size_t thread_c, const std::size_t batch_sz, const F_& f, Perf_Group* const perf = nullptr)
 {
-    Kmer_Window<k, l> w;
-    w.init(s);
-    std::size_t kmer_idx = 0;
-    while(true)
+    struct Batch
     {
-        f(w);
-        if(kmer_idx + 1 == n)
-            break;
+        std::vector<const char*> seqs;
+        std::vector<std::size_t> lens;
+    };
 
-        w.advance(s[kmer_idx + k]);
-        kmer_idx++;
-    }
+    std::vector<Padded<Batch>> B(thread_c);   // Padded, as each thread updates its own often.
+    const auto flush = [&](const std::size_t t_id)
+    {
+        auto& b = B[t_id].unwrap();
+        if(!b.seqs.empty())
+            f(t_id, b.seqs.data(), b.lens.data(), b.seqs.size());
+        b.seqs.clear(), b.lens.clear();
+    };
+
+    // The pieces of a thread's share come in order; the thread's last piece ends its share.
+    const auto kmer_c = F.kmer_count();
+    std::vector<Padded<std::size_t>> left(thread_c);    // Number of k-mers left in each share.
+    for(std::size_t t = 0; t < thread_c; ++t)
+        left[t].unwrap() = (t + 1) * kmer_c / thread_c - t * kmer_c / thread_c;
+
+    return run_parallel(F, thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+    {
+        auto& b = B[t_id].unwrap();
+        b.seqs.push_back(s), b.lens.push_back(n + k - 1);
+        left[t_id].unwrap() -= n;
+        if(b.seqs.size() == batch_sz || left[t_id].unwrap() == 0)
+            flush(t_id);
+    }, perf);
 }
 
 

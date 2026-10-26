@@ -5,9 +5,9 @@
 
 
 #include "harness.hpp"
+#include "Directed_Vertex.hpp"
 #include "utility.hpp"
 
-#include <cstdint>
 #include <cstddef>
 #include <string>
 #include <vector>
