@@ -67,7 +67,7 @@ Queries must not overlap updates that can resize the table.
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), CBL, and SSHash.
 Each builds its table over the *k*-mers of an input and queries it with other inputs, and prints its measurements as TSV.
-CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's eulertigs of the input by `scripts/bench/sshash-index.sh`.
+CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's maximal unitigs of the input by `scripts/bench/sshash-index.sh`.
 
 ```bash
 cmake -S . -B build -DCBL=ON -DSSHASH=ON && cmake --build build -j
@@ -77,8 +77,8 @@ scripts/bench/collate.py out
 ```
 
 `run.sh` takes its matrix of tables, workloads, sizings, thread counts, and repetitions from the environment, as its header describes.
-`collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree.
-On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`.
+`collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree; given several output directories, it collates them as campaigns, e.g. new *k*ache-hash runs against an earlier campaign's baselines.
+On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`; `EXPERIMENTS`, `TOOLS`, and `WORKLOADS` select a part of the plan, e.g. `TOOLS=kache-hash` for *k*ache-hash alone.
 
 <!-- ## Citation
 

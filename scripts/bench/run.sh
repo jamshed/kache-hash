@@ -4,6 +4,7 @@
 # `<out-dir>/<workload>/<table>.<set|map>.<mt|seq>.<sizing>.T<threads>.r<rep>.tsv`. Runs with an output are skipped,
 # so a rerun continues where an earlier one stopped. The environment sets the matrix:
 #   TABLES:  the tables to run, of those built (default: kache-hash boost libcuckoo iceberg cbl sshash);
+#   TOOLS:   if set, the only tables of TABLES to run, to select tables across a plan's matrices;
 #   KINDS:   `set` and `map` (default: both);
 #   SIZINGS: `presized`, for the input's distinct k-mers, and `half`, for half of them (default: both);
 #   THREADS: the thread counts (default: 16); the sequential variants run at 1;
@@ -115,9 +116,6 @@ configs()
     for table in ${tables}; do
         case "${table}" in
             cbl | sshash) sizings="na" ;;   # They can not be sized.
-            iceberg)    # Its resizes duplicate and lose keys, even with one user thread.
-                sizings=""
-                [[ " ${SIZINGS} " == *" presized "* ]] && sizings="presized" ;;
             *) sizings="${SIZINGS}" ;;
         esac
 
@@ -174,12 +172,19 @@ run()
 
 tables=""
 for table in ${TABLES}; do
-    if [ -x "${bin_dir}/bench_${table//-/_}" ]; then
+    if [ -n "${TOOLS:-}" ] && [[ " ${TOOLS} " != *" ${table} "* ]]; then
+        continue
+    elif [ -x "${bin_dir}/bench_${table//-/_}" ]; then
         tables="${tables} ${table}"
     else
         echo "Skipping ${table}: no driver in ${bin_dir}"
     fi
 done
+
+if [ -z "${tables}" ]; then
+    echo "No tables to run"
+    exit 0
+fi
 
 for wl in "$@"; do
     workload "${wl}"

@@ -10,11 +10,14 @@
 #SBATCH --output=bench-%j.out
 
 # Runs a plan of benchmarks on a whole node of explorer: builds every benchmark natively in the job, from a copy of the
-# repository it is submitted from, runs `run.sh` for each line of the plan, and collates the outputs. A plan's line is
-# the variables of a `run.sh` matrix, as assignments, and then its workloads. Besides those of `run.sh`, the variables
-# include `MEMORY`: by default, `LAUNCH` binds to the CPUs of socket 0, with memory preferred there—or with
-# `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory; and `TIMEOUT`, a limit of each
-# run, e.g. `3h`. The job exits unless the node's CPU model contains `CPU_MODEL` (default: Platinum 8276).
+# repository it is submitted from, runs `run.sh` for each line of the plan, and collates the outputs. A plan's line,
+# which continues onto the next if it ends in `\`, is the variables of a `run.sh` matrix, as assignments, and then its
+# workloads. Besides those of `run.sh`, the variables
+# include `EXPERIMENT`, the line's name; `MEMORY`: by default, `LAUNCH` binds to the CPUs of socket 0, with memory
+# preferred there—or with `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory; and
+# `TIMEOUT`, a limit of each run, e.g. `3h`. The environment selects what of the plan runs, if set: `EXPERIMENTS`, the
+# names of the lines to run; `TOOLS`, the tables to run (see `run.sh`); and `WORKLOADS`, the workloads to run. The job
+# exits unless the node's CPU model contains `CPU_MODEL` (default: Platinum 8276).
 # Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>
 
 data_dir="${1}"
@@ -54,20 +57,30 @@ fi
 s0=$(lscpu -p=NODE,SOCKET | grep -v "^#" | awk -F, '$2 == 0 { print $1 }' | sort -un | paste -sd,)
 status=0
 while read -r line; do
+    while [[ "${line}" == *\\ ]] && read -r next; do
+        line="${line%\\} ${next}"
+    done
+
     [[ "${line}" =~ ^[[:space:]]*(#|$) ]] && continue
 
-    echo "Running ${line}"
     (
         eval "set -- ${line}"
         workloads=()
         for arg in "$@"; do
             if [[ "${arg}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
                 export "${arg}"
-            else
+            elif [ -z "${WORKLOADS:-}" ] || [[ " ${WORKLOADS} " == *" ${arg} "* ]]; then
                 workloads+=("${arg}")
             fi
         done
 
+        if { [ -n "${EXPERIMENTS:-}" ] && [[ " ${EXPERIMENTS} " != *" ${EXPERIMENT:-} "* ]]; } ||
+                (( ${#workloads[@]} == 0 )); then
+            echo "Skipping ${line}"
+            exit 0
+        fi
+
+        echo "Running ${line}"
         memory="--preferred=${s0%%,*}"
         [ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
         export LAUNCH="${LAUNCH-${TIMEOUT:+timeout ${TIMEOUT} }numactl --cpunodebind=${s0} ${memory}}"

@@ -170,7 +170,7 @@ endif()
 # The SSHash dictionary's benchmark, if `SSHASH` is set. SSHash is static: `scripts/bench/sshash-index.sh` builds an
 # index with the `ggcat` and `sshash` tools built here, and `bench_sshash` loads it.
 if(SSHASH)
-    # GGCAT builds the duplicate-free input of SSHash: the eulertigs of the k-mers.
+    # GGCAT builds the duplicate-free input of SSHash: the maximal unitigs of the k-mers.
     set(GGCAT_VERSION "2.2.0")
 
     message("Build system will fetch and build GGCAT")
@@ -179,7 +179,6 @@ if(SSHASH)
         DOWNLOAD_COMMAND    git clone --recursive --depth 1 --branch v${GGCAT_VERSION}
                             https://github.com/algbio/ggcat.git ggcat-${GGCAT_VERSION}
         SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/ggcat-${GGCAT_VERSION}
-        PATCH_COMMAND       git apply ${CMAKE_CURRENT_SOURCE_DIR}/ggcat-eulertigs-underflow.patch  # A pending fix.
         BUILD_IN_SOURCE     TRUE    # For `rustup` to pick its toolchain.
         CONFIGURE_COMMAND   ""
         BUILD_COMMAND       ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS RUSTFLAGS=-Ctarget-cpu=native

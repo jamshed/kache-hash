@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Builds the SSHash index of the k-mers of an input, as SSHash requires: GGCAT's eulertigs of the input, keeping every
-# k-mer, and then the SSHash dictionary over them. Writes `<out-prefix>.eulertigs.fa`, `<out-prefix>.sshash`, and the
-# cost of each stage—wall time, CPU time, and max RSS—to `<out-prefix>.cost.tsv`. The minimizer length m defaults to
-# SSHash's lower bound for its input. The tools are `GGCAT` and `SSHASH` if set, or else `ggcat` and `sshash` from
-# `PATH`. Temporary files go to `TMPDIR`, or else `/tmp`: on a network file system, GGCAT takes ten times longer.
+# Builds the SSHash index of the k-mers of an input, as SSHash requires: GGCAT's maximal unitigs of the input, keeping
+# every k-mer, and then the SSHash dictionary over them. Writes `<out-prefix>.unitigs.fa`, `<out-prefix>.sshash`, and
+# the cost of each stage—wall time, CPU time, and max RSS—to `<out-prefix>.cost.tsv`. The minimizer length m defaults
+# to SSHash's lower bound for its input. The tools are `GGCAT` and `SSHASH` if set, or else `ggcat` and `sshash`
+# from `PATH`. Temporary files go to `TMPDIR`, or else `/tmp`: on a network file system, GGCAT takes ten times longer.
 
 input="${1}"
 out_prefix="${2}"
@@ -19,7 +19,7 @@ fi
 ggcat="${GGCAT:-ggcat}"
 sshash="${SSHASH:-sshash}"
 k=31
-tigs="${out_prefix}.eulertigs.fa"
+tigs="${out_prefix}.unitigs.fa"
 index="${out_prefix}.sshash"
 cost="${out_prefix}.cost.tsv"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sshash-index.XXXXXX")
@@ -52,10 +52,11 @@ run_stage()
 
 printf "input\t%s\nk\t%s\nthreads\t%s\n" "${input}" "${k}" "${thread_c}" > "${cost}"
 
-# The minimum multiplicity 1 keeps every k-mer; eulertigs hold each one once.
-run_stage ggcat "${ggcat}" build -k "${k}" -s 1 --eulertigs -j "${thread_c}" -t "${tmp_dir}/ggcat" \
+# The minimum multiplicity 1 keeps every k-mer, and unitigs hold each one once. Not eulertigs: GGCAT's lose and invent
+# k-mers on inputs as large as GRCh38, or else abort.
+run_stage ggcat "${ggcat}" build -k "${k}" -s 1 -j "${thread_c}" -t "${tmp_dir}/ggcat" \
     -o "${tigs}" "${input}"
-rm -f "${out_prefix}.eulertigs.stats.log"   # GGCAT's per-second progress counters.
+rm -f "${out_prefix}.unitigs.stats.log" # GGCAT's per-second progress counters.
 
 bases=$(grep -v '^>' "${tigs}" | tr -d '\n' | wc -c | tr -d ' ')
 if [ -z "${m}" ]; then  # SSHash's lower bound on m: ceil(log_4(N)) + 1, for N input bases.
@@ -64,7 +65,7 @@ if [ -z "${m}" ]; then  # SSHash's lower bound on m: ceil(log_4(N)) + 1, for N i
     m=$(( e + 1 ))
 fi
 
-printf "eulertigs.bases\t%s\nsshash.m\t%s\n" "${bases}" "${m}" >> "${cost}"
+printf "unitigs.bases\t%s\nsshash.m\t%s\n" "${bases}" "${m}" >> "${cost}"
 
 run_stage sshash "${sshash}" build -i "${tigs}" -k "${k}" -m "${m}" -t "${thread_c}" -d "${tmp_dir}/sshash" \
     -o "${index}"
