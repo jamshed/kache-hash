@@ -16,15 +16,17 @@ using namespace kache_hash;
 
 
 // Adapter of the Boost open-addressing tables, that are concurrent iff `mt_`,
-// and that map k-mers to `T_` counts—sets if `T_` is `void`.
+// and that map k-mers to `T_` counts—sets if `T_` is `void`. The keys are the
+// k-mers' integer forms, with the tables' default hash: the identity, which the
+// tables mix themselves.
 template <bool mt_, typename T_>
 class Boost
 {
 private:
 
     typedef std::conditional_t<std::is_void_v<T_>,
-        std::conditional_t<mt_, boost::concurrent_flat_set<Kmer<k>, Kmer_Hasher<k>>, boost::unordered_flat_set<Kmer<k>, Kmer_Hasher<k>>>,
-        std::conditional_t<mt_, boost::concurrent_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>>, boost::unordered_flat_map<Kmer<k>, uint64_t, Kmer_Hasher<k>>>> ht_t;
+        std::conditional_t<mt_, boost::concurrent_flat_set<uint64_t>, boost::unordered_flat_set<uint64_t>>,
+        std::conditional_t<mt_, boost::concurrent_flat_map<uint64_t, uint64_t>, boost::unordered_flat_map<uint64_t, uint64_t>>> ht_t;
 
     ht_t M; // The table.
 
@@ -70,8 +72,9 @@ inline Boost<mt_, T_>::Boost(const std::size_t init_cap, const std::size_t)
 template <bool mt_, typename T_>
 inline void Boost<mt_, T_>::insert(const std::size_t, const char* const s, const std::size_t n)
 {
-    for_each_canonical(s, n, [&](const Kmer<k>& key)
+    for_each_canonical(s, n, [&](const Kmer<k>& kmer)
     {
+        const auto key = kmer.as_int();
         if constexpr(is_set)
             M.insert(key);
         else if constexpr(mt_)
@@ -86,7 +89,7 @@ template <bool mt_, typename T_>
 inline std::size_t Boost<mt_, T_>::find(const std::size_t, const char* const s, const std::size_t n) const
 {
     std::size_t h = 0;
-    for_each_canonical(s, n, [&](const Kmer<k>& key){ h += M.contains(key); });
+    for_each_canonical(s, n, [&](const Kmer<k>& kmer){ h += M.contains(kmer.as_int()); });
     return h;
 }
 
