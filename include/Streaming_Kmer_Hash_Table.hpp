@@ -445,6 +445,12 @@ private:
     // bucket's first empty slot at `e`, `B` if it is full.
     uint32_t probe(Kmer<k> key, uint8_t c, uint8_t m, std::size_t i, cs_vec c_vec, uint32_t& e) const;
 
+    // Returns the index of the slot holding the k-mer `key` with checksum `c`
+    // and minimizer coordinate `m` in the `i`'th bucket, or `B` if it is absent
+    // there; then sets `full` iff the bucket is full, from its last checksum
+    // alone, as keys fill a bucket's slots in order.
+    uint32_t probe(Kmer<k> key, uint8_t c, uint8_t m, std::size_t i, bool& full) const;
+
     // Prefetches the metadata of the bucket of the k-mer `d`, with write
     // intent iff `write_`.
     template <bool write_> void prefetch_meta(const Kmer_Desc& d) const;
@@ -1586,6 +1592,26 @@ inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::probe(const Kmer<k> ke
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::probe(const Kmer<k> key, const uint8_t c, const uint8_t m, const std::size_t i, bool& full) const
+{
+    (void)m;
+    assert(i < cap_);
+
+    auto cmp = eq_mask(load_cs(md(i)), splat_cs(c));
+    while(cmp)
+    {
+        const auto j = std::countr_zero(cmp);
+        cmp &= (cmp - 1);
+        if(key_equals(slot(i, j), key))
+            return j;
+    }
+
+    full = (md(i).cs[B - 1] != 0);
+    return B;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::secondaries(const uint64_t h) const
 {
     const auto idx_mask = cap_ - 1;
@@ -1913,22 +1939,22 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
             run_h = d.h;
 
             // Absent past a full primary bucket too, unless its spill filter marks the minimizer.
-            uint32_t e;
-            if(const auto j = probe(d.key, d.c, d.m, b, e); j < B)
+            bool full;
+            if(const auto j = probe(d.key, d.c, d.m, b, full); j < B)
                 return hit = true, g(seq_i, i, present(b, j));
-            if(e < B || !may_spill(md(b), d.h))
+            if(!full || !may_spill(md(b), d.h))
                 return hit = false, g(seq_i, i, find_ret_t(null_val));
 
             if(!sec)
                 std::tie(p, q) = secondaries(d.h), sec = true;
 
-            uint32_t e_p, e_q;
-            if(const auto j = probe(d.key, d.c, d.m, p, e_p); j < B)
+            bool full_p, full_q;
+            if(const auto j = probe(d.key, d.c, d.m, p, full_p); j < B)
                 return hit = true, g(seq_i, i, present(p, j));
-            if(const auto j = probe(d.key, d.c, d.m, q, e_q); j < B)
+            if(const auto j = probe(d.key, d.c, d.m, q, full_q); j < B)
                 return hit = true, g(seq_i, i, present(q, j));
 
-            const auto r = (e_p == B && e_q == B) ? find_in_overflow(d.key) : find_ret_t(null_val);
+            const auto r = (full_p && full_q) ? find_in_overflow(d.key) : find_ret_t(null_val);
             hit = static_cast<bool>(r);
             g(seq_i, i, r);
         });
