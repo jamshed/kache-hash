@@ -19,7 +19,7 @@ namespace kache_hash
 
 // Returns Thomas Wang's 64-bit integer hash of `x`: shifts, adds, and xors
 // only, which SIMD lanes run without lowering the clock. It is a bijection on
-// 64-bit values. The minimizers and the checksums come from it.
+// 64-bit values. The minimizers come from it, and with AVX-512 the checksums.
 template <typename V_ = uint64_t>
 inline constexpr V_ wang_u64(V_ x)
 {
@@ -31,6 +31,23 @@ inline constexpr V_ wang_u64(V_ x)
     x = x ^ (x >> 28);
     x = x + (x << 31);
     return x;
+}
+
+
+// Returns the checksum hash of the canonical k-mer with the 64-bit encoding
+// `x`: `x` times an odd constant, whose top byte mixes every bit of `x`. With
+// AVX-512, where the tables describe k-mers in SIMD lanes, Wang's hash
+// instead, as the lanes multiply 64-bit values slowly.
+// NB: A build's describers agree on it, and tables are not shared across
+// builds.
+template <typename V_ = uint64_t>
+inline constexpr V_ checksum_hash(const V_ x)
+{
+#ifdef __AVX512F__
+    return wang_u64(x);
+#else
+    return x * 0x9E3779B97F4A7C15ull;
+#endif
 }
 
 
@@ -46,7 +63,7 @@ inline constexpr uint8_t checksum_of_hash(const uint64_t x)
 
 // Returns the 8-bit checksum of the canonical k-mer with the 64-bit encoding
 // `x`.
-inline constexpr uint8_t kmer_checksum(const uint64_t x) { return checksum_of_hash(wang_u64(x)); }
+inline constexpr uint8_t kmer_checksum(const uint64_t x) { return checksum_of_hash(checksum_hash(x)); }
 
 
 // The minimizer of a k-mer is its l-mer with the least hash of the canonical

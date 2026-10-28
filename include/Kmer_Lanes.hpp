@@ -239,7 +239,7 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
 
         const ivec canon_fwd = (f[i] < r[i]);
         const vec key = select(canon_fwd, f[i], r[i]);
-        const vec c = wang_u64(key) >> 56;  // As `kmer_checksum`.
+        const vec c = checksum_hash(key) >> 56; // As `kmer_checksum`.
 
         out.key[i] = key;
         out.h[i] = h;
