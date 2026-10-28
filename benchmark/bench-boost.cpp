@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <type_traits>
+#include <array>
+#include <vector>
 
 
 using namespace kache_hash;
@@ -18,7 +20,7 @@ using namespace kache_hash;
 // Adapter of the Boost open-addressing tables, that are concurrent iff `mt_`,
 // and that map k-mers to `T_` counts—sets if `T_` is `void`. The keys are the
 // k-mers' integer forms, with the tables' default hash: the identity, which the
-// tables mix themselves.
+// tables mix themselves. The concurrent tables look k-mers up in bulk.
 template <bool mt_, typename T_>
 class Boost
 {
@@ -28,7 +30,10 @@ private:
         std::conditional_t<mt_, boost::concurrent_flat_set<uint64_t>, boost::unordered_flat_set<uint64_t>>,
         std::conditional_t<mt_, boost::concurrent_flat_map<uint64_t, uint64_t>, boost::unordered_flat_map<uint64_t, uint64_t>>> ht_t;
 
+    static constexpr std::size_t batch_sz = 256;    // Number of k-mers a concurrent table looks up at a time, in bulk.
+
     ht_t M; // The table.
+    mutable std::vector<Padded<std::array<uint64_t, batch_sz>>> batch; // `batch[t]` is the `t`'th user's batch.
 
 public:
 
@@ -48,7 +53,7 @@ public:
     void insert(std::size_t t_id, const char* s, std::size_t n);
 
     // Returns the number of the `n` k-mers of the sequence `s` present in the
-    // table.
+    // table, for the `t_id`'th user thread.
     std::size_t find(std::size_t t_id, const char* s, std::size_t n) const;
 
     // Returns the number of k-mers in the table.
@@ -63,7 +68,8 @@ public:
 
 
 template <bool mt_, typename T_>
-inline Boost<mt_, T_>::Boost(const std::size_t init_cap, const std::size_t)
+inline Boost<mt_, T_>::Boost(const std::size_t init_cap, const std::size_t thread_c):
+    batch(thread_c)
 {
     M.reserve(init_cap);
 }
@@ -86,10 +92,25 @@ inline void Boost<mt_, T_>::insert(const std::size_t, const char* const s, const
 
 
 template <bool mt_, typename T_>
-inline std::size_t Boost<mt_, T_>::find(const std::size_t, const char* const s, const std::size_t n) const
+inline std::size_t Boost<mt_, T_>::find(const std::size_t t_id, const char* const s, const std::size_t n) const
 {
     std::size_t h = 0;
-    for_each_canonical(s, n, [&](const Kmer<k>& kmer){ h += M.contains(kmer.as_int()); });
+    if constexpr(mt_)   // Bulk visitation: the table overlaps the memory accesses of a batch's lookups.
+    {
+        auto& B = batch[t_id].unwrap();
+        std::size_t b = 0;
+        for_each_canonical(s, n, [&](const Kmer<k>& kmer)
+        {
+            B[b++] = kmer.as_int();
+            if(b == batch_sz)
+                h += M.cvisit(B.cbegin(), B.cend(), [](const auto&){}), b = 0;
+        });
+
+        h += M.cvisit(B.cbegin(), B.cbegin() + b, [](const auto&){});
+    }
+    else
+        for_each_canonical(s, n, [&](const Kmer<k>& kmer){ h += M.contains(kmer.as_int()); });
+
     return h;
 }
 
