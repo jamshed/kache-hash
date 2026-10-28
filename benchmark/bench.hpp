@@ -33,6 +33,10 @@
 //   table;
 // - `find(t_id, s, n)`: returns the number of the `n` k-mers of the sequence `s`
 //   present in it, for the `t_id`'th user thread;
+// - optionally, `insert(t_id, seqs, lens, c)` and `find(t_id, seqs, lens, c)`:
+//   the same over the `c` sequences `seqs[i]` of `lens[i]` bases, for tables
+//   whose operations take batches of sequences; the benchmark then hands them
+//   batches of up to `batch_sz` fragment pieces;
 // - `size()`: its number of k-mers;
 // - `capacity()`: its number of k-mer slots—only if it has slots;
 // - `report()`: prints its statistics.
@@ -97,6 +101,30 @@ inline Config parse_config(const int argc, char* argv[])
 }
 
 
+constexpr std::size_t batch_sz = 64;    // Most fragment pieces per call of a table that takes batches, as in `measure`.
+
+
+// Whether the table `Table_` takes batches of sequences.
+template <typename Table_>
+constexpr bool takes_batches = requires(Table_& M, const char* const* seqs, const std::size_t* lens) { M.insert(0, seqs, lens, 0); M.find(0, seqs, lens, 0); };
+
+
+// Runs the operation `op` of the table `Table_` over the k-mers of the
+// fragments `F` with `thread_c` threads, as `run_parallel` does: in batches of
+// up to `batch_sz` fragment pieces, `op(t_id, seqs, lens, c)`, if the table
+// takes batches, and a piece at a time, `op(t_id, s, n)`, otherwise. Counts the
+// events of the group `perf` over the run, if provided. Returns the elapsed
+// time in seconds.
+template <typename Table_, typename F_>
+double run_op(const Fragments& F, const std::size_t thread_c, const F_& op, Perf_Group* const perf)
+{
+    if constexpr(takes_batches<Table_>)
+        return run_parallel_batched(F, thread_c, batch_sz, op, perf);
+    else
+        return run_parallel(F, thread_c, op, perf);
+}
+
+
 // Exits on the configuration being unsupported by the table, for the reason
 // `reason`.
 inline void reject(const std::string& reason)
@@ -142,9 +170,9 @@ void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf)
         const auto run = [&](const std::size_t thread_c, const std::string& phase)
         {
             std::vector<Padded<std::size_t>> H(thread_c, Padded<std::size_t>(0));
-            const auto t_query = run_parallel(query, thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+            const auto t_query = run_op<Table_>(query, thread_c, [&](const std::size_t t_id, const auto... pieces)
             {
-                H[t_id].unwrap() += M.find(t_id, s, n);
+                H[t_id].unwrap() += M.find(t_id, pieces...);
             }, perf);
 
             std::size_t hit_c = 0;
@@ -184,9 +212,9 @@ void build_and_query(const Config& cfg, Perf_Group* const perf)
         print("table.init_capacity", M.capacity());
     print("init.seconds", duration(t_init_e - t_init_s));
 
-    const auto t_build = run_parallel(index, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+    const auto t_build = run_op<Table_>(index, cfg.thread_c, [&](const std::size_t t_id, const auto... pieces)
     {
-        M.insert(t_id, s, n);
+        M.insert(t_id, pieces...);
     }, perf);
 
     report_phase("build", index.kmer_count(), t_build);

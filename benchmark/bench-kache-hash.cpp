@@ -41,9 +41,17 @@ public:
     // Adds the `n` k-mers of the sequence `s`, for the `t_id`'th user thread.
     void insert(std::size_t t_id, const char* s, std::size_t n);
 
+    // Adds the k-mers of the `c` sequences `seqs[i]` of `lens[i]` bases, for
+    // the `t_id`'th user thread.
+    void insert(std::size_t t_id, const char* const* seqs, const std::size_t* lens, std::size_t c);
+
     // Returns the number of the `n` k-mers of the sequence `s` present in the
     // table.
     std::size_t find(std::size_t t_id, const char* s, std::size_t n) const;
+
+    // Returns the number of the k-mers of the `c` sequences `seqs[i]` of
+    // `lens[i]` bases present in the table.
+    std::size_t find(std::size_t t_id, const char* const* seqs, const std::size_t* lens, std::size_t c) const;
 
     // Returns the number of k-mers in the table.
     std::size_t size() const { return M.size(); }
@@ -76,9 +84,26 @@ inline void Kache_Hash<mt_, T_>::insert(const std::size_t t_id, const char* cons
 
 
 template <bool mt_, typename T_>
+inline void Kache_Hash<mt_, T_>::insert(const std::size_t t_id, const char* const* const seqs, const std::size_t* const lens, const std::size_t c)
+{
+    if constexpr(is_set)
+        M.insert(seqs, lens, c, token[t_id]);
+    else
+        M.upsert(seqs, lens, c, [](const uint64_t v){ return v + 1; }, 1, token[t_id]);
+}
+
+
+template <bool mt_, typename T_>
 inline std::size_t Kache_Hash<mt_, T_>::find(const std::size_t, const char* const s, const std::size_t n) const
 {
     return M.count(s, n + k - 1);
+}
+
+
+template <bool mt_, typename T_>
+inline std::size_t Kache_Hash<mt_, T_>::find(const std::size_t, const char* const* const seqs, const std::size_t* const lens, const std::size_t c) const
+{
+    return M.count(seqs, lens, c);
 }
 
 
