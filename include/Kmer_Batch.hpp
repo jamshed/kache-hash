@@ -117,7 +117,7 @@ public:
         uint64_t key[C];    // `key[i]` is the canonical form of the chunk's `i`'th k-mer.
         uint64_t h[C];  // `h[i]` is its minimizer hash.
         uint8_t c[C];   // `c[i]` is its checksum, never 0.
-        uint8_t m[C];   // `m[i]` is its minimizer coordinate, oriented per the canonical form.
+        uint8_t m[C];   // `m[i]` is its minimizer coordinate, oriented per the canonical form, if described.
         std::size_t n;  // Number of k-mers in the chunk.
     };
 
@@ -125,8 +125,9 @@ public:
     void reset(const char* t, std::size_t n);
 
     // Describes the next chunk of the stretch into `out`, and returns its
-    // number of k-mers; 0 iff the stretch is exhausted.
-    std::size_t next(Chunk& out);
+    // number of k-mers; 0 iff the stretch is exhausted. Describes minimizer
+    // coordinates iff `coords_`, which is to be the same for all the chunks.
+    template <bool coords_ = true> std::size_t next(Chunk& out);
 };
 
 
@@ -178,6 +179,7 @@ inline void Kmer_Batch<k, l>::window_min(const uint64_t* const top, uint64_t* co
 
 
 template <uint16_t k, uint16_t l>
+template <bool coords_>
 inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
 {
     out.n = 0;
@@ -199,7 +201,11 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
     }
 
     for(std::size_t x = x_0; x < pos_c; ++x)
-        hc[x] = wang_u64(std::min(lf[x], lr[x])), o_rev[x] = (lr[x] < lf[x]);
+    {
+        hc[x] = wang_u64(std::min(lf[x], lr[x]));
+        if constexpr(coords_)
+            o_rev[x] = (lr[x] < lf[x]);
+    }
 
     // Sliding minima over `w` positions, by doubling spans; levels `j > 0` sit at `v + (j - 1) * P`.
     alignas(64) uint64_t v[lvl > 0 ? lvl * P : 1];
@@ -215,26 +221,29 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
     // The minimizers' positions. A new minimum can only enter at a window's right end; else the last k-mer's
     // minimizer stays, unless it has left the window, and only then is the window scanned, for its leftmost position
     // holding the least hash. The hash is a bijection, so the l-mer at such a position is the minimizer.
-    std::size_t pos = min_pos;  // Position of the last k-mer's minimizer, offset by `w` to keep it unsigned.
-    for(std::size_t i = 0; i < cnt; ++i)
+    if constexpr(coords_)
     {
-        const auto h = out.h[i];
-        if(hc[i + w - 1] == h)
-            pos = i + w - 1 + w;
-        else if(pos < i + w)    // The last minimizer has left the window.
+        std::size_t pos = min_pos;  // Position of the last k-mer's minimizer, offset by `w` to keep it unsigned.
+        for(std::size_t i = 0; i < cnt; ++i)
         {
-            uint8_t o = w - 1;
-            for(std::size_t j = w - 1; j-- > 0; )
-                o = (hc[i + j] == h ? uint8_t(j) : o);
-            pos = i + o + w;
+            const auto h = out.h[i];
+            if(hc[i + w - 1] == h)
+                pos = i + w - 1 + w;
+            else if(pos < i + w)    // The last minimizer has left the window.
+            {
+                uint8_t o = w - 1;
+                for(std::size_t j = w - 1; j-- > 0; )
+                    o = (hc[i + j] == h ? uint8_t(j) : o);
+                pos = i + o + w;
+            }
+
+            const uint8_t o = pos - w - i;  // The minimizer's offset in the k-mer.
+            const auto r = o_rev[pos - w];
+            out.m[i] = uint8_t(r * (k - l - o)) | uint8_t((1 - r) * (o | coord_fwd_mask));
         }
 
-        const uint8_t o = pos - w - i;  // The minimizer's offset in the k-mer.
-        const auto r = o_rev[pos - w];
-        out.m[i] = uint8_t(r * (k - l - o)) | uint8_t((1 - r) * (o | coord_fwd_mask));
+        min_pos = (pos >= cnt + w ? pos - cnt : 0);   // Rebased to the next chunk, whose position 0 is this one's `cnt`.
     }
-
-    min_pos = (pos >= cnt + w ? pos - cnt : 0);   // Rebased to the next chunk, whose position 0 is this one's `cnt`.
 
     // The k-mers themselves.
     for(std::size_t i = 0; i < cnt; ++i)
@@ -245,13 +254,18 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
 
         const uint64_t fwd_mask = -uint64_t(fwd < rev); // All ones iff the forward form is canonical.
         out.key[i] = (fwd & fwd_mask) | (rev & ~fwd_mask);
-        out.m[i] ^= (coord_fwd_mask & ~uint8_t(fwd_mask));
+        if constexpr(coords_)
+            out.m[i] ^= (coord_fwd_mask & ~uint8_t(fwd_mask));
         out.c[i] = kmer_checksum(out.key[i]);
     }
 
     // Keep the last `w - 1` l-mer positions, the first of the next chunk.
     for(std::size_t x = 0; x + 1 < w; ++x)
-        hc[x] = hc[cnt + x], o_rev[x] = o_rev[cnt + x];
+    {
+        hc[x] = hc[cnt + x];
+        if constexpr(coords_)
+            o_rev[x] = o_rev[cnt + x];
+    }
 
     p += cnt;
     out.n = cnt;

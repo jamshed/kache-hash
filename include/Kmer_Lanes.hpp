@@ -47,7 +47,7 @@ public:
         vec key[T]; // Canonical forms.
         vec h[T];   // Minimizer hashes.
         vec c[T];   // Checksums, never 0.
-        vec m[T];   // Minimizer coordinates, oriented per the canonical forms.
+        vec m[T];   // Minimizer coordinates, oriented per the canonical forms, if described.
         int64_t first;  // Index of the k-mers at the chunk's first base, in their stretches; negative before the first k-mers.
         std::size_t n[L];   // Number of k-mers in the lanes' stretches.
         bool any;   // Whether the chunk has any k-mer.
@@ -111,8 +111,9 @@ public:
     void reset(const char* const* t, const std::size_t* len, std::size_t c);
 
     // Describes the next chunk into `out`. Returns `false` iff all lanes are
-    // exhausted; then `out` holds no k-mer.
-    bool next(Chunk& out);
+    // exhausted; then `out` holds no k-mer. Describes minimizer coordinates iff
+    // `coords_`, which is to be the same for all the chunks.
+    template <bool coords_ = true> bool next(Chunk& out);
 };
 
 
@@ -164,6 +165,7 @@ inline void Kmer_Lanes<k, l>::load_bases(vec (&codes)[T / 8]) const
 
 
 template <uint16_t k, uint16_t l>
+template <bool coords_>
 inline bool Kmer_Lanes<k, l>::next(Chunk& out)
 {
     out.any = false;
@@ -194,15 +196,24 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
         if(!lmers)
             continue;
 
-        const ivec rev = (lr < lf);
-        hc[w - 1 + b] = wang_u64(select(rev, lr, lf)), o_rev[w - 1 + b] = vec(rev);
+        if constexpr(coords_)
+        {
+            const ivec rev = (lr < lf);
+            hc[w - 1 + b] = wang_u64(select(rev, lr, lf)), o_rev[w - 1 + b] = vec(rev);
+        }
+        else
+            hc[w - 1 + b] = wang_u64(min(lr, lf));
     }
 
     if(!kmers)
     {
         out.first = s - (k - 1);
         for(std::size_t x = 0; x + T < P; ++x)
-            hc[x] = hc[x + T], o_rev[x] = o_rev[x + T];
+        {
+            hc[x] = hc[x + T];
+            if constexpr(coords_)
+                o_rev[x] = o_rev[x + T];
+        }
         pos = splat(0), pos_rev = splat(0);    // Stale, so that the first k-mers scan their windows.
         for(std::size_t j = 0; j < L; ++j)
             out.n[j] = n[j];
@@ -226,27 +237,6 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
     {
         const vec h = min(v[i], v[i + off]);
 
-        // A new minimum can only enter at the window's right end; else the last minimizer stays, unless it has left
-        // the window, and only then is the window scanned for the leftmost position holding the least hash.
-        const ivec enter = (hc[i + w - 1] == h);
-        pos = select(enter, splat(i + w - 1 + w), pos);
-        pos_rev = select(enter, o_rev[i + w - 1], pos_rev);
-        const ivec left = (pos < splat(i + w)) & ~enter;
-        if(any(left))
-        {
-            vec p = splat(i + w - 1 + w), p_rev = o_rev[i + w - 1];
-            for(std::size_t o = w - 1; o-- > 0; )
-            {
-                const ivec eq = (hc[i + o] == h);
-                p = select(eq, splat(i + o + w), p), p_rev = select(eq, o_rev[i + o], p_rev);
-            }
-
-            pos = select(left, p, pos), pos_rev = select(left, p_rev, pos_rev);
-        }
-
-        const vec o = pos - splat(i + w);   // The minimizers' offsets in the k-mers.
-        const vec mc = select(ivec(pos_rev), splat(k - l) - o, o | splat(coord_fwd_mask));
-
         const ivec canon_fwd = (f[i] < r[i]);
         const vec key = select(canon_fwd, f[i], r[i]);
         const vec c = wang_u64(key) >> 56;  // As `kmer_checksum`.
@@ -254,13 +244,42 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
         out.key[i] = key;
         out.h[i] = h;
         out.c[i] = select(c == splat(0), splat(1), c);
-        out.m[i] = mc ^ (splat(coord_fwd_mask) & ~vec(canon_fwd));
+
+        if constexpr(coords_)
+        {
+            // A new minimum can only enter at the window's right end; else the last minimizer stays, unless it has
+            // left the window, and only then is the window scanned for the leftmost position holding the least hash.
+            const ivec enter = (hc[i + w - 1] == h);
+            pos = select(enter, splat(i + w - 1 + w), pos);
+            pos_rev = select(enter, o_rev[i + w - 1], pos_rev);
+            const ivec left = (pos < splat(i + w)) & ~enter;
+            if(any(left))
+            {
+                vec p = splat(i + w - 1 + w), p_rev = o_rev[i + w - 1];
+                for(std::size_t o = w - 1; o-- > 0; )
+                {
+                    const ivec eq = (hc[i + o] == h);
+                    p = select(eq, splat(i + o + w), p), p_rev = select(eq, o_rev[i + o], p_rev);
+                }
+
+                pos = select(left, p, pos), pos_rev = select(left, p_rev, pos_rev);
+            }
+
+            const vec o = pos - splat(i + w);   // The minimizers' offsets in the k-mers.
+            const vec mc = select(ivec(pos_rev), splat(k - l) - o, o | splat(coord_fwd_mask));
+            out.m[i] = mc ^ (splat(coord_fwd_mask) & ~vec(canon_fwd));
+        }
     }
 
     // Keep the last `w - 1` positions, and rebase the minimizers' positions to the next chunk.
     for(std::size_t x = 0; x + T < P; ++x)
-        hc[x] = hc[x + T], o_rev[x] = o_rev[x + T];
-    pos = select(pos >= splat(T + w), pos - splat(T), splat(0));
+    {
+        hc[x] = hc[x + T];
+        if constexpr(coords_)
+            o_rev[x] = o_rev[x + T];
+    }
+    if constexpr(coords_)
+        pos = select(pos >= splat(T + w), pos - splat(T), splat(0));
 
     for(std::size_t j = 0; j < L; ++j)
         out.n[j] = n[j];
