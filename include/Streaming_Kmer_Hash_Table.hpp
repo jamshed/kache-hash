@@ -360,6 +360,8 @@ private:
     // runs continue across chunks; else iff `pipe_`, the stretches of ACGT
     // bases go through one pipeline of the batch describer, else a pipeline
     // each. The minimizer coordinates are described iff `coords_`.
+    // NB: `pre_meta` takes every descriptor, not just each minimizer run's
+    // first: a prefetch per k-mer costs less than branching on run starts.
     template <bool lanes_, bool pipe_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
     static void stream(const char* const* seqs, const std::size_t* lens, std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
 
@@ -1315,8 +1317,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_batched(const char*
     {
         kb.template next<coords_>(c);
         for(std::size_t j = 0; j < c.n; ++j)
-            if(j == 0 || c.h[j] != c.h[j - 1])
-                pre_meta(desc(c, j));
+            pre_meta(desc(c, j));
     };
 
     kb.reset(t, n);
@@ -1384,8 +1385,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_stretches(const Str
 
             ch_s[x] = s_cur, ch_first[x] = at, at += ch[x].n;
             for(std::size_t j = 0; j < ch[x].n; ++j)
-                if(j == 0 || ch[x].h[j] != ch[x].h[j - 1])
-                    pre_meta(desc(ch[x], j));
+                pre_meta(desc(ch[x], j));
             return;
         }
     };
@@ -1459,8 +1459,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
             {
                 const auto [t_b, t_e] = ch[x].range(j);
                 for(std::size_t t = t_b; t < t_e; ++t)
-                    if(t == t_b || ch[x].h[t][j] != ch[x].h[t - 1][j])
-                        pre_meta(desc(x, j, t));
+                    pre_meta(desc(x, j, t));
             }
 
         return true;
