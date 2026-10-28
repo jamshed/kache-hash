@@ -357,14 +357,13 @@ private:
     // `pre_slot(make)` `slot_dist` k-mers ahead, where `make()` returns the
     // descriptor. Skipping a prefetch then skips making its descriptor. With
     // `lanes_`, the k-mers are described in SIMD lanes, and iff `cont_`, lane
-    // runs continue across chunks; else iff `pipe_`, the stretches of ACGT
-    // bases go through one pipeline of the batch describer, else a pipeline
-    // each. The minimizer coordinates are described iff `coords_`. If
-    // `pre_slot` has `active()`, the lanes skip a chunk's slot prefetches while
-    // it is `false`.
+    // runs continue across chunks; else the stretches of ACGT bases go through
+    // one pipeline of the batch describer. The minimizer coordinates are
+    // described iff `coords_`. If `pre_slot` has `active()`, the lanes skip a
+    // chunk's slot prefetches while it is `false`.
     // NB: `pre_meta` takes every descriptor, not just each minimizer run's
     // first: a prefetch per k-mer costs less than branching on run starts.
-    template <bool lanes_, bool pipe_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+    template <bool lanes_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
     static void stream(const char* const* seqs, const std::size_t* lens, std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
 
     // Applies `stream`'s callbacks to the k-mers of the sequences `seqs[0..c)`
@@ -1205,7 +1204,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-template <bool lanes_, bool pipe_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
+template <bool lanes_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
 {
     if constexpr(!lanes_)    // All stretches through one pipeline, in groups.
@@ -1223,14 +1222,9 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream(const char* const* 
 
                 if(e - s >= k)
                 {
-                    if constexpr(!pipe_)
-                        stream_batched<coords_>(seq + s, e - s - (k - 1), q, s, pre_meta, pre_slot, op);
-                    else
-                    {
-                        S[s_c++] = {seq + s, e - s, q, s};
-                        if(s_c == group_sz)
-                            stream_stretches<coords_>(S, s_c, pre_meta, pre_slot, op), s_c = 0;
-                    }
+                    S[s_c++] = {seq + s, e - s, q, s};
+                    if(s_c == group_sz)
+                        stream_stretches<coords_>(S, s_c, pre_meta, pre_slot, op), s_c = 0;
                 }
 
                 s = e + 1;
@@ -1880,7 +1874,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
     // insertions, it gains build performance. In the lanes, a lane's last minimizer run in a chunk continues into the
     // next chunk's k-mers of the lane, so that chunk boundaries don't split runs, and their locks.
     Sec_Cache sc_slot;
-    stream<use_lanes, true, true, true>(seqs, lens, c,
+    stream<use_lanes, true, true>(seqs, lens, c,
         [&](const Kmer_Desc& d){ prefetch_meta<true>(d); },
         [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
         [&](const Kmer_Desc& d, std::size_t, std::size_t)
@@ -1923,12 +1917,12 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
     };
 
     // Positive queries gain from prefetching their slots, and negative ones lose the work, so the slots are prefetched
-    // while the last query hit; queries tend to come in streaks. A call's stretches go through a pipeline each, one
-    // pipeline for all costs query performance. Lane runs don't continue across chunks for queries, which take no
-    // locks: that costs them. Queries describe no minimizer coordinates: they don't use them.
+    // while the last query hit; queries tend to come in streaks. A call's stretches go through one pipeline, which a
+    // pipeline per stretch, such as per read, would restart. Lane runs don't continue across chunks for queries, which
+    // take no locks: that costs them. Queries describe no minimizer coordinates: they don't use them.
     bool hit = true;
     Sec_Cache sc_slot;
-    stream<use_lanes, false, false, false>(seqs, lens, c,
+    stream<use_lanes, false, false>(seqs, lens, c,
         [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
         Lookup_Pre_Slot{*this, sc_slot, hit},
         [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
