@@ -359,7 +359,9 @@ private:
     // `lanes_`, the k-mers are described in SIMD lanes, and iff `cont_`, lane
     // runs continue across chunks; else iff `pipe_`, the stretches of ACGT
     // bases go through one pipeline of the batch describer, else a pipeline
-    // each. The minimizer coordinates are described iff `coords_`.
+    // each. The minimizer coordinates are described iff `coords_`. If
+    // `pre_slot` has `active()`, the lanes skip a chunk's slot prefetches while
+    // it is `false`.
     // NB: `pre_meta` takes every descriptor, not just each minimizer run's
     // first: a prefetch per k-mer costs less than branching on run starts.
     template <bool lanes_, bool pipe_, bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
@@ -418,11 +420,16 @@ private:
     // lanes at once, a stretch per lane, and the groups through one pipeline of
     // chunks. The metadata of a chunk's buckets is prefetched once it is
     // described, before the operations on the chunk ahead of it. A chunk's
-    // k-mers go lane by lane, a lane's in order. The slot prefetches reach
-    // within a lane's run of k-mers, and the runs' first k-mers get theirs a
-    // chunk ahead. Iff `cont_`, lane runs continue across chunks.
+    // k-mers go lane by lane, a lane's in order. All of a chunk's slots are
+    // prefetched a chunk ahead. Iff `cont_`, lane runs continue across chunks.
     template <bool cont_, bool coords_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
     static void stream_lanes(const Stretch* S, const std::size_t* G_c, std::size_t g_c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
+
+    // Describes the next chunk of the lanes `kl` into `out` without minimizer
+    // coordinates, as lookups do. Returns what `Kmer_Lanes::next` does.
+    // NB: Out of line, so that the lanes' unrolled body stays apart from the
+    // lookups' loops. The batch describer runs faster inlined.
+    __attribute__((noinline)) static bool describe_lookups(Kmer_Lanes<k, l>& kl, typename Kmer_Lanes<k, l>::Chunk& out);
 
     // Returns the index of the slot holding the k-mer `key` with checksum `c`
     // and minimizer coordinate `m` in the `i`'th bucket, or `B` if it is absent
@@ -469,6 +476,22 @@ private:
     // instructions per k-mer. It takes the k-mer and the hash by value, as a
     // descriptor by reference would be kept in memory for the call.
     template <bool write_> __attribute__((noinline, cold)) void prefetch_spill(Kmer<k> key, uint64_t h, Sec_Cache& sc) const;
+
+    // Lookups' slot prefetches, as `stream` takes them: on while the last
+    // lookup hit. The lanes ask once per chunk whether they are on.
+    struct Lookup_Pre_Slot
+    {
+        const Streaming_Kmer_Hash_Table& M; // The table.
+        Sec_Cache& sc;  // The cache of secondary buckets of the prefetches.
+        const bool& hit;    // Whether the last lookup hit.
+
+        // Returns whether the prefetches are on.
+        bool active() const;
+
+        // Prefetches the slot of the k-mer that `make()` describes, as
+        // `prefetch_slot` does, iff the prefetches are on.
+        template <typename Make_> void operator()(const Make_& make) const;
+    };
 
     // Inserts the k-mer `key` with checksum `c` and coordinate `m` into the
     // overflow table iff it is absent there, with value `val` in a map; also in
@@ -1420,6 +1443,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
     typedef Kmer_Lanes<k, l> lanes_t;
     constexpr auto T_c = lanes_t::T;
     static_assert(T_c * lane_c <= 256);
+    static_assert(slot_dist >= T_c, "The slot prefetches a chunk ahead are to cover the chunk.");
 
     lanes_t kl;
     std::size_t g_d = 0;    // Group being described.
@@ -1443,9 +1467,14 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
     {
         return Kmer_Desc{Kmer<k>(ch[x].key[t][j]), ch[x].h[t][j], static_cast<uint8_t>(ch[x].c[t][j]), coords_ ? static_cast<uint8_t>(ch[x].m[t][j]) : uint8_t(0)};
     };
+    const auto describe = [&](const std::size_t x)
+    {
+        if constexpr(coords_)   return kl.template next<true>(ch[x]);
+        else                    return describe_lookups(kl, ch[x]);
+    };
     const auto fill_and_prefetch = [&](const std::size_t x) -> bool
     {
-        while(!kl.template next<coords_>(ch[x]))  // The group is done; describe the next one, if any.
+        while(!describe(x)) // The group is done; describe the next one, if any.
         {
             if(g_d + 1 == g_c)
                 return false;
@@ -1465,17 +1494,19 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
         return true;
     };
 
-    // The first k-mers of a chunk's runs, which no prefetch within a run reaches, get theirs at once a chunk ahead: no
-    // prefetch then crosses runs. With two chunks in flight, their metadata was prefetched just before.
-    // NB: Stopping this loop at the first prefetch that a missing query skips saves instructions but no cycles, and
-    // costs builds.
-    const auto pre_heads = [&](const std::size_t x)
+    // A chunk's slot prefetches, all at once a chunk ahead. With two chunks in flight, their metadata was prefetched
+    // just before.
+    const auto pre_slots = [&](const std::size_t x)
     {
+        if constexpr(requires { pre_slot.active(); })
+            if(!pre_slot.active())
+                return;
+
         if(ch[x].any)
             for(std::size_t j = 0; j < G_c[ch_g[x]]; ++j)
             {
                 const auto [t_b, t_e] = ch[x].range(j);
-                for(std::size_t t = t_b; t < t_e && t < t_b + slot_dist; ++t)
+                for(std::size_t t = t_b; t < t_e; ++t)
                     pre_slot([&](){ return desc(x, j, t); });
             }
     };
@@ -1485,12 +1516,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
     bool live[lane_depth];
     for(std::size_t x = 0; x < lane_depth; ++x)
         live[x] = fill_and_prefetch(x);
-    pre_heads(0);
+    pre_slots(0);
     for(std::size_t cur = 0; live[cur]; cur = (cur + 1 == lane_depth ? 0 : cur + 1))
     {
         const auto cur_next = (cur + 1 == lane_depth ? 0 : cur + 1);   // The next chunk.
         if(live[cur_next])
-            pre_heads(cur_next);
+            pre_slots(cur_next);
 
         const auto g = ch_g[cur];
         const auto c = G_c[g];
@@ -1504,12 +1535,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
                 done[j] = 0;
 
                 for(std::size_t t = t_b; t < t_e; ++t)
-                {
-                    if(t + slot_dist < t_e)
-                        pre_slot([&](){ return desc(cur, j, t + slot_dist); });
-
                     op(desc(cur, j, t), S_g[j].q, base + t);
-                }
 
                 // Continue the lane's last run into its k-mers of the next chunk, if of the same group.
                 if constexpr(cont_)
@@ -1520,12 +1546,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
                         const auto h_last = ch[cur].h[t_e - 1][j];
                         std::size_t u = u_b;
                         for(; u < u_e && ch[cur_next].h[u][j] == h_last; ++u)
-                        {
-                            if(u + slot_dist < u_e)
-                                pre_slot([&](){ return desc(cur_next, j, u + slot_dist); });
-
                             op(desc(cur_next, j, u), S_g[j].q, base_next + u);
-                        }
 
                         done[j] = u - u_b;
                     }
@@ -1533,6 +1554,13 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
 
         live[cur] = fill_and_prefetch(cur);
     }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::describe_lookups(Kmer_Lanes<k, l>& kl, typename Kmer_Lanes<k, l>::Chunk& out)
+{
+    return kl.template next<false>(out);
 }
 
 
@@ -1637,6 +1665,22 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
     }
 
     __builtin_prefetch(&slot(i, std::countr_zero(cand)), write_, 3);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot::active() const
+{
+    return hit;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename Make_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot::operator()(const Make_& make) const
+{
+    if(hit)
+        M.template prefetch_slot<false>(make(), sc);
 }
 
 
@@ -1860,11 +1904,7 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
     Sec_Cache sc_slot;
     stream<use_lanes, false, false, false>(seqs, lens, c,
         [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
-        [&](const auto& make)
-        {
-            if(hit)
-                prefetch_slot<false>(make(), sc_slot);
-        },
+        Lookup_Pre_Slot{*this, sc_slot, hit},
         [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
         {
             // NB: Branch-free, as a branch on run starts mispredicts once per run.
