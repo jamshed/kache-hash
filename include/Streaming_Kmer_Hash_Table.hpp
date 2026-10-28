@@ -1841,7 +1841,6 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
 {
     // The current minimizer run, its primary bucket `b`, and its secondary buckets `p` and `q` once computed.
     uint64_t run_h = 0;
-    bool in_run = false;
     bool sec = false;
     std::size_t b = 0, p = 0, q = 0;
 
@@ -1868,8 +1867,10 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
         },
         [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
         {
-            if(!in_run || d.h != run_h)
-                in_run = true, run_h = d.h, sec = false, b = d.h & (cap_ - 1);
+            // NB: Branch-free, as a branch on run starts mispredicts once per run.
+            b = d.h & (cap_ - 1);
+            sec &= (d.h == run_h);
+            run_h = d.h;
 
             // Absent past a full primary bucket too, unless its spill filter marks the minimizer.
             uint32_t e;
