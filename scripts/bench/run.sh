@@ -9,6 +9,8 @@
 #   SIZINGS: `presized`, for the input's distinct k-mers, and `half`, for half of them (default: both);
 #   THREADS: the thread counts (default: 16); the sequential variants run at 1;
 #   THREADS_<table>: the thread counts of one table, e.g. `THREADS_sshash`, instead of THREADS;
+#   QUERY_THREADS: further thread counts to query each table with, those below its run's, reported as the phases
+#            `query<i>.T<count>` (default: none);
 #   REPS:    the repetitions of each run (default: 3);
 #   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none);
 #   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
@@ -152,6 +154,10 @@ run()
     done
 
     args+=(--threads "${t}")
+    for q in ${QUERY_THREADS:-}; do
+        [ "${q}" -lt "${t}" ] && args+=(--query-threads "${q}")
+    done
+
     [ "${kind}" == "set" ] && args+=(--set)
     [ "${variant}" == "seq" ] && args+=(--seq)
     [ "${sizing}" == "presized" ] && args+=(--init-cap "${distinct}")

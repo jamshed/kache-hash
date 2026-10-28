@@ -44,6 +44,7 @@ struct Config
     std::string index;  // Path to the input to build the table on.
     std::vector<std::string> query; // Paths to the inputs to query the table with.
     std::size_t thread_c = 1;   // Number of user threads.
+    std::vector<std::size_t> query_thread_c;    // Further numbers of user threads to query the table with, each at most `thread_c`.
     bool seq = false;   // Whether to use the sequential variant of the table.
     bool set = false;   // Whether to use a set instead of a map of k-mer counts.
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
@@ -57,7 +58,7 @@ inline Config parse_config(const int argc, char* argv[])
 {
     const auto usage = [&]()
     {
-        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--init-cap <count>] [--perf <events>]\n";
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--query-threads <count>]... [--seq] [--set] [--init-cap <count>] [--perf <events>]\n";
         std::exit(EXIT_FAILURE);
     };
 
@@ -72,6 +73,8 @@ inline Config parse_config(const int argc, char* argv[])
             cfg.query.emplace_back(argv[++i]);
         else if(arg == "--threads" && has_val)
             cfg.thread_c = std::strtoull(argv[++i], nullptr, 10);
+        else if(arg == "--query-threads" && has_val)
+            cfg.query_thread_c.push_back(std::strtoull(argv[++i], nullptr, 10));
         else if(arg == "--seq")
             cfg.seq = true;
         else if(arg == "--set")
@@ -85,6 +88,9 @@ inline Config parse_config(const int argc, char* argv[])
     }
 
     if(cfg.index.empty() || cfg.thread_c == 0 || cfg.thread_c > std::thread::hardware_concurrency() || (cfg.seq && cfg.thread_c > 1))
+        usage();
+
+    if(std::any_of(cfg.query_thread_c.cbegin(), cfg.query_thread_c.cend(), [&](const auto t){ return t == 0 || t > cfg.thread_c; }))
         usage();
 
     return cfg;
@@ -120,7 +126,8 @@ void for_each_canonical(const char* const s, const std::size_t n, const F_& f)
 
 
 // Looks up the k-mers of each query input of the configuration `cfg` in the
-// table `M`, a phase per input. Counts the events of the group `perf` per phase,
+// table `M`, a phase per input, and then a phase per further query thread count
+// `t`, named `query<i>.T<t>`. Counts the events of the group `perf` per phase,
 // if provided.
 template <typename Table_>
 void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf)
@@ -131,18 +138,26 @@ void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf)
         const Fragments query(cfg.query[q]);
         report_input(name, cfg.query[q], query);
 
-        std::vector<Padded<std::size_t>> H(cfg.thread_c, Padded<std::size_t>(0));
-        const auto t_query = run_parallel(query, cfg.thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+        // Looks up the query's k-mers with `thread_c` user threads, as the phase `phase`.
+        const auto run = [&](const std::size_t thread_c, const std::string& phase)
         {
-            H[t_id].unwrap() += M.find(t_id, s, n);
-        }, perf);
+            std::vector<Padded<std::size_t>> H(thread_c, Padded<std::size_t>(0));
+            const auto t_query = run_parallel(query, thread_c, [&](const std::size_t t_id, const char* const s, const std::size_t n)
+            {
+                H[t_id].unwrap() += M.find(t_id, s, n);
+            }, perf);
 
-        std::size_t hit_c = 0;
-        std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
-        report_phase(name, query.kmer_count(), t_query);
-        print(name + ".hits", hit_c);
-        if(perf)
-            report_perf(name, *perf);
+            std::size_t hit_c = 0;
+            std::for_each(H.cbegin(), H.cend(), [&](const auto& h){ hit_c += h.unwrap(); });
+            report_phase(phase, query.kmer_count(), t_query);
+            print(phase + ".hits", hit_c);
+            if(perf)
+                report_perf(phase, *perf);
+        };
+
+        run(cfg.thread_c, name);
+        for(const auto t : cfg.query_thread_c)
+            run(t, name + ".T" + std::to_string(t));
     }
 }
 
