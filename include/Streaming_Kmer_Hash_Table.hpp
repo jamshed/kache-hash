@@ -82,13 +82,17 @@ private:
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
     std::atomic_uint64_t resize_th; // At what size of the table to trigger the next resize.
 
-    // Metadata of the k-mers in a bucket.
+    // Metadata of the k-mers in a bucket. The top bits of `min_coord[1..B)`
+    // are its spill filter: they mark the minimizers whose keys left it, their
+    // primary bucket.
     struct Metadata
     {
         uint8_t cs[B];  // Checksums of the k-mers.
         uint8_t min_coord[B];   // Minimizer coordinates within the k-mers.
 
+        static constexpr uint8_t coord_mask = 0b0111'1111;  // Coordinate bits of a `min_coord`.
         static constexpr uint8_t lock_mask = 0b1000'0000;   // Bit of `min_coord[0]` used to lock the bucket.
+        static constexpr uint8_t spill_mask = 0b1000'0000;  // Bit of `min_coord[1..B)` used by the spill filter.
     };
 
     struct Overflow_Set_Val
@@ -204,6 +208,23 @@ private:
     // in `v`.
     static cs_vec set_cs(cs_vec v, std::size_t j, uint8_t c);
 
+    // Returns the index in `[1, B)` of the coordinate whose top bit marks the
+    // minimizer hash `h` in a spill filter.
+    // NB: From bits 32–36 of `h`: the bucket takes its low bits, and window
+    // minima bias its top ones.
+    static std::size_t filter_pos(uint64_t h);
+
+    // Returns whether the spill filter of the bucket with metadata `md` marks
+    // the minimizer hash `h`.
+    static bool may_spill(const Metadata& md, uint64_t h);
+
+    // Marks the minimizer hash `h` in the spill filter of the bucket with
+    // metadata `md`.
+    static void mark_spill(Metadata& md, uint64_t h);
+
+    // Clears the spill filter of the bucket with metadata `md`.
+    static void clear_spills(Metadata& md);
+
     // Returns the size of the `b`'th bucket.
     std::size_t bucket_size(std::size_t b) const;
 
@@ -256,11 +277,11 @@ private:
     // table. The bucket's lock-bit in `min_coord[0]` is kept as is.
     void place_at_resize(const flat_t& e, uint8_t c, uint8_t m, std::size_t i, std::size_t j);
 
-    // Tries to insert the element `x` with checksum `c` and minimizer-
-    // coordinate `m` into the `i`'th bucket of the newly resized table. It
-    // succeeds iff there was empty space, returning `true` in that case.
-    // Returns `false` otherwise.
-    bool try_insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, std::size_t i);
+    // Tries to insert the element `x` with checksum `c`, minimizer-coordinate
+    // `m`, and minimizer hash `h` into its primary bucket `i` of the newly
+    // resized table. Returns whether there was empty space; if not, marks `h`
+    // in the bucket's spill filter.
+    bool try_insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, uint64_t h, std::size_t i);
 
     // Inserts the element `x` with checksum `c`, minimizer-coordinate `m`, and
     // minimizer hash `h` into the resized table. Returns whether it goes to the
@@ -435,7 +456,8 @@ private:
     // its primary bucket: its key's, by checksum, or else the first empty one
     // iff `write_`, with write intent iff `write_`. If the operation goes
     // beyond the bucket, prefetches its secondary buckets' metadata instead,
-    // computing them through the cache `sc`, and its overflow-table slot.
+    // computing them through the cache `sc`, and its overflow-table slot. A
+    // lookup goes beyond only if the spill filter marks its minimizer.
     template <bool write_> void prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const;
 
     // Prefetches what an operation on the k-mer `key` with minimizer hash `h`
@@ -650,6 +672,36 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::set_cs(const cs_vec v, con
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::filter_pos(const uint64_t h)
+{
+    const auto x = (h >> 32) & (B - 1);
+    return x + (x == 0);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::may_spill(const Metadata& md, const uint64_t h)
+{
+    return md.min_coord[filter_pos(h)] & Metadata::spill_mask;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::mark_spill(Metadata& md, const uint64_t h)
+{
+    md.min_coord[filter_pos(h)] |= Metadata::spill_mask;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::clear_spills(Metadata& md)
+{
+    for(std::size_t j = 1; j < B; ++j)
+        md.min_coord[j] &= ~Metadata::spill_mask;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_size(const std::size_t b) const
 {
     const auto zero  = zero_cs();
@@ -670,7 +722,7 @@ inline std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_,
     for(std::size_t j = 0; j < B; ++j)
         if(md(b).cs[j])
         {
-            const auto h = minimizer_hash(key(slot(b, j)), md(b).min_coord[j] & ~Metadata::lock_mask);
+            const auto h = minimizer_hash(key(slot(b, j)), md(b).min_coord[j] & Metadata::coord_mask);
             p += ((h & idx_mask) == b), s += ((h & idx_mask) != b);
         }
 
@@ -807,7 +859,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::place_at_resize(const flat
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const uint64_t h, const std::size_t i)
 {
     lock<true>(i);
 
@@ -818,6 +870,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const
     const auto j = std::countr_zero(cmp);
     if(j == B)
     {
+        mark_spill(md_new(i), h);
         unlock<true>(i);
         return false;
     }
@@ -834,7 +887,7 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     const auto idx_mask = cap_ - 1;
 
     const auto b = h & idx_mask;
-    if(try_insert_at_resize(x, c, m, b))
+    if(try_insert_at_resize(x, c, m, h, b))
         return false;
 
     const auto [s_1, s_2] = secondaries(h);
@@ -1033,7 +1086,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                 for(std::size_t j = 0; j < n; ++j)
                 {
                     const uint8_t c = md(b).cs[j];
-                    const uint8_t m = md(b).min_coord[j] & ~Metadata::lock_mask;
+                    const uint8_t m = md(b).min_coord[j] & Metadata::coord_mask;
                     const auto h = minimizer_hash(key(slot(b, j)), m);
                     if((h & (old_cap - 1)) != b)
                     {
@@ -1053,6 +1106,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 
                 for(std::size_t j = lo; j < n; ++j)
                     md(b).cs[j] = 0, md(b).min_coord[j] = 0;
+
+                clear_spills(md(b));    // The second phase marks the spills anew.
             }
 
             phase_end.arrive_and_wait();
@@ -1561,7 +1616,13 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
     {
         const auto empty = eq_mask(c_vec, zero_cs());
         if(!empty)  // The operation goes beyond the primary bucket.
+        {
+            if constexpr(!write_)
+                if(!may_spill(md(i), d.h))
+                    return;
+
             return prefetch_spill<write_>(d.key, d.h, sc);
+        }
 
         // Updates predicted to insert prefetch the line after their predicted slot's too: a run's insertions cross
         // into it, and with the insertion-frontier prefetches alone, their stores still filled the store buffer.
@@ -1717,6 +1778,8 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
                 return inserted(), true;
             }
 
+            // The spill is marked before placing beyond, so a lookup finding no mark precedes the placements.
+            mark_spill(md(b), d.h);
             unlock(b), held = 0;
             std::tie(p, q) = secondaries(d.h);
             spilled = true;
@@ -1809,10 +1872,11 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
             if(!in_run || d.h != run_h)
                 in_run = true, run_h = d.h, sec = false, b = d.h & (cap_ - 1);
 
+            // Absent past a full primary bucket too, unless its spill filter marks the minimizer.
             uint32_t e;
             if(const auto j = probe(d.key, d.c, d.m, b, e); j < B)
                 return hit = true, g(seq_i, i, present(b, j));
-            if(e < B)
+            if(e < B || !may_spill(md(b), d.h))
                 return hit = false, g(seq_i, i, find_ret_t(null_val));
 
             if(!sec)
