@@ -98,6 +98,8 @@ private:
     typedef Concurrent_Hash_Table<Kmer<k>, ov_val_t, Hash<Kmer<k>>> ov_t;   // The overflow table type.
 
 
+    typedef std::conditional_t<is_map_, T_, uint8_t> mapped_t;  // The mapped type; a placeholder in a set.
+
     // Storage of a table's buckets: each bucket holds the metadata of its
     // keys, then their slots, so that an operation finds both on one page. The
     // buckets sit on huge pages where supported.
@@ -110,15 +112,45 @@ private:
             flat_t slot[B]; // The keys, with their values in a map.
         };
 
+        static constexpr std::size_t line_slots = std::max<std::size_t>(1, L1_CACHE_LINE_SIZE / sizeof(flat_t));  // Number of slots in a cache line.
+
         Bucket* T = nullptr;    // The buckets.
 
     public:
 
+        static constexpr std::size_t bucket_bytes = sizeof(Bucket); // Bytes of a bucket.
+
         // Returns the metadata of the `i`'th bucket.
         Metadata& md(const std::size_t i) const { return T[i].md; }
 
-        // Returns the `j`'th slot of the `i`'th bucket.
-        flat_t& slot(const std::size_t i, const std::size_t j) const { return T[i].slot[j]; }
+        // Returns the key at the `j`'th slot of the `i`'th bucket.
+        Kmer<k> key(std::size_t i, std::size_t j) const;
+
+        // Returns the value at the `j`'th slot of the `i`'th bucket, in a map.
+        mapped_t val(std::size_t i, std::size_t j) const;
+
+        // Sets the value at the `j`'th slot of the `i`'th bucket to `v`, in a
+        // map.
+        void set_val(std::size_t i, std::size_t j, const mapped_t& v) const;
+
+        // Returns the element at the `j`'th slot of the `i`'th bucket.
+        flat_t get(std::size_t i, std::size_t j) const;
+
+        // Puts the element `e` at the `j`'th slot of the `i`'th bucket.
+        void put(std::size_t i, std::size_t j, const flat_t& e) const;
+
+        // Prefetches the `j`'th slot of the `i`'th bucket, with write intent
+        // iff `write_`.
+        template <bool write_> void prefetch_slot(std::size_t i, std::size_t j) const;
+
+        // Prefetches what insertions from the `e`'th slot of the `i`'th bucket
+        // touch first: the slot's line, and the one after.
+        void prefetch_run(std::size_t i, std::size_t e) const;
+
+        // Prefetches the line that a run of insertions reaches next once it
+        // has placed a key at the `e`'th slot of the `i`'th bucket, iff the
+        // slot is the first one in its line.
+        void prefetch_frontier(std::size_t i, std::size_t e) const;
 
         // Allocates the storage of `n` buckets, zeroed, and maps it in
         // parallel with `t_c` threads.
@@ -141,14 +173,8 @@ private:
     // Returns the metadata of the `i`'th bucket.
     Metadata& md(const std::size_t i) const { return T.md(i); }
 
-    // Returns the `j`'th slot of the `i`'th bucket.
-    flat_t& slot(const std::size_t i, const std::size_t j) const { return T.slot(i, j); }
-
     // Returns the metadata of the `i`'th new bucket in a resize.
     Metadata& md_new(const std::size_t i) const { return T_new.md(i); }
-
-    // Returns the `j`'th slot of the `i`'th new bucket in a resize.
-    flat_t& slot_new(const std::size_t i, const std::size_t j) const { return T_new.slot(i, j); }
 
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
 
@@ -167,9 +193,6 @@ private:
     std::atomic_uint64_t ov_th; // Size of the overflow table at which it grows.
     std::atomic_uint64_t ov_step;   // Number of keys a user adds to the overflow table before flushing its count and checking for growth.
 
-
-    // Returns `true` iff `key` matches to the key of the element `e`.
-    static constexpr bool key_equals(const flat_t& e, const Kmer<k>& key) { return Streaming_Kmer_Hash_Table::key(e) == key; }
 
     typedef __m256i cs_vec; // A vector of the checksums of a bucket.
 
@@ -318,7 +341,6 @@ private:
         uint8_t c;  // Its checksum.
     };
 
-    static constexpr std::size_t line_slots = std::max<std::size_t>(1, L1_CACHE_LINE_SIZE / sizeof(flat_t));  // Number of slots in a cache line.
     static constexpr std::size_t slot_dist = 16;    // How many k-mers ahead of their table operations the streaming
                                                     // operations prefetch the slots of their keys in their primary
                                                     // buckets, or else what they touch beyond. In the lanes, that
@@ -506,6 +528,9 @@ public:
     // Returns the capacity (in terms of keys) of the table.
     auto capacity() const { return cap_ * B; }
 
+    // Returns the number of bytes of the table's buckets.
+    std::size_t bucket_bytes() const { return cap_ * Store::bucket_bytes; }
+
     // Returns the size of the table.
     std::size_t size() const;
 
@@ -640,6 +665,72 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::deallocate(const st
 {
     deallocate_huge(T, n);
     T = nullptr;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline Kmer<k> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::key(const std::size_t i, const std::size_t j) const
+{
+    return Streaming_Kmer_Hash_Table::key(T[i].slot[j]);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::val(const std::size_t i, const std::size_t j) const -> mapped_t
+{
+    if constexpr(is_map_)
+        return T[i].slot[j].second;
+    else
+        return (void)i, (void)j, mapped_t();
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::set_val(const std::size_t i, const std::size_t j, const mapped_t& v) const
+{
+    if constexpr(is_map_)
+        T[i].slot[j].second = v;
+    else
+        (void)i, (void)j, (void)v;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::get(const std::size_t i, const std::size_t j) const -> flat_t
+{
+    return T[i].slot[j];
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::put(const std::size_t i, const std::size_t j, const flat_t& e) const
+{
+    T[i].slot[j] = e;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool write_>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_slot(const std::size_t i, const std::size_t j) const
+{
+    __builtin_prefetch(&T[i].slot[j], write_, 3);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_run(const std::size_t i, const std::size_t e) const
+{
+    __builtin_prefetch(&T[i].slot[e], 1, 3);
+    if(e + line_slots < B)
+        __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_frontier(const std::size_t i, const std::size_t e) const
+{
+    if(e % line_slots == 0 && e + line_slots < B)
+        __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
 }
 
 
@@ -850,14 +941,14 @@ auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> ke
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::place_at(const flat_t& e, uint8_t c, std::size_t i, std::size_t j)
 {
-    slot(i, j) = e, md(i).cs[j] = c;
+    T.put(i, j, e), md(i).cs[j] = c;
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::place_at_resize(const flat_t& e, const uint8_t c, const std::size_t i, const std::size_t j)
 {
-    slot_new(i, j) = e, md_new(i).cs[j] = c;
+    T_new.put(i, j, e), md_new(i).cs[j] = c;
 }
 
 
@@ -1042,7 +1133,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_hashes(const std::s
 {
     uint64_t x[B];
     for(std::size_t j = 0; j < n; ++j)
-        x[j] = key(slot(b, j)).as_int();
+        x[j] = T.key(b, j).as_int();
 
     Kmer_Lanes<k, l>::minimizer_hashes(x, n, h);
 }
@@ -1104,16 +1195,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                     const auto h = h_b[j];
                     if((h & (old_cap - 1)) != b)
                     {
-                        held.push_back({slot(b, j), h, c});
+                        held.push_back({T.get(b, j), h, c});
                         continue;
                     }
 
                     if(h & old_cap)
-                        slot(nb, hi) = slot(b, j), md(nb).cs[hi] = c, hi++;
+                        T.put(nb, hi, T.get(b, j)), md(nb).cs[hi] = c, hi++;
                     else
                     {
                         if(lo != j)
-                            slot(b, lo) = slot(b, j), md(b).cs[lo] = c;
+                            T.put(b, lo, T.get(b, j)), md(b).cs[lo] = c;
                         lo++;
                     }
                 }
@@ -1140,7 +1231,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                 const auto i = e.h & (cap_ - 1);
                 const auto empty = eq_mask(load_cs(md(i)), zero_cs());
                 if(empty)
-                    __builtin_prefetch(&slot(i, std::countr_zero(empty)), 1, 3);
+                    T.template prefetch_slot<true>(i, std::countr_zero(empty));
                 else
                 {
                     std::tie(e.p, e.q) = secondaries(e.h), e.sec = true;
@@ -1604,7 +1695,7 @@ inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::probe(const Kmer<k> ke
     {
         const auto j = std::countr_zero(cmp);
         cmp &= (cmp - 1);
-        if(key_equals(slot(i, j), key))
+        if(T.key(i, j) == key)
             return j;
     }
 
@@ -1622,7 +1713,7 @@ inline uint32_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::probe(const Kmer<k> ke
     {
         const auto j = std::countr_zero(cmp);
         cmp &= (cmp - 1);
-        if(key_equals(slot(i, j), key))
+        if(T.key(i, j) == key)
             return j;
     }
 
@@ -1700,17 +1791,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
         // Updates predicted to insert prefetch the line after their predicted slot's too: a run's insertions cross
         // into it, and with the insertion-frontier prefetches alone, their stores still filled the store buffer.
         if constexpr(write_)
-        {
-            const auto e = std::countr_zero(empty);
-            __builtin_prefetch(&slot(i, e), write_, 3);
-            if(e + line_slots < B)
-                __builtin_prefetch(&slot(i, e + line_slots), write_, 3);
-        }
+            T.prefetch_run(i, std::countr_zero(empty));
 
         return;
     }
 
-    __builtin_prefetch(&slot(i, std::countr_zero(cand)), write_, 3);
+    T.template prefetch_slot<write_>(i, std::countr_zero(cand));
 }
 
 
@@ -1823,7 +1909,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
     const auto found = [&](const std::size_t i, const std::size_t j)
     {
         if constexpr(is_map_)
-            slot(i, j).second = f(slot(i, j).second);
+            T.set_val(i, j, f(T.val(i, j)));
         else
             (void)i, (void)j;
     };
@@ -1878,8 +1964,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
 
                 // A run's insertions fill its bucket's lines in order, and the slot prefetches predict the run's
                 // first only: placing a key at a line's first slot prefetches the next line.
-                if(e % line_slots == 0 && e + line_slots < B)
-                    __builtin_prefetch(&slot(b, e + line_slots), 1, 3);
+                T.prefetch_frontier(b, e);
 
                 return inserted(), true;
             }
@@ -1947,7 +2032,7 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
     const auto present = [&](const std::size_t i, const std::size_t j) -> find_ret_t
     {
         (void)i, (void)j;
-        if constexpr(is_map_)   return slot(i, j).second;
+        if constexpr(is_map_)   return T.val(i, j);
         else                    return true;
     };
 

@@ -98,6 +98,7 @@ void measure(const Config& cfg, Perf_Group* const perf)
             report_perf("build", *perf);
 
         print("table.capacity", M.capacity());
+        print("table.bucket_bytes", M.bucket_bytes());
         print("table.size", M.size());
         print("table.overflow_size", M.overflow_size());
 
