@@ -1,8 +1,9 @@
 // Checks the k-mer describers, the batch and the SIMD lanes, against a brute-force reference: for every k-mer of the
 // inputs, its canonical form, checksum, and minimizer hash, the least Wang hash over the canonical forms of all its
-// l-mers; and that its minimizer coordinate decodes to that hash, as the tables decode it. The inputs go whole, split
-// at N, and cut into ragged pieces, so that stretches end at every offset of a chunk; the lanes take them 4 at a time.
-// Each describer runs with the coordinates and without.
+// l-mers; and that its minimizer coordinate decodes to that hash. The inputs go whole, split at N, and cut into ragged
+// pieces, so that stretches end at every offset of a chunk; the lanes take them 4 at a time. Each describer runs with
+// the coordinates and without. Also checks the minimizer hashes that resizes recompute from the canonical k-mers, in
+// batches of every size up to a bucket's.
 // Usage: describers <path>...
 
 #include "Kmer_Batch.hpp"
@@ -80,7 +81,7 @@ static uint64_t min_hash(const char* const s)
 }
 
 
-// Returns the minimizer hash that the coordinate `m` of the canonical k-mer `key` decodes to, as the tables decode it.
+// Returns the minimizer hash that the coordinate `m` of the canonical k-mer `key` decodes to.
 static uint64_t decode(const Kmer<k> key, const uint8_t m)
 {
     const uint8_t idx = m & coord_idx_mask;
@@ -174,6 +175,43 @@ static int check(const char* const path, const std::vector<std::string>& S, cons
 }
 
 
+// Checks the minimizer hashes recomputed from the canonical k-mers of the
+// sequences `S` of the input `path`, in batches whose sizes cycle from 1 to 32.
+// Returns whether it failed.
+static int check_recompute(const char* const path, const std::vector<std::string>& S)
+{
+    constexpr std::size_t max_batch = 32;
+    uint64_t x[max_batch], r[max_batch], h[max_batch];  // A batch's canonical k-mers, and their reference and
+                                                        // recomputed hashes.
+    std::size_t c = 0, n = 1;   // Numbers of k-mers in the batch, and to fill it with.
+    std::size_t kmer_c = 0, bad = 0;
+    const auto flush = [&]()
+    {
+        Kmer_Lanes<k, l>::minimizer_hashes(x, c, h);
+        for(std::size_t j = 0; j < c; ++j)
+            bad += (h[j] != r[j]);
+
+        kmer_c += c, c = 0, n = n % max_batch + 1;
+    };
+
+    for(const auto& s : S)
+        for(std::size_t i = 0; i + k <= s.size(); ++i)
+        {
+            uint64_t rc;
+            const auto f = encode(s.data() + i, k, rc);
+            x[c] = std::min(f, rc), r[c] = min_hash(s.data() + i);
+            if(++c == n)
+                flush();
+        }
+
+    flush();
+
+    std::printf("describers %s, minimizers recomputed over %zu stretches: k-mers %zu, bad hashes %zu%s\n",
+                path, S.size(), kmer_c, bad, bad ? "  <-- WRONG" : "  ok");
+    return bad > 0;
+}
+
+
 int main(int argc, char* argv[])
 {
     if(argc < 2)
@@ -194,6 +232,8 @@ int main(int argc, char* argv[])
         const std::vector<std::string>* const inputs[] = {&F, &G};
         for(const auto* S : inputs)
             fail += check<true>(argv[a], *S, S == &G) + check<false>(argv[a], *S, S == &G);
+
+        fail += check_recompute(argv[a], F);
     }
 
     return fail;
