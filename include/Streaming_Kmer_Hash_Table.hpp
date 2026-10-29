@@ -262,8 +262,11 @@ private:
     bool try_insert_at_resize(const flat_t& x, uint8_t c, uint64_t h, std::size_t i);
 
     // Inserts the element `x` with checksum `c` and minimizer hash `h` into
-    // the resized table. Returns whether it goes to the overflow table.
-    bool insert_at_resize(const flat_t& x, uint8_t c, uint64_t h);
+    // the resized table, whose secondary buckets are `p` and `q` iff `sec`, as
+    // computed ahead. Returns whether it goes to the overflow table.
+    // NB: In a resize, buckets only gain keys, so one found full without its
+    // lock stays so: overflow-bound keys take no bucket locks.
+    bool insert_at_resize(const flat_t& x, uint8_t c, uint64_t h, bool sec, std::size_t p, std::size_t q);
 
     // Puts the minimizer hashes of the `n` keys at the `b`'th bucket at
     // `h[0..n)`, recomputed from the keys.
@@ -882,20 +885,29 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_insert_at_resize(const
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const flat_t& x, const uint8_t c, const uint64_t h)
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const flat_t& x, const uint8_t c, const uint64_t h, const bool sec, std::size_t p, std::size_t q)
 {
-    const auto idx_mask = cap_ - 1;
-
-    const auto b = h & idx_mask;
-    if(try_insert_at_resize(x, c, h, b))
-        return false;
-
-    const auto [s_1, s_2] = secondaries(h);
-    const auto p = std::min(s_1, s_2), q = std::max(s_1, s_2);
-
-    lock_ordered<true>(p, q);
-
     const auto zero = zero_cs();
+    const auto full = [&](const std::size_t i){ return eq_mask(load_cs(md_new(i)), zero) == 0; };
+
+    // A full primary bucket's spill mark is tested without its lock, and set with it.
+    const auto b = h & (cap_ - 1);
+    if(!full(b))
+    {
+        if(try_insert_at_resize(x, c, h, b))
+            return false;
+    }
+    else if(!may_spill(md_new(b), h))
+        lock<true>(b), mark_spill(md_new(b), h), unlock<true>(b);
+
+    if(!sec)
+        std::tie(p, q) = secondaries(h);
+    if(p > q)
+        std::swap(p, q);
+
+    const bool locked = !(full(p) && full(q));
+    if(locked)
+        lock_ordered<true>(p, q);
 
     const auto c_vec_p = load_cs(md_new(p));
     const auto c_vec_q = load_cs(md_new(q));
@@ -919,15 +931,16 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     }
     else
     {
-        unlock_ordered<true>(p, q);
+        if(locked)
+            unlock_ordered<true>(p, q);
 
-        bool full;
+        bool ov_full;
         if constexpr(is_set_)
-            ov_new->insert(x, Overflow_Set_Val(), full);
+            ov_new->insert(x, Overflow_Set_Val(), ov_full);
         else
-            ov_new->insert(x.first, x.second, full);
+            ov_new->insert(x.first, x.second, ov_full);
 
-        if(full)
+        if(ov_full)
         {
             std::cerr << "Overflow table of capacity " << ov_new->capacity() << " is full in a resize. Aborting.\n";
             std::abort();
@@ -1054,14 +1067,23 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     // at their primary buckets stay, compacted, or move to the new half, without locks. The keys at secondary
     // buckets are set aside, and with the overflow table's, re-inserted with locks in the second phase.
     const auto worker_c = resize_worker_c;
-    std::barrier phase_end(static_cast<std::ptrdiff_t>(worker_c));
+    struct Held { flat_t x; uint64_t h; uint8_t c; };   // A key set aside, with its minimizer hash.
+    std::vector<std::vector<Held>> held_of(worker_c);   // The keys each worker set aside.
+    std::vector<std::size_t> held_pre(worker_c + 1);    // Prefix sums of their numbers, once all are set aside.
+    std::atomic<std::size_t> held_next{0};  // Next chunk of them to re-insert.
+    const auto seal = [&]() noexcept
+    {
+        for(std::size_t w = 0; w < worker_c; ++w)
+            held_pre[w + 1] = held_pre[w] + held_of[w].size();
+    };
+    std::barrier phase_end(static_cast<std::ptrdiff_t>(worker_c), seal);
     std::vector<std::thread> W;
     W.reserve(worker_c);
     for(uint64_t i = 0; i < worker_c; ++i)
         W.emplace_back([&](const auto w_id)
         {
-            struct Held { flat_t x; uint64_t h; uint8_t c; };
-            std::vector<Held> held; // This worker's keys at secondary buckets, with their minimizer hashes.
+            std::vector<Held> held; // This worker's keys at secondary buckets: local while filled, as workers pushing
+                                    // into vectors whose headers share cache lines would contend for them.
 
             const auto b_s = old_cap * w_id / worker_c, b_e = old_cap * (w_id + 1) / worker_c;
             uint64_t h_b[B];    // Minimizer hashes of a bucket's keys.
@@ -1097,15 +1119,31 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                 clear_spills(md(b));    // The second phase marks the spills anew.
             }
 
+            held_of[w_id] = std::move(held);
             phase_end.arrive_and_wait();
 
-            // The rest go through a pipeline: a key's new primary bucket is prefetched `pipe_sz` keys ahead of its
-            // insertion.
-            constexpr std::size_t pipe_sz = 16;
-            struct Pending { flat_t x; uint64_t h; uint8_t c; };
+            // The rest go through a pipeline of `pipe_sz` keys: a key's new primary bucket is prefetched as it enters;
+            // `stage_d` keys later, its checksums are read to prefetch the slot it likely takes, or if it is full, its
+            // secondary buckets and its overflow slot; the key is inserted as it leaves.
+            constexpr std::size_t pipe_sz = 32, stage_d = 16;
+            struct Pending { flat_t x; uint64_t h; std::size_t p, q; uint8_t c; bool sec; };
             Pending pipe[pipe_sz];
             std::size_t pipe_c = 0;
             uint64_t ov_n = 0;  // Number of keys this worker moves into the new overflow table.
+            const auto stage = [&](Pending& e)
+            {
+                const auto i = e.h & (cap_ - 1);
+                const auto empty = eq_mask(load_cs(md(i)), zero_cs());
+                if(empty)
+                    __builtin_prefetch(&slot(i, std::countr_zero(empty)), 1, 3);
+                else
+                {
+                    std::tie(e.p, e.q) = secondaries(e.h), e.sec = true;
+                    __builtin_prefetch(&md(e.p), 1, 3), __builtin_prefetch(&md(e.q), 1, 3);
+                    ov_new->template prefetch<true>(key(e.x));
+                }
+            };
+            const auto insert = [&](const Pending& e){ ov_n += insert_at_resize(e.x, e.c, e.h, e.sec, e.p, e.q); };
             const auto push = [&](const flat_t& x, const uint64_t h, const uint8_t c)
             {
                 const auto& meta = md(h & (cap_ - 1));
@@ -1113,16 +1151,32 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                 if constexpr(sizeof(Metadata) > L1_CACHE_LINE_SIZE)
                     __builtin_prefetch(meta.flags, 1, 3);
 
-                auto& slot = pipe[pipe_c % pipe_sz];
+                if(pipe_c >= stage_d)
+                    stage(pipe[(pipe_c - stage_d) % pipe_sz]);
+                auto& e = pipe[pipe_c % pipe_sz];
                 if(pipe_c >= pipe_sz)
-                    ov_n += insert_at_resize(slot.x, slot.c, slot.h);
-                slot = Pending{x, h, c};
+                    insert(e);
+                e = Pending{x, h, 0, 0, c, false};
                 pipe_c++;
             };
 
-            for(const auto& e : held)
-                push(e.x, e.h, e.c);
-            std::vector<Held>().swap(held);
+            // The keys set aside go in chunks, taken dynamically from all the workers'.
+            constexpr std::size_t chunk_sz = 16384;
+            const auto held_c = held_pre[worker_c];
+            for(std::size_t ch; (ch = held_next++) * chunk_sz < held_c; )
+            {
+                // The `x`'th key set aside is the `v`'th worker's.
+                const auto s = ch * chunk_sz, e = std::min(held_c, s + chunk_sz);
+                std::size_t v = std::upper_bound(held_pre.cbegin(), held_pre.cend(), s) - held_pre.cbegin() - 1;
+                for(std::size_t x = s; x < e; ++x)
+                {
+                    while(x >= held_pre[v + 1])
+                        v++;
+
+                    const auto& y = held_of[v][x - held_pre[v]];
+                    push(y.x, y.h, y.c);
+                }
+            }
 
             // The overflow table's keys go in batches, whose minimizer hashes are recomputed at once, and their
             // checksums one by one.
@@ -1154,11 +1208,11 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                     push_batch();
             push_batch();
 
+            // The pipeline's last keys.
+            for(std::size_t e = (pipe_c > stage_d ? pipe_c - stage_d : 0); e < pipe_c; ++e)
+                stage(pipe[e % pipe_sz]);
             for(std::size_t e = (pipe_c > pipe_sz ? pipe_c - pipe_sz : 0); e < pipe_c; ++e)
-            {
-                const auto& slot = pipe[e % pipe_sz];
-                ov_n += insert_at_resize(slot.x, slot.c, slot.h);
-            }
+                insert(pipe[e % pipe_sz]);
 
             ov_new_c += ov_n;
 
