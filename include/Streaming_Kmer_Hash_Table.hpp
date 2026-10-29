@@ -153,7 +153,9 @@ private:
     std::atomic_uint16_t registered_thread_count;   // Number of threads registered to use the table.
 
     std::atomic_uint64_t approx_sz; // Size of the hash table, short of the user-local counts not yet flushed into it.
-    std::vector<Padded<uint64_t>> checkpoint;   // `checkpoint[i]` is the number of keys the `i`'th user has added and not yet flushed into `approx_sz`.
+    std::vector<Padded<uint64_t>> checkpoint;   // `checkpoint[i]` is the number of keys the `i`'th user has added and
+                                                // not yet flushed into `approx_sz`, as of its last update's end: an
+                                                // update counts in registers.
     static constexpr uint64_t resize_checkpoint = 16384;    // Most keys a user adds before flushing its count and checking for a resize.
     std::atomic_uint64_t checkpoint_step;   // Number of keys a user adds before flushing its count and checking for a resize: unflushed keys stay under an eighth of the resize threshold.
     RW_Lock<max_user> table_lock; // Readers-writers lock to resize the table exclusively.
@@ -273,10 +275,6 @@ private:
     // Returns the number of keys a user adds before flushing its count and
     // checking for a resize, for the resize threshold `th`.
     static uint64_t step_for(uint64_t th) { return std::clamp<uint64_t>(th / (8 * max_user), 1, resize_checkpoint); }
-
-    // Counts a key newly added by the `id`'th user. Returns whether the table
-    // is due for a resize.
-    bool add_key(uint16_t id);
 
     // Counts a key newly added to the overflow table by the `id`'th user.
     // Returns whether the overflow table is due to grow.
@@ -939,19 +937,6 @@ inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_at_resize(const fla
     }
 
     return false;
-}
-
-
-template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::add_key(const uint16_t id)
-{
-    auto& cp = checkpoint[id].unwrap();
-    if(KACHE_HASH_LIKELY(++cp < checkpoint_step.load(std::memory_order_relaxed)))
-        return false;
-
-    const auto sz = (approx_sz += cp);
-    cp = 0;
-    return sz >= resize_th.load(std::memory_order_relaxed);
 }
 
 
@@ -1724,6 +1709,20 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
 
     std::size_t ins_c = 0;  // Number of k-mers inserted.
 
+    // The user's count of keys not yet flushed into `approx_sz` is `pending + (ins_c - flushed)`: `pending` from its
+    // earlier updates, the rest from this one. It is flushed, and a resize checked for, once `ins_c` reaches `due`.
+    std::size_t pending = checkpoint[token.id].unwrap(), flushed = 0;
+    const auto step = checkpoint_step.load(std::memory_order_relaxed);
+    std::size_t due = (pending < step ? step - pending : 1);
+
+    // Flushes the user's count. Returns whether the table is due for a resize.
+    const auto flush_count = [&]() -> bool
+    {
+        const auto sz = (approx_sz += pending + (ins_c - flushed));
+        pending = 0, flushed = ins_c, due = ins_c + checkpoint_step.load(std::memory_order_relaxed);
+        return sz >= resize_th.load(std::memory_order_relaxed);
+    };
+
     // Resizes the table, iff it is due.
     const auto resize_now = [&]()
     {
@@ -1748,8 +1747,7 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
     // Accounts for a k-mer inserted, resizing the table if it is due.
     const auto inserted = [&]()
     {
-        ins_c++;
-        if(KACHE_HASH_UNLIKELY(add_key(token.id)))
+        if(KACHE_HASH_UNLIKELY(++ins_c == due) && flush_count())
             resize_now();
     };
 
@@ -1797,6 +1795,10 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
         if(!in_run || d.h != run_h)
         {
             release();
+            if constexpr(mt_)
+                if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize, holding no bucket locks.
+                    table_lock.unlock_shared(token.id), table_lock.lock_shared(token.id);
+
             in_run = true, run_h = d.h, spilled = false;
             b = d.h & (cap_ - 1);
         }
@@ -1861,21 +1863,13 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
         [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
         [&](const Kmer_Desc& d, std::size_t, std::size_t)
         {
-            if constexpr(mt_)
-                if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize.
-                {
-                    release();
-                    table_lock.unlock_shared(token.id);
-                    table_lock.lock_shared(token.id);
-                    in_run = false;
-                }
-
             while(!apply(d))
                 ;
         });
 
     release();
     if constexpr(mt_)   table_lock.unlock_shared(token.id);
+    checkpoint[token.id].unwrap() = pending + (ins_c - flushed);
 
     return ins_c;
 }
