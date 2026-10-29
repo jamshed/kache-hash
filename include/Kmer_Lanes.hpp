@@ -114,6 +114,11 @@ public:
     // exhausted; then `out` holds no k-mer. Describes minimizer coordinates iff
     // `coords_`, which is to be the same for all the chunks.
     template <bool coords_ = true> bool next(Chunk& out);
+
+    // Puts the minimizer hashes of the `n` canonical k-mers with the encodings
+    // `x[0..n)` at `h[0..n)`, as the describers give them, from all their
+    // l-mers: a k-mer per lane.
+    static void minimizer_hashes(const uint64_t* x, std::size_t n, uint64_t* h);
 };
 
 
@@ -286,6 +291,36 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
     out.any = (out.first + static_cast<int64_t>(T) > 0);
     s += static_cast<int64_t>(T);
     return true;
+}
+
+
+template <uint16_t k, uint16_t l>
+inline void Kmer_Lanes<k, l>::minimizer_hashes(const uint64_t* const x, const std::size_t n, uint64_t* const h)
+{
+    for(std::size_t i = 0; i < n; i += L)
+    {
+        const auto c = std::min(L, n - i);  // Number of k-mers in the lanes.
+        uint64_t x_l[L] = {}, h_l[L];
+        std::copy(x + i, x + i + c, x_l);
+        vec f;
+        std::memcpy(&f, x_l, sizeof(f));
+
+        // The reverse complements: complemented bases, reversed by swapping 2-bit pairs, then nibbles, then bytes.
+        vec r = ~f;
+        r = ((r >> 2) & splat(0x3333333333333333)) | ((r & splat(0x3333333333333333)) << 2);
+        r = ((r >> 4) & splat(0x0F0F0F0F0F0F0F0F)) | ((r & splat(0x0F0F0F0F0F0F0F0F)) << 4);
+        const auto byte_rev = _mm256_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+        r = reinterpret_cast<vec>(_mm256_shuffle_epi8(reinterpret_cast<__m256i>(r), byte_rev)) >> (64 - 2 * k);
+
+        // The l-mer at offset `p` of a k-mer has its reverse complement at offset `k - l - p` of the k-mer's reverse
+        // complement.
+        vec m = splat(~uint64_t(0));
+        for(std::size_t p = 0; p < w; ++p)
+            m = min(m, wang_u64(min((f >> (2 * (k - l - p))) & splat(lmer_mask), (r >> (2 * p)) & splat(lmer_mask))));
+
+        std::memcpy(h_l, &m, sizeof(m));
+        std::copy(h_l, h_l + c, h + i);
+    }
 }
 
 

@@ -6,7 +6,6 @@
 
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
-#include "Kmer_Utility.hpp"
 #include "Kmer_Batch.hpp"
 #include "Kmer_Lanes.hpp"
 #include "Concurrent_Hash_Table.hpp"
@@ -288,9 +287,9 @@ private:
     // overflow table.
     bool insert_at_resize(const flat_t& x, uint8_t c, uint8_t m, uint64_t h);
 
-    // Returns the minimizer hash of the canonical k-mer `key` with the
-    // minimizer-coordinate `m`.
-    static uint64_t minimizer_hash(Kmer<k> key, uint8_t m);
+    // Puts the minimizer hashes of the `n` keys at the `b`'th bucket at
+    // `h[0..n)`, recomputed from the keys.
+    void bucket_hashes(std::size_t b, std::size_t n, uint64_t* h) const;
 
     // Returns the secondary buckets of the minimizer hash `h`.
     __attribute__((noinline)) std::pair<std::size_t, std::size_t> secondaries(uint64_t h) const;
@@ -592,7 +591,8 @@ public:
     Token register_user() { return Token(registered_thread_count++); }
 
     // Returns the percentages of keys in the table that are placed into their
-    // primary bucket, their secondary buckets, and the overflow table.
+    // primary bucket, their secondary buckets, and the overflow table. Their
+    // minimizers are recomputed, by as many threads as resizes take.
     std::tuple<double, double, double> key_distribution() const;
 };
 
@@ -747,14 +747,13 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::pair<std::size_t, std::size_t> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::distribution(const std::size_t b) const
 {
     const auto idx_mask = cap_ - 1;
+    const auto n = bucket_size(b);
+    uint64_t h[B];
+    bucket_hashes(b, n, h);
 
     std::size_t p = 0, s = 0;
-    for(std::size_t j = 0; j < B; ++j)
-        if(md(b).cs[j])
-        {
-            const auto h = minimizer_hash(key(slot(b, j)), md(b).min_coord[j] & Metadata::coord_mask);
-            p += ((h & idx_mask) == b), s += ((h & idx_mask) != b);
-        }
+    for(std::size_t j = 0; j < n; ++j)
+        p += ((h[j] & idx_mask) == b), s += ((h[j] & idx_mask) != b);
 
     return {p, s};
 }
@@ -1069,13 +1068,13 @@ void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline uint64_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::minimizer_hash(const Kmer<k> key, const uint8_t m)
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_hashes(const std::size_t b, const std::size_t n, uint64_t* const h) const
 {
-    const uint8_t min_idx = m & coord_idx_mask;
-    const bool in_fwd = m & coord_fwd_mask;
-    const auto min = in_fwd ?
-                        key.template lmer_at<l>(min_idx) : Kmer_Utility::reverse_complement<l>(key.template lmer_at<l>(k - min_idx - l));
-    return wang_u64(min);
+    uint64_t x[B];
+    for(std::size_t j = 0; j < n; ++j)
+        x[j] = key(slot(b, j)).as_int();
+
+    Kmer_Lanes<k, l>::minimizer_hashes(x, n, h);
 }
 
 
@@ -1104,23 +1103,25 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     for(uint64_t i = 0; i < worker_c; ++i)
         W.emplace_back([&](const auto w_id)
         {
-            struct Held { flat_t x; uint8_t c, m; };
-            std::vector<Held> held; // This worker's keys at secondary buckets.
+            struct Held { flat_t x; uint64_t h; uint8_t c, m; };
+            std::vector<Held> held; // This worker's keys at secondary buckets, with their minimizer hashes.
 
             const auto b_s = old_cap * w_id / worker_c, b_e = old_cap * (w_id + 1) / worker_c;
+            uint64_t h_b[B];    // Minimizer hashes of a bucket's keys.
             for(std::size_t b = b_s; b < b_e; ++b)
             {
                 const auto nb = b + old_cap;
                 std::size_t lo = 0, hi = 0; // Numbers of keys kept at `b`, and moved to `nb`.
                 const auto n = bucket_size(b);
+                bucket_hashes(b, n, h_b);
                 for(std::size_t j = 0; j < n; ++j)
                 {
                     const uint8_t c = md(b).cs[j];
                     const uint8_t m = md(b).min_coord[j] & Metadata::coord_mask;
-                    const auto h = minimizer_hash(key(slot(b, j)), m);
+                    const auto h = h_b[j];
                     if((h & (old_cap - 1)) != b)
                     {
-                        held.push_back({slot(b, j), c, m});
+                        held.push_back({slot(b, j), h, c, m});
                         continue;
                     }
 
@@ -1149,9 +1150,8 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             Pending pipe[pipe_sz];
             std::size_t pipe_c = 0;
             uint64_t ov_n = 0;  // Number of keys this worker moves into the new overflow table.
-            const auto push = [&](const flat_t& x, const uint8_t c, const uint8_t m)
+            const auto push = [&](const flat_t& x, const uint64_t h, const uint8_t c, const uint8_t m)
             {
-                const auto h = minimizer_hash(key(x), m);
                 const auto& meta = md(h & (cap_ - 1));
                 __builtin_prefetch(meta.cs, 1, 3);
                 if constexpr(sizeof(Metadata) > L1_CACHE_LINE_SIZE)
@@ -1165,20 +1165,38 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             };
 
             for(const auto& e : held)
-                push(e.x, e.c, e.m);
+                push(e.x, e.h, e.c, e.m);
             std::vector<Held>().swap(held);
 
+            // The overflow table's keys go in batches, whose minimizer hashes are recomputed at once.
             auto it = ov->iterator(worker_c, w_id);
             typedef std::conditional_t<!is_map_, Overflow_Set_Val, Overflow_Map_Val> ov_val_t;
-            Kmer<k> key;
-            ov_val_t val;
-            while(it.next(key, val))
+            constexpr std::size_t batch_sz = 32;
+            Kmer<k> o_key[batch_sz];
+            ov_val_t o_val[batch_sz];
+            uint64_t o_x[batch_sz], o_h[batch_sz];
+            std::size_t o_c = 0;    // Number of keys in the batch.
+            const auto push_batch = [&]()
             {
-                if constexpr(is_set_)
-                    push(key, val.cs, val.min_coord);
-                else
-                    push(flat_t(key, val.val), val.cs, val.min_coord);
-            }
+                for(std::size_t j = 0; j < o_c; ++j)
+                    o_x[j] = o_key[j].as_int();
+                Kmer_Lanes<k, l>::minimizer_hashes(o_x, o_c, o_h);
+
+                for(std::size_t j = 0; j < o_c; ++j)
+                {
+                    if constexpr(is_set_)
+                        push(o_key[j], o_h[j], o_val[j].cs, o_val[j].min_coord);
+                    else
+                        push(flat_t(o_key[j], o_val[j].val), o_h[j], o_val[j].cs, o_val[j].min_coord);
+                }
+
+                o_c = 0;
+            };
+
+            while(it.next(o_key[o_c], o_val[o_c]))
+                if(++o_c == batch_sz)
+                    push_batch();
+            push_batch();
 
             for(std::size_t e = (pipe_c > pipe_sz ? pipe_c - pipe_sz : 0); e < pipe_c; ++e)
             {
@@ -1967,12 +1985,23 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::count(const char* c
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::key_distribution() const -> std::tuple<double, double, double>
 {
-    std::size_t p = 0, s = 0;
-    for(size_t b = 0; b < cap_; ++b)
-    {
-        const auto d = distribution(b);
-        p += d.first, s += d.second;
-    }
+    std::atomic<std::size_t> p = 0, s = 0;
+    std::vector<std::thread> W;
+    W.reserve(resize_worker_c);
+    for(uint64_t w = 0; w < resize_worker_c; ++w)
+        W.emplace_back([&](const uint64_t w_id)
+        {
+            std::size_t p_w = 0, s_w = 0;
+            for(std::size_t b = cap_ * w_id / resize_worker_c; b < cap_ * (w_id + 1) / resize_worker_c; ++b)
+            {
+                const auto d = distribution(b);
+                p_w += d.first, s_w += d.second;
+            }
+
+            p += p_w, s += s_w;
+        }, w);
+
+    std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
 
     const auto o = overflow_size();
     const auto sz = p + s + o;
