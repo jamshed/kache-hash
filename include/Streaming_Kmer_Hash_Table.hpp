@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <bit>
 #include <atomic>
 #include <tuple>
@@ -69,7 +70,7 @@ private:
 
     static constexpr bool is_set_ = std::is_void_v<T_>; // Whether a hash-set.
     static constexpr bool is_map_ = !is_set_;   // Whether a hash-map.
-    typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_t;    // Underlying data type in the flat table.
+    typedef std::conditional_t<is_map_, std::pair<Kmer<k>, T_>, Kmer<k>> flat_t;    // An element of the table: a key, with its value in a map.
     typedef std::optional<T_> val_t;    // Type of values returned by hash-map operations.
     typedef std::conditional_t<is_map_, val_t, bool> find_ret_t;    // Return type for find methods.
     static constexpr auto null_val = [](){ if constexpr(is_map_) return std::nullopt;   else return false; }(); // Marker for absent keys (also values).
@@ -99,22 +100,57 @@ private:
 
 
     typedef std::conditional_t<is_map_, T_, uint8_t> mapped_t;  // The mapped type; a placeholder in a set.
+    static_assert(is_set_ || std::is_trivially_copyable_v<mapped_t>, "Values may be copied bytewise into and out of the slots.");
 
     // Storage of a table's buckets: each bucket holds the metadata of its
-    // keys, then their slots, so that an operation finds both on one page. The
-    // buckets sit on huge pages where supported.
+    // keys, then their slots, so that an operation finds both on one page. A
+    // slot holds a key and, in a map, its value. Where the elements would pad,
+    // as with values narrower than keys, the slots pack them bytewise, so that
+    // a value takes only its own bytes. The buckets sit on huge pages where
+    // supported.
     class Store
     {
+        static constexpr std::size_t line = L1_CACHE_LINE_SIZE;
+        static constexpr std::size_t key_sz = sizeof(Kmer<k>);  // Bytes of a key.
+        static constexpr std::size_t val_sz = (is_map_ ? sizeof(mapped_t) : 0);    // Bytes of a value.
+        static constexpr std::size_t slot_sz = key_sz + val_sz; // Bytes of a slot.
+        static constexpr bool packed = (sizeof(flat_t) > slot_sz);  // Whether the slots are packed bytewise.
+
         // A bucket: the metadata of its keys, then their slots.
         struct alignas(L1_CACHE_LINE_SIZE) Bucket
         {
             Metadata md;    // Metadata of the keys.
-            flat_t slot[B]; // The keys, with their values in a map.
+            std::conditional_t<packed, unsigned char[B * slot_sz], flat_t[B]> slot; // The keys, with their values in a map.
         };
 
-        static constexpr std::size_t line_slots = std::max<std::size_t>(1, L1_CACHE_LINE_SIZE / sizeof(flat_t));  // Number of slots in a cache line.
+        static constexpr std::size_t line_slots = std::max<std::size_t>(1, line / sizeof(flat_t)); // Number of unpacked slots in a cache line.
+
+        // The packed slots whose insertions prefetch the line after their own,
+        // as a mask: each line's first slot to start in it, if a line follows
+        // within the slots.
+        static constexpr mask_t line_starts = []()
+        {
+            mask_t m = 0;
+            for(std::size_t e = 0; e < B; ++e)
+                if((e * slot_sz) % line < slot_sz && ((e * slot_sz) / line + 1) * line < B * slot_sz)
+                    m |= mask_t(1) << e;
+            return m;
+        }();
+
+        // The packed slots before which the first insertion of a run
+        // prefetches the line after its own too.
+        static constexpr std::size_t run_lim = []()
+        {
+            std::size_t e = 0;
+            while(e < B && e * slot_sz + line < B * slot_sz)
+                e++;
+            return e;
+        }();
 
         Bucket* T = nullptr;    // The buckets.
+
+        // Returns the `j`'th packed slot of the `i`'th bucket.
+        unsigned char* at(std::size_t i, std::size_t j) const;
 
     public:
 
@@ -149,7 +185,7 @@ private:
 
         // Prefetches the line that a run of insertions reaches next once it
         // has placed a key at the `e`'th slot of the `i`'th bucket, iff the
-        // slot is the first one in its line.
+        // slot is the first one to start in its line.
         void prefetch_frontier(std::size_t i, std::size_t e) const;
 
         // Allocates the storage of `n` buckets, zeroed, and maps it in
@@ -669,43 +705,74 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::deallocate(const st
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline unsigned char* Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::at(const std::size_t i, const std::size_t j) const
+{
+    return T[i].slot + j * slot_sz;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline Kmer<k> Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::key(const std::size_t i, const std::size_t j) const
 {
-    return Streaming_Kmer_Hash_Table::key(T[i].slot[j]);
+    if constexpr(!packed)
+        return Streaming_Kmer_Hash_Table::key(T[i].slot[j]);
+    else
+    {
+        Kmer<k> x;
+        std::memcpy(static_cast<void*>(&x), at(i, j), key_sz);
+        return x;
+    }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::val(const std::size_t i, const std::size_t j) const -> mapped_t
 {
-    if constexpr(is_map_)
+    if constexpr(is_set_)
+        return (void)i, (void)j, mapped_t();
+    else if constexpr(!packed)
         return T[i].slot[j].second;
     else
-        return (void)i, (void)j, mapped_t();
+    {
+        mapped_t v;
+        std::memcpy(static_cast<void*>(&v), at(i, j) + key_sz, val_sz);
+        return v;
+    }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::set_val(const std::size_t i, const std::size_t j, const mapped_t& v) const
 {
-    if constexpr(is_map_)
+    if constexpr(is_set_)
+        (void)i, (void)j, (void)v;
+    else if constexpr(!packed)
         T[i].slot[j].second = v;
     else
-        (void)i, (void)j, (void)v;
+        std::memcpy(at(i, j) + key_sz, static_cast<const void*>(&v), val_sz);
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::get(const std::size_t i, const std::size_t j) const -> flat_t
 {
-    return T[i].slot[j];
+    if constexpr(!packed)
+        return T[i].slot[j];
+    else
+        return flat_t(key(i, j), val(i, j));
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::put(const std::size_t i, const std::size_t j, const flat_t& e) const
 {
-    T[i].slot[j] = e;
+    if constexpr(!packed)
+        T[i].slot[j] = e;
+    else
+    {
+        std::memcpy(at(i, j), static_cast<const void*>(&e.first), key_sz);
+        std::memcpy(at(i, j) + key_sz, static_cast<const void*>(&e.second), val_sz);
+    }
 }
 
 
@@ -713,24 +780,45 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <bool write_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_slot(const std::size_t i, const std::size_t j) const
 {
-    __builtin_prefetch(&T[i].slot[j], write_, 3);
+    if constexpr(!packed)
+        __builtin_prefetch(&T[i].slot[j], write_, 3);
+    else
+    {
+        __builtin_prefetch(at(i, j), write_, 3);
+        if constexpr(line % slot_sz != 0)  // The slot may cross into the next line.
+            __builtin_prefetch(at(i, j) + slot_sz - 1, write_, 3);
+    }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_run(const std::size_t i, const std::size_t e) const
 {
-    __builtin_prefetch(&T[i].slot[e], 1, 3);
-    if(e + line_slots < B)
-        __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
+    if constexpr(!packed)
+    {
+        __builtin_prefetch(&T[i].slot[e], 1, 3);
+        if(e + line_slots < B)
+            __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
+    }
+    else
+    {
+        __builtin_prefetch(at(i, e), 1, 3);
+        if(e < run_lim)
+            __builtin_prefetch(at(i, e) + line, 1, 3);
+    }
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_frontier(const std::size_t i, const std::size_t e) const
 {
-    if(e % line_slots == 0 && e + line_slots < B)
-        __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
+    if constexpr(!packed)
+    {
+        if(e % line_slots == 0 && e + line_slots < B)
+            __builtin_prefetch(&T[i].slot[e + line_slots], 1, 3);
+    }
+    else if((line_starts >> e) & 1)
+        __builtin_prefetch(at(i, e) + line, 1, 3);
 }
 
 
