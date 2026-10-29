@@ -1086,6 +1086,11 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                                     // into vectors whose headers share cache lines would contend for them.
 
             const auto b_s = old_cap * w_id / worker_c, b_e = old_cap * (w_id + 1) / worker_c;
+
+            // Room for a quarter of the range's slots, typically more than its keys set aside: only what's touched
+            // gets backed, and the vector need not copy itself to grow.
+            held.reserve((b_e - b_s) * B / 4);
+
             uint64_t h_b[B];    // Minimizer hashes of a bucket's keys.
             for(std::size_t b = b_s; b < b_e; ++b)
             {
