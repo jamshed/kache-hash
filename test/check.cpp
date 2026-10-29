@@ -1,7 +1,8 @@
 
 // Correctness checks of the table against an exact reference: sizes, presence, counts, and negative hits, for sets and
 // maps, sequential and concurrent tables, presized and resizing.
-// Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map> <threads> <init-cap> <stream|raw|multi>
+// Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>
+//   Maps hold 64-bit counts, or 8-, 16- or 32-bit ones per the suffix.
 //   stream: operations over the fragments split at N.
 //   raw:    operations over the raw sequences, N's included, which the table must split itself.
 //   multi:  multi-sequence operations over batches of 13 raw pieces, of ragged lengths.
@@ -149,8 +150,8 @@ static int check(const std::string& index, const std::string& neg, const std::si
                     c_calls[t]++;
                     if(q != 0 || !v)
                         c_miss[t]++;
-                    else if constexpr(!is_set)
-                        c_wrong[t] += (*v != R.count_of(canonical(s.data() + j)));
+                    else if constexpr(!is_set)  // Counts wrap at narrow widths.
+                        c_wrong[t] += (*v != static_cast<T_>(R.count_of(canonical(s.data() + j))));
                 };
 
                 if(mode == "multi")
@@ -212,7 +213,7 @@ int main(int argc, char* argv[])
 {
     if(argc != 7)
     {
-        std::fprintf(stderr, "Usage: %s <index> <negative> <seq-set|seq-map|mt-set|mt-map> <threads> <init-cap> <stream|raw|multi>\n", argv[0]);
+        std::fprintf(stderr, "Usage: %s <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>\n", argv[0]);
         return 2;
     }
 
@@ -222,7 +223,13 @@ int main(int argc, char* argv[])
         return 2;
     if(kind == "seq-set")   return check<false, void>(index, neg, 1, cap, mode);
     if(kind == "seq-map")   return check<false, uint64_t>(index, neg, 1, cap, mode);
+    if(kind == "seq-map32") return check<false, uint32_t>(index, neg, 1, cap, mode);
+    if(kind == "seq-map16") return check<false, uint16_t>(index, neg, 1, cap, mode);
+    if(kind == "seq-map8")  return check<false, uint8_t>(index, neg, 1, cap, mode);
     if(kind == "mt-set")    return check<true, void>(index, neg, T, cap, mode);
     if(kind == "mt-map")    return check<true, uint64_t>(index, neg, T, cap, mode);
+    if(kind == "mt-map32")  return check<true, uint32_t>(index, neg, T, cap, mode);
+    if(kind == "mt-map16")  return check<true, uint16_t>(index, neg, T, cap, mode);
+    if(kind == "mt-map8")   return check<true, uint8_t>(index, neg, T, cap, mode);
     return 2;
 }
