@@ -66,20 +66,11 @@ inline constexpr uint8_t checksum_of_hash(const uint64_t x)
 inline constexpr uint8_t kmer_checksum(const uint64_t x) { return checksum_of_hash(checksum_hash(x)); }
 
 
-// The minimizer of a k-mer is its l-mer with the least hash of the canonical
-// form. Its coordinate in the k-mer is its offset in the strand its canonical
-// form comes from, and that strand's orientation bit.
-constexpr uint8_t coord_fwd_mask = 0b0100'0000;  // Bit of a minimizer coordinate set iff the minimizer is from the forward strand.
-constexpr uint8_t coord_idx_mask = 0b0011'1111;  // Bits of a minimizer coordinate with the minimizer's offset.
-
-
 // Describes the consecutive `k`-mers of a stretch of ACGT bases in chunks, for
 // the streaming operations of the tables: their canonical forms, checksums,
-// `l`-minimizer hashes, and minimizer coordinates. The minimizer of a k-mer is
-// its l-mer of the least hash, so it is the least of the per-position minima;
-// and the l-mer hash is a bijection, so any position holding the least hash has
-// the minimizer. On ties, i.e. on a repeated minimizer, the leftmost position
-// is taken.
+// and `l`-minimizer hashes. The minimizer of a k-mer is its l-mer with the
+// least hash of the canonical form, so its hash is the least over the k-mer's
+// l-mer positions.
 template <uint16_t k, uint16_t l>
 class Kmer_Batch
 {
@@ -110,9 +101,7 @@ private:
     uint64_t l_fwd; // Forward form of the last l-mer hashed, or of its prefix before the first.
     uint64_t l_rev; // Reverse complement of the same.
 
-    alignas(64) uint64_t hc[P]; // `hc[x]` is the least hash over the strands of the l-mer at the chunk's `x`'th position.
-    alignas(64) uint64_t o_rev[P];  // `o_rev[x]` is 1 iff that least hash is of the reverse strand, else 0.
-    std::size_t min_pos;    // Position of the last k-mer's minimizer, relative to the chunk, plus `w`; under `w` if outside the chunk.
+    alignas(64) uint64_t hc[P]; // `hc[x]` is the hash of the canonical form of the l-mer at the chunk's `x`'th position.
 
     // Maps the ACGT character `ch`, in either case, to its 2-bit encoding.
     static constexpr uint64_t base(const char ch) { return ((ch >> 2) ^ (ch >> 1)) & 0b11; }
@@ -134,7 +123,6 @@ public:
         uint64_t key[C];    // `key[i]` is the canonical form of the chunk's `i`'th k-mer.
         uint64_t h[C];  // `h[i]` is its minimizer hash.
         uint8_t c[C];   // `c[i]` is its checksum, never 0.
-        uint8_t m[C];   // `m[i]` is its minimizer coordinate, oriented per the canonical form, if described.
         std::size_t n;  // Number of k-mers in the chunk.
     };
 
@@ -142,9 +130,8 @@ public:
     void reset(const char* t, std::size_t n);
 
     // Describes the next chunk of the stretch into `out`, and returns its
-    // number of k-mers; 0 iff the stretch is exhausted. Describes minimizer
-    // coordinates iff `coords_`, which is to be the same for all the chunks.
-    template <bool coords_ = true> std::size_t next(Chunk& out);
+    // number of k-mers; 0 iff the stretch is exhausted.
+    std::size_t next(Chunk& out);
 };
 
 
@@ -168,8 +155,6 @@ inline void Kmer_Batch<k, l>::reset(const char* const t, const std::size_t n)
         l_fwd = (l_fwd << 2) | b;
         l_rev = (l_rev >> 2) | ((DNA::T - b) << (2 * (l - 1)));
     }
-
-    min_pos = 0;
 }
 
 
@@ -196,7 +181,6 @@ inline void Kmer_Batch<k, l>::window_min(const uint64_t* const top, uint64_t* co
 
 
 template <uint16_t k, uint16_t l>
-template <bool coords_>
 inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
 {
     out.n = 0;
@@ -218,11 +202,7 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
     }
 
     for(std::size_t x = x_0; x < pos_c; ++x)
-    {
         hc[x] = wang_u64(std::min(lf[x], lr[x]));
-        if constexpr(coords_)
-            o_rev[x] = (lr[x] < lf[x]);
-    }
 
     // Sliding minima over `w` positions, by doubling spans; levels `j > 0` sit at `v + (j - 1) * P`.
     alignas(64) uint64_t v[lvl > 0 ? lvl * P : 1];
@@ -235,33 +215,6 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
 
     window_min(top, out.h, cnt);
 
-    // The minimizers' positions. A new minimum can only enter at a window's right end; else the last k-mer's
-    // minimizer stays, unless it has left the window, and only then is the window scanned, for its leftmost position
-    // holding the least hash. The hash is a bijection, so the l-mer at such a position is the minimizer.
-    if constexpr(coords_)
-    {
-        std::size_t pos = min_pos;  // Position of the last k-mer's minimizer, offset by `w` to keep it unsigned.
-        for(std::size_t i = 0; i < cnt; ++i)
-        {
-            const auto h = out.h[i];
-            if(hc[i + w - 1] == h)
-                pos = i + w - 1 + w;
-            else if(pos < i + w)    // The last minimizer has left the window.
-            {
-                uint8_t o = w - 1;
-                for(std::size_t j = w - 1; j-- > 0; )
-                    o = (hc[i + j] == h ? uint8_t(j) : o);
-                pos = i + o + w;
-            }
-
-            const uint8_t o = pos - w - i;  // The minimizer's offset in the k-mer.
-            const auto r = o_rev[pos - w];
-            out.m[i] = uint8_t(r * (k - l - o)) | uint8_t((1 - r) * (o | coord_fwd_mask));
-        }
-
-        min_pos = (pos >= cnt + w ? pos - cnt : 0);   // Rebased to the next chunk, whose position 0 is this one's `cnt`.
-    }
-
     // The k-mers themselves.
     for(std::size_t i = 0; i < cnt; ++i)
     {
@@ -271,18 +224,12 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
 
         const uint64_t fwd_mask = -uint64_t(fwd < rev); // All ones iff the forward form is canonical.
         out.key[i] = (fwd & fwd_mask) | (rev & ~fwd_mask);
-        if constexpr(coords_)
-            out.m[i] ^= (coord_fwd_mask & ~uint8_t(fwd_mask));
         out.c[i] = kmer_checksum(out.key[i]);
     }
 
     // Keep the last `w - 1` l-mer positions, the first of the next chunk.
     for(std::size_t x = 0; x + 1 < w; ++x)
-    {
         hc[x] = hc[cnt + x];
-        if constexpr(coords_)
-            o_rev[x] = o_rev[cnt + x];
-    }
 
     p += cnt;
     out.n = cnt;
