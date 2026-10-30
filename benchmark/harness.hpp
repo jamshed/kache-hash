@@ -270,6 +270,9 @@ double run_parallel_batched(const Fragments& F, const std::size_t thread_c, cons
     };
 
     std::vector<Padded<Batch>> B(thread_c);   // Padded, as each thread updates its own often.
+    for(auto& b : B)    // Reserved before the clock starts, so that no batch grows in the timed run.
+        b.unwrap().seqs.reserve(batch_sz), b.unwrap().lens.reserve(batch_sz);
+
     const auto flush = [&](const std::size_t t_id)
     {
         auto& b = B[t_id].unwrap();
