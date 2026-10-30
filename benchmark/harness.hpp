@@ -25,8 +25,14 @@
 using namespace kache_hash;
 
 
+// The minimizer size of the kache-hash tables is 19, unless a build sets `MINIMIZER_SIZE`, as the drivers of the
+// minimizer-size sweep do.
+#ifndef MINIMIZER_SIZE
+#define MINIMIZER_SIZE 19
+#endif
+
 constexpr uint16_t k = 31;  // k-mer size.
-constexpr uint16_t l = 19;  // Minimizer size of the kache-hash tables.
+constexpr uint16_t l = MINIMIZER_SIZE;  // Minimizer size of the kache-hash tables.
 
 
 // Fragments of the sequences in an input: their maximal stretches of at least

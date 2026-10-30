@@ -95,6 +95,25 @@ install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo
 )
 
 
+# kache-hash's benchmark at each minimizer size l in 15–23, as `bench_kache_hash_l<l>`, if `LSWEEP` is set: the drivers
+# of the minimizer-size sweep.
+if(LSWEEP)
+    foreach(L RANGE 15 23)
+        add_executable(bench_kache_hash_l${L} bench-kache-hash.cpp)
+
+        target_compile_definitions(bench_kache_hash_l${L} PRIVATE MINIMIZER_SIZE=${L})
+        target_include_directories(bench_kache_hash_l${L} PRIVATE ${INCLUDE_DIR})
+        target_compile_options(bench_kache_hash_l${L} PRIVATE ${COMPILE_FLAGS})
+        target_link_libraries(bench_kache_hash_l${L} PRIVATE ${LINK_FLAGS})
+        target_link_libraries(bench_kache_hash_l${L} PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
+
+        install(TARGETS bench_kache_hash_l${L}
+                DESTINATION bin
+        )
+    endforeach()
+endif()
+
+
 # The iceberg table's benchmark, on Linux only. It builds the vendored iceberg sources, in `icebergHT/`, as iceberg's
 # own Makefile does by default—vectorized, with block locks and resizes—and links them with the driver under LTO.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
