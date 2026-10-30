@@ -14,10 +14,11 @@
 # which continues onto the next if it ends in `\`, is the variables of a `run.sh` matrix, as assignments, and then its
 # workloads. Besides those of `run.sh`, the variables
 # include `EXPERIMENT`, the line's name; `MEMORY`: by default, `LAUNCH` binds to the CPUs of socket 0, with memory
-# preferred there—or with `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory; and
-# `TIMEOUT`, a limit of each run, e.g. `3h`. The environment selects what of the plan runs, if set: `EXPERIMENTS`, the
-# names of the lines to run; `TOOLS`, the tables to run (see `run.sh`); and `WORKLOADS`, the workloads to run. The job
-# exits unless the node's CPU model contains `CPU_MODEL` (default: Platinum 8276).
+# preferred there—or with `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory—unless
+# `PLACEMENT` places each run instead (see `run.sh`); and `TIMEOUT`, a limit of each run, e.g. `3h`. The environment
+# selects what of the plan runs, if set: `EXPERIMENTS`, the names of the lines to run; `TOOLS`, the tables to run (see
+# `run.sh`); and `WORKLOADS`, the workloads to run. The job exits unless the node's CPU model contains `CPU_MODEL`
+# (default: Platinum 8276).
 # Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>
 
 data_dir="${1}"
@@ -81,9 +82,13 @@ while read -r line; do
         fi
 
         echo "Running ${line}"
-        memory="--preferred=${s0%%,*}"
-        [ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
-        export LAUNCH="${LAUNCH-${TIMEOUT:+timeout ${TIMEOUT} }numactl --cpunodebind=${s0} ${memory}}"
+        if [ -n "${PLACEMENT:-}" ]; then
+            export LAUNCH="${LAUNCH-${TIMEOUT:+timeout ${TIMEOUT}}}"
+        else
+            memory="--preferred=${s0%%,*}"
+            [ "${MEMORY:-local}" == "interleave" ] && memory="--interleave=all"
+            export LAUNCH="${LAUNCH-${TIMEOUT:+timeout ${TIMEOUT} }numactl --cpunodebind=${s0} ${memory}}"
+        fi
 
         "${build}/src/scripts/bench/run.sh" "${build}/build/benchmark" "${data_dir}" "${out_dir}" "${workloads[@]}"
     ) < /dev/null || status=1

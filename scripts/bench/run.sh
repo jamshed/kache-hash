@@ -13,11 +13,16 @@
 #            `query<i>.T<count>` (default: none);
 #   QUERIES: if set, the inputs to query instead of the workload's, e.g. empty to only build;
 #   REPS:    the repetitions of each run (default: 3);
-#   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none);
+#   PLACEMENT: if set, `spread` or `compact`: each run takes a core per thread, alternating between the sockets or
+#            filling one socket before the next, with its memory interleaved over the NUMA nodes (default: none);
+#   LAUNCH:  a prefix of each run, ahead of PLACEMENT's, e.g. `timeout 3h`, or without PLACEMENT, a binding such as
+#            `numactl --cpunodebind=0 --membind=0` (default: none);
+#   SSHASH_THREADS: the thread count of SSHash's index build (default: the most of THREADS);
 #   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
 # The tables skip the configurations they do not support. Per workload, the distinct k-mer count comes from a kache-hash
-# set run grown from a small capacity, and the SSHash index from `sshash-index.sh`, both with the most threads of
-# THREADS; they are kept with the outputs, as `distinct.tsv` and `index.*`, so that each machine measures its own.
+# set run grown from a small capacity, with the most threads of THREADS, and the SSHash index from `sshash-index.sh`;
+# both launch as the runs do, and are kept with the outputs, as `distinct.tsv` and `index.*`, so that each machine
+# measures its own. Each launch's command line is kept beside its output, as `<run>.launch`.
 
 bin_dir="${1}"
 data_dir="${2}"
@@ -35,10 +40,61 @@ KINDS="${KINDS:-set map}"
 SIZINGS="${SIZINGS:-presized half}"
 THREADS="${THREADS:-16}"
 REPS="${REPS:-3}"
+PLACEMENT="${PLACEMENT:-}"
 LAUNCH="${LAUNCH:-}"
 
 max_t=$(printf "%s\n" ${THREADS} | sort -n | tail -n 1)
+SSHASH_THREADS="${SSHASH_THREADS:-${max_t}}"
 failed=0
+
+
+# Prints the CPUs that runs take, a core each, in the order of PLACEMENT: `spread` alternates between the sockets, and
+# `compact` takes a socket's cores before the next one's.
+placement_cpus()
+{
+    local range cpu topo
+
+    for range in $(awk '/^Cpus_allowed_list/ { gsub(",", " ", $2); print $2 }' /proc/self/status); do
+        for cpu in $(seq "${range%-*}" "${range#*-}"); do
+            topo="/sys/devices/system/cpu/cpu${cpu}/topology"
+            echo "$(cat "${topo}/physical_package_id") $(cat "${topo}/core_id") ${cpu}"
+        done
+    done | sort -k1,1n -k3,3n | awk -v placement="${PLACEMENT}" '
+        ($1, $2) in taken { next }  # Another hardware thread of a core taken.
+        { taken[$1, $2]; if (!($1 in n)) sockets[s++] = $1; cpus[$1, n[$1]++] = $3 }
+        END {
+            for (j = 0; j < s; ++j) if (n[sockets[j]] > m) m = n[sockets[j]]
+            if (placement == "compact") {
+                for (j = 0; j < s; ++j) for (i = 0; i < n[sockets[j]]; ++i) print cpus[sockets[j], i]
+            } else {
+                for (i = 0; i < m; ++i) for (j = 0; j < s; ++j) if (i < n[sockets[j]]) print cpus[sockets[j], i]
+            }
+        }'
+}
+
+
+# Sets `placement` to the prefix that places a launch of $1 threads as PLACEMENT sets, if set: on the first $1 of its
+# CPUs, with memory interleaved over all the NUMA nodes.
+place()
+{
+    placement=""
+    if [ -n "${PLACEMENT}" ]; then
+        placement="numactl --interleave=all --physcpubind=$(IFS=,; echo "${cpus[*]:0:${1}}")"
+    fi
+}
+
+
+# Runs the command $3... as a launch of $2 threads, prefixed with LAUNCH and placed as PLACEMENT sets, and writes its
+# command line into the file $1.
+launch()
+{
+    local file="${1}" t="${2}"
+    shift 2
+
+    place "${t}"
+    echo ${LAUNCH} ${placement} "$@" > "${file}"
+    ${LAUNCH} ${placement} "$@"
+}
 
 
 # Sets `index` to the input that the workload $1 builds on, and `queries` to the inputs that it queries.
@@ -100,8 +156,8 @@ count_distinct()
 {
     if [ ! -s "${out}/distinct.tsv" ]; then
         echo "Counting the distinct k-mers of ${index}"
-        if ! ${LAUNCH} "${bin_dir}/bench_kache_hash" --index "${data_dir}/${index}" --set --threads "${max_t}" \
-                --init-cap 1048576 > "${out}/distinct.tsv.tmp"; then
+        if ! launch "${out}/distinct.launch" "${max_t}" "${bin_dir}/bench_kache_hash" --index "${data_dir}/${index}" \
+                --set --threads "${max_t}" --init-cap 1048576 > "${out}/distinct.tsv.tmp"; then
             echo "Failed counting the distinct k-mers of ${index}" >&2
             exit 1
         fi
@@ -119,8 +175,9 @@ index_sshash()
 {
     indexed=1
     if ! grep -q "^sshash.index_bytes" "${out}/index.cost.tsv" 2> /dev/null; then
-        if ! GGCAT="${bin_dir}/ggcat" SSHASH="${bin_dir}/sshash" "$(dirname "${0}")/sshash-index.sh" \
-                "${data_dir}/${index}" "${out}/index" "${max_t}" "${SSHASH_M:-}"; then
+        if ! launch "${out}/index.launch" "${SSHASH_THREADS}" env GGCAT="${bin_dir}/ggcat" \
+                SSHASH="${bin_dir}/sshash" "$(dirname "${0}")/sshash-index.sh" "${data_dir}/${index}" "${out}/index" \
+                "${SSHASH_THREADS}" "${SSHASH_M:-}"; then
             echo "Failed building the SSHash index of ${index}; skipping its SSHash runs" >&2
             failed=$(( failed + 1 ))
             indexed=0
@@ -182,12 +239,13 @@ run()
     [ "${sizing}" == "presized" ] && args+=(--init-cap "${distinct}")
     [ "${sizing}" == "half" ] && args+=(--init-cap "$(( distinct / 2 ))")
 
-    if ${LAUNCH} "${bin_dir}/bench_${table//-/_}" "${args[@]}" > "${out}/${name}.tsv.tmp" 2> "${out}/${name}.err"; then
+    if launch "${out}/${name}.launch" "${t}" "${bin_dir}/bench_${table//-/_}" "${args[@]}" \
+            > "${out}/${name}.tsv.tmp" 2> "${out}/${name}.err"; then
         mv "${out}/${name}.tsv.tmp" "${out}/${name}.tsv"
         [ -s "${out}/${name}.err" ] || rm -f "${out}/${name}.err"
         echo "Ran ${wl}/${name}"
     elif grep -q "^Unsupported configuration" "${out}/${name}.err"; then
-        rm -f "${out}/${name}.tsv.tmp" "${out}/${name}.err"
+        rm -f "${out}/${name}.tsv.tmp" "${out}/${name}.err" "${out}/${name}.launch"
     else
         echo "Failed running ${wl}/${name}; see ${out}/${name}.err" >&2
         failed=$(( failed + 1 ))
@@ -209,6 +267,20 @@ done
 if [ -z "${tables}" ]; then
     echo "No tables to run"
     exit 0
+fi
+
+if [ -n "${PLACEMENT}" ]; then
+    if [[ " spread compact " != *" ${PLACEMENT} "* ]] || ! command -v numactl > /dev/null; then
+        echo "PLACEMENT is spread or compact, and needs numactl" >&2
+        exit 1
+    fi
+
+    cpus=($(placement_cpus))
+    most=$(printf "%s\n" "${max_t}" "${SSHASH_THREADS}" $(configs | cut -d' ' -f5) | sort -n | tail -n 1)
+    if (( most > ${#cpus[@]} )); then
+        echo "Placing ${most} threads needs more than the ${#cpus[@]} cores available" >&2
+        exit 1
+    fi
 fi
 
 for wl in "$@"; do
