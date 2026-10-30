@@ -1,6 +1,7 @@
 
-// Correctness checks of the table against an exact reference: sizes, presence, counts, and negative hits, for sets and
-// maps, sequential and concurrent tables, presized and resizing; and for maps, the counts after present-only updates.
+// Correctness checks of the table against an exact reference: sizes, presence, counts, negative hits, and iteration over
+// workers' shares, for sets and maps, sequential and concurrent tables, presized and resizing; and for maps, the counts
+// after present-only updates.
 // Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>
 //   Maps hold 64-bit counts, or 8-, 16- or 32-bit ones per the suffix.
 //   stream: operations over the fragments split at N.
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -201,6 +203,34 @@ static int check(const std::string& index, const std::string& neg, const std::si
     for(const auto& s : F)
         kmer_c += s.size() - k + 1;
 
+    // Iteration by T workers at once over their shares of the table: together, they must visit exactly the
+    // reference's k-mers, each once, and in a map, with its count.
+    std::vector<std::vector<uint64_t>> X(T);
+    std::vector<std::size_t> c_it_wrong(T);
+    std::vector<std::thread> I;
+    for(std::size_t t = 0; t < T; ++t)
+        I.emplace_back([&, t]()
+        {
+            if constexpr(is_set)
+                M.for_each([&](const Kmer<k>& x){ X[t].push_back(x.as_int()); }, T, t);
+            else
+                M.for_each([&](const Kmer<k>& x, const T_ v)
+                {
+                    const auto y = x.as_int();
+                    X[t].push_back(y);
+                    c_it_wrong[t] += (!R.has(y) || v != static_cast<T_>(R.count_of(y)));  // Counts wrap at narrow widths.
+                }, T, t);
+        });
+    for(auto& i : I)
+        i.join();
+
+    std::vector<uint64_t> it_kmer, it_diff;
+    for(const auto& x : X)
+        it_kmer.insert(it_kmer.end(), x.begin(), x.end());
+    std::sort(it_kmer.begin(), it_kmer.end());
+    std::set_symmetric_difference(it_kmer.begin(), it_kmer.end(), R.kmer.begin(), R.kmer.end(), std::back_inserter(it_diff));
+    const auto it_wrong = sum(c_it_wrong);
+
     // Maps: present-only updates by every thread over all the pieces, so that the threads contend on the same values,
     // then over the raw negatives, split over the threads. Each present k-mer's count gains its multiplicity in them,
     // and none of the negatives' absent k-mers gets inserted.
@@ -259,10 +289,11 @@ static int check(const std::string& index, const std::string& neg, const std::si
         std::snprintf(upd, sizeof(upd), ", update %zu (ref %zu, %zu wrong, neg %zu)", upd_found, upd_exp, upd_wrong, upd_neg_count);
 
     const bool bad = (M.size() != R.size() || ins_c != R.size() || miss || wrong || calls != kmer_c || neg_wrong || neg_count != neg_expected
-                      || upd_found != upd_exp || upd_wrong || (!is_set && upd_neg_count != neg_expected));
-    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong)%s%s\n",
+                      || !it_diff.empty() || it_wrong || upd_found != upd_exp || upd_wrong || (!is_set && upd_neg_count != neg_expected));
+    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong), iterate %zu (%zu unmatched, %zu wrong)%s%s\n",
                 index.c_str(), mt_ ? "mt" : "seq", is_set ? "set" : "map", T, static_cast<std::size_t>(cap_0), static_cast<std::size_t>(M.capacity()), mode.c_str(),
-                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, upd, bad ? "  <-- WRONG" : "  ok");
+                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, it_kmer.size(), it_diff.size(), it_wrong,
+                upd, bad ? "  <-- WRONG" : "  ok");
     return bad ? 1 : 0;
 }
 
