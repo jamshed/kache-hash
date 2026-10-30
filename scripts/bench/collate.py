@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Collates the runs of `run.sh` in output directories, a campaign each, named after its directory, into the first
-one's `summary.tsv`, a row per campaign, workload, and run configuration with the medians over its repetitions, and
-`build-cost.tsv`, SSHash's index pipeline (GGCAT, then SSHash) against the dynamic tables' load, init, and build at the
-same thread count. Queries are named after their inputs, as `query.<input>`. Exits non-zero if the runs of a workload,
-across the campaigns, disagree on the table size or on any query's hits, if a query's hits differ across its thread
-counts, or if a build's operation count is not its input's k-mer count."""
+one's `summary.tsv`, a row per campaign, workload, and run configuration with the versions of the code that its runs
+ran and the medians over its repetitions, and `build-cost.tsv`, SSHash's index pipeline (GGCAT, then SSHash) against
+the dynamic tables' load, init, and build at the same thread count. Queries are named after their inputs, as
+`query.<input>`. Exits non-zero if the runs of a workload, across the campaigns, disagree on the table size or on any
+query's hits, if a query's hits differ across its thread counts, or if a build's operation count is not its input's
+k-mer count. Warns of campaigns whose runs ran several versions of the code, and of runs left with much of their
+memory in small pages after the build, as on a node short of free huge pages."""
 
 import glob
 import os
@@ -22,8 +24,14 @@ QUERY = re.compile(r"query(?P<q>\d+)(?P<threads>\.T\d+)?\.(?P<stat>hits|seconds|
 INPUT_EXT = re.compile(r"(\.(fa|fna|fasta|fastq|fq))?(\.gz)?$")
 
 # Measurements reported as medians: per-run keys, and per-query key suffixes.
-MEDIANS = ["load.seconds", "init.seconds", "build.seconds", "build.mops", "memory.build_max_rss_bytes"]
+MEDIANS = ["load.seconds", "init.seconds", "build.seconds", "build.mops", "memory.build_max_rss_bytes",
+           "memory.build_huge_share"]
 QUERY_MEDIANS = ["seconds", "mops"]
+
+# Runs warned of for small pages: those with at least 1 GiB of anonymous memory after the build, and less than 80% of
+# it in transparent huge pages.
+HUGE_MIN_KB = 1 << 20
+HUGE_MIN_SHARE = 0.8
 
 
 def load(path):
@@ -86,7 +94,8 @@ def main():
     multi = len(out_dirs) > 1
     configs = {}    # Runs per configuration.
     costs = {}  # SSHash index costs per workload and campaign.
-    errors, defects = [], []
+    versions = {}   # Run counts per campaign and version.
+    errors, defects, warnings = [], [], []
     for out_dir in out_dirs:
         campaign = os.path.basename(os.path.normpath(out_dir))
         for wl_dir in sorted(glob.glob(os.path.join(out_dir, "*", ""))):
@@ -98,6 +107,19 @@ def main():
                     run = load(path)
                     for query in name_queries(run):
                         errors.append(f"{wl}: {query}'s hits differ across thread counts in {os.path.basename(path)}")
+
+                    counts = versions.setdefault(campaign, {})
+                    counts[run.get("version", "unknown")] = counts.get(run.get("version", "unknown"), 0) + 1
+
+                    anon = int(run.get("memory.build_anon_kb", 0))
+                    if anon > 0:    # Runs on Linux report the huge pages of their memory.
+                        share = int(run.get("memory.build_anon_huge_pages_kb", 0)) / anon
+                        run["memory.build_huge_share"] = f"{share:.3f}"
+                        if anon >= HUGE_MIN_KB and share < HUGE_MIN_SHARE:
+                            warnings.append(f"{wl}: huge pages back {share:.0%} of the {anon / (1 << 20):.1f} GiB of"
+                                            f" anonymous memory after the build in {os.path.basename(path)}"
+                                            + (f" ({campaign})" if multi else ""))
+
                     configs.setdefault(cfg, []).append(run)
                 elif os.path.basename(path) == "index.cost.tsv":
                     cost = load(path)
@@ -106,6 +128,11 @@ def main():
 
     if not configs:
         sys.exit("No runs found.")
+
+    for campaign, counts in sorted(versions.items()):
+        if len(counts) > 1:
+            warnings.append(f"{campaign}: runs of {len(counts)} versions: "
+                            + ", ".join(f"{c} of {v}" for v, c in sorted(counts.items())))
 
     for wl in sorted({cfg[0] for cfg in configs}):
         runs = [(cfg, run) for cfg, R in configs.items() if cfg[0] == wl for run in R]
@@ -134,9 +161,10 @@ def main():
 
     query_cols = [f"query.{q}.{s}" for q in queries for s in QUERY_MEDIANS]
     with open(os.path.join(out_dirs[0], "summary.tsv"), "w") as f:
-        print("\t".join(CONFIG + ["reps", "table.size"] + MEDIANS + query_cols), file=f)
+        print("\t".join(CONFIG + ["reps", "version", "table.size"] + MEDIANS + query_cols), file=f)
         for cfg, R in sorted(configs.items(), key=lambda c: (c[0][6],) + c[0][:6]):
-            cells = [cfg[6]] + [str(c) for c in cfg[:6]] + [str(len(R)), R[0].get("table.size", "")]
+            version = ",".join(sorted({run["version"] for run in R if "version" in run}))
+            cells = [cfg[6]] + [str(c) for c in cfg[:6]] + [str(len(R)), version, R[0].get("table.size", "")]
             print("\t".join(cells + [median(R, key) for key in MEDIANS + query_cols]), file=f)
 
     with open(os.path.join(out_dirs[0], "build-cost.tsv"), "w") as f:
@@ -157,6 +185,8 @@ def main():
           f" into {out_dirs[0]}.")
     for defect in defects:
         print(f"Known defect: {defect}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
     for error in errors:
         print(error, file=sys.stderr)
     if errors:
