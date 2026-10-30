@@ -55,6 +55,9 @@ Kmer_Set_Counter::Kmer_Set_Counter(const uint16_t k, const std::size_t n, const 
 }
 
 
+Kmer_Set_Counter::~Kmer_Set_Counter() = default;
+
+
 void Kmer_Set_Counter::prime(const std::string& path)
 {
     const auto t_0 = now();

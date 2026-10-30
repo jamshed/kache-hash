@@ -47,7 +47,7 @@ public:
     // its operations.
     Kmer_Set_Counter(uint16_t k, std::size_t n, std::size_t thread_c, double lf = 0.9);
 
-    ~Kmer_Set_Counter() = default;
+    ~Kmer_Set_Counter();
 
     // Adds the k-mers of the sequences of the FASTA or FASTQ file at `path` to
     // the set, with count 0; the ones present keep their counts.
