@@ -6,6 +6,7 @@
 #   TABLES:  the tables to run, of those built (default: kache-hash boost libcuckoo iceberg cbl sshash);
 #   TOOLS:   if set, the only tables of TABLES to run, to select tables across a plan's matrices;
 #   KINDS:   `set` and `map` (default: both);
+#   VARIANTS: `mt`, the concurrent tables, and `seq`, the sequential ones, which run at 1 thread (default: both);
 #   SIZINGS: `presized`, for the input's distinct k-mers, and `half`, for half of them (default: both);
 #   THREADS: the thread counts (default: 16); the sequential variants run at 1;
 #   THREADS_<table>: the thread counts of one table, e.g. `THREADS_sshash`, instead of THREADS;
@@ -44,6 +45,7 @@ shift 3
 
 TABLES="${TABLES:-kache-hash boost libcuckoo iceberg cbl sshash}"
 KINDS="${KINDS:-set map}"
+VARIANTS="${VARIANTS:-mt seq}"
 SIZINGS="${SIZINGS:-presized half}"
 THREADS="${THREADS:-16}"
 REPS="${REPS:-3}"
@@ -211,6 +213,7 @@ configs()
         for kind in ${KINDS}; do
             for t in ${!threads:-${THREADS}}; do
                 for variant in mt $([ "${t}" -eq 1 ] && echo seq); do
+                    [[ " ${VARIANTS} " == *" ${variant} "* ]] || continue
                     for sizing in ${sizings}; do
                         echo "${table} ${kind} ${variant} ${sizing} ${t}"
                     done

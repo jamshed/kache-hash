@@ -1,0 +1,64 @@
+# The paper's experiments, for `explorer.sbatch` and `feed.sh`: a `run.sh` matrix per line, its variables and then its
+# workloads, under the experiment's name. Every run takes a core per thread, spread over the sockets, with its memory
+# interleaved over them. The main runs' thread count is the pilot's pick (prior: 56); counted runs count a
+# hardware-event group per repetition. Each experiment runs into a directory of its own, as `feed.sh` keeps them, since
+# the names of their runs do not tell the experiments apart.
+
+# Dataset calibration: each index's distinct k-mers, each query's hits, and SSHash's index, whose k-mers are GGCAT's.
+EXPERIMENT=calibrate PLACEMENT=spread TABLES="kache-hash sshash" KINDS=set SIZINGS=presized THREADS=56 REPS=1 \
+    reference short-reads long-reads pangenome metagenome
+
+# The gate, on each node before its runs and after each harness change: every table on the small workloads.
+EXPERIMENT=gate PLACEMENT=spread THREADS="1 16" REPS=2 chr21 srr5833294-1m ecoli-32
+
+# Pilot, for the main runs' thread count: presized sets at 16, 32, and 56 threads.
+EXPERIMENT=pilot PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" KINDS=set SIZINGS=presized \
+    THREADS="16 32 56" REPS=1 reference short-reads long-reads pangenome metagenome
+
+# The second socket's cost, apart from the thread count's: 28 threads on one socket, and spread over both.
+EXPERIMENT=sockets-compact PLACEMENT=compact TABLES="kache-hash boost libcuckoo iceberg" KINDS=set SIZINGS=presized \
+    THREADS=28 REPS=1 reference
+EXPERIMENT=sockets-spread PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg" KINDS=set SIZINGS=presized \
+    THREADS=28 REPS=1 reference
+
+# Main: the concurrent tables and SSHash, sets and maps, presized and grown from half the distinct k-mers.
+EXPERIMENT=main PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" THREADS=56 REPS=3 \
+    COUNTERS="demand noise tlb" reference short-reads long-reads pangenome metagenome
+
+# Scaling of builds, without queries: every concurrent table on the reference, the slow baselines once at up to 4
+# threads; and kache-hash alone on the other indexes.
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg" KINDS=set SIZINGS=presized \
+    VARIANTS=mt THREADS="8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES="boost libcuckoo iceberg" KINDS=set SIZINGS=presized VARIANTS=mt \
+    THREADS="1 2 4" REPS=1 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized VARIANTS=mt THREADS="1 2 4" \
+    REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized VARIANTS=mt \
+    THREADS="1 2 4 8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" \
+    short-reads long-reads pangenome metagenome
+
+# Scaling of queries: each count's queries of one 56-thread build, for every concurrent table and SSHash on the
+# reference, and for kache-hash alone on the other indexes.
+EXPERIMENT=scaling-query PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" KINDS=set \
+    SIZINGS=presized THREADS=56 QUERY_THREADS="1 2 4 8 16 24 32 40 48" REPS=3 COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-query PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized THREADS=56 \
+    QUERY_THREADS="1 2 4 8 16 24 32 40 48" REPS=3 COUNTERS="demand noise tlb" \
+    short-reads long-reads pangenome metagenome
+
+# Sequential: kache-hash's and Boost's sequential tables, and SSHash's queries at 1 thread, from an index built at 56.
+EXPERIMENT=sequential PLACEMENT=spread TABLES="kache-hash boost" KINDS=set SIZINGS=presized VARIANTS=seq THREADS=1 \
+    REPS=3 COUNTERS="demand noise tlb" reference short-reads long-reads pangenome metagenome
+EXPERIMENT=sequential PLACEMENT=spread TABLES=sshash KINDS=set THREADS=1 SSHASH_THREADS=56 REPS=3 \
+    COUNTERS="demand noise tlb" reference short-reads long-reads pangenome metagenome
+
+# CBL, apart from the sequential runs, as its runs take about an hour each: once per index.
+EXPERIMENT=sequential-cbl PLACEMENT=spread TABLES=cbl KINDS=set VARIANTS=seq THREADS=1 REPS=1 \
+    reference short-reads long-reads pangenome metagenome
+
+# Minimizer lengths, moving kache-hash along the roofline's intensity axis: l = 15–23 at 16 and 56 threads, with the
+# drivers of each length.
+EXPERIMENT=lsweep PLACEMENT=spread KINDS=set SIZINGS=presized VARIANTS=mt THREADS="16 56" REPS=3 \
+    TABLES="kache-hash-l15 kache-hash-l16 kache-hash-l17 kache-hash-l18 kache-hash-l19 kache-hash-l20 kache-hash-l21 \
+    kache-hash-l22 kache-hash-l23" COUNTERS="demand noise tlb" reference
+
+# The roof: added with its microbenchmark.
