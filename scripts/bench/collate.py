@@ -121,8 +121,9 @@ def name(cfg):
 
 def known(cfg):
     """Returns whether the run configuration `cfg` has a known defect, that its disagreements are reported for but do
-    not fail: iceberg's resizes duplicate and lose keys, even with one user thread."""
-    return cfg[1] == "iceberg" and cfg[4] != "presized"
+    not fail: iceberg's resizes duplicate and lose keys, even with one user thread, and its presized concurrent builds
+    rarely hold a key that queries then miss."""
+    return cfg[1] == "iceberg"
 
 
 def where(cfgs):
@@ -198,7 +199,7 @@ def main():
             if len(vals) > 1:
                 errors.append(f"{wl}: {key} differs: " + "; ".join(f"{v} in {where(c)}" for v, c in vals.items()))
             for v, c in known_vals.items():
-                if v not in vals:
+                if v not in vals and (vals or len(known_vals) > 1):    # Alone, defective tables can only disagree.
                     defects.append(f"{wl}: {key} is {v} in {where(c)}")
 
         for cfg, run in runs:
