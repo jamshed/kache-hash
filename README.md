@@ -68,6 +68,22 @@ const auto inserted = set.insert(seq, len, set_token);  // Number of k-mers newl
 Queries must not overlap updates that can resize the table, and `for_each` must not overlap any updates.
 `update`s, which insert nothing, must not overlap other operations but `update`s.
 
+### Counting k-mers within a set
+
+The library `kache_counter`, in `counter`, counts the k-mers of reads that belong to a set fixed beforehand, as PanGenie counts them with Jellyfish, on a table of 32-bit counts; its `Fastx_Reader` reads FASTA and FASTQ files in parallel, from files or pipes.
+Its interface is plain C++, without the table's headers, so that a project linking it, as `kache_hash::kache_counter`, keeps its own compile flags.
+CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DCOUNTER=ON`.
+
+```cpp
+#include "Kmer_Set_Counter.hpp"
+
+kache_hash::Kmer_Set_Counter counter(31, 3'000'000'000, 24);   // 31-mers; room for 3G of them; 24 threads.
+counter.prime("segments.fa");   // The set: the k-mers of these sequences, at count 0.
+const auto found = counter.count("reads.fq");   // Counts the reads' k-mers in the set; returns the occurrences counted.
+const auto bins = counter.histogram(10'000);    // `bins[c]`: the number of k-mers with count `c`.
+const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters at `kmer`.
+```
+
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), CBL, and SSHash.

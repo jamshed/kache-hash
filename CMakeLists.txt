@@ -85,8 +85,13 @@ set(UBSAN_FLAGS -fsanitize=undefined
                 -fsanitize=implicit-conversion -fsanitize=local-bounds -fsanitize=nullability)
 # set(UBSAN_LINK_FLAGS -fuse-ld=lld)
 
-# Optimization flags: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html.
-set(OPTIMIZE_FLAGS -funroll-loops -march=native)
+# Optimization flags: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html. An x86-64 build on Apple silicon, to run
+# under Rosetta, can't target the native CPU, and targets Haswell's AVX2 instead.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(OPTIMIZE_FLAGS -funroll-loops -march=haswell)
+else()
+    set(OPTIMIZE_FLAGS -funroll-loops -march=native)
+endif()
 
 # Keep branches from crossing or ending on 32-byte boundaries: Skylake-derived cores (such as Cascade Lake) can't serve
 # those from the decoded-uop cache under their JCC-erratum microcode. Other cores pay only for the padding. On Cascade
@@ -167,6 +172,11 @@ target_include_directories(kache_hash INTERFACE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(kache_hash INTERFACE ${XXHASH_DEFS} L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 target_compile_features(kache_hash INTERFACE cxx_std_20)
 target_link_libraries(kache_hash INTERFACE Threads::Threads)
+
+# The k-mer counting library, in `counter/`: for the projects that link it, and in top-level builds if `COUNTER` is set.
+if(COUNTER OR NOT KACHE_HASH_TOP_LEVEL)
+    add_subdirectory(counter)
+endif()
 
 
 # The rest is for the benchmarks, in top-level builds only: in a subproject, it would set the parent's build type, write
