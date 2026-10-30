@@ -44,7 +44,7 @@ private:
     struct Key_Val_Pair
     {
         T_key_ key;
-        T_val_ val;
+        [[no_unique_address]] T_val_ val;   // An empty value, such as a set's, takes no room.
     };
 
     // Returns the bitwise complement of the key `key`: a key's stored form.
