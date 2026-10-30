@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 
 namespace kache_hash
@@ -105,6 +106,11 @@ public:
     // Searches for `key` in the table and returns the address of the value
     // associated to it iff it is found. Returns `nullptr` otherwise.
     const T_val_* find(T_key_ key) const;
+
+    // Searches for `key` in the table and returns the address of the value
+    // associated to it iff it is found, for updates in place. Returns
+    // `nullptr` otherwise.
+    T_val_* find(T_key_ key);
 
     // Prefetches the first slot probed for `key`, and its lock iff `write_`,
     // with write intent iff `write_`.
@@ -284,6 +290,13 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
     }
 
     return val_ptr;
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_key_ key)
+{
+    return const_cast<T_val_*>(std::as_const(*this).find(key));
 }
 
 

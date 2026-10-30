@@ -169,6 +169,10 @@ private:
         // map.
         void set_val(std::size_t i, std::size_t j, const mapped_t& v) const;
 
+        // Sets the value `v` at the `j`'th slot of the `i`'th bucket to
+        // `f(v)`, in a map, as `update_in_place` does.
+        template <typename F> void update_val(std::size_t i, std::size_t j, const F& f) const;
+
         // Returns the element at the `j`'th slot of the `i`'th bucket.
         flat_t get(std::size_t i, std::size_t j) const;
 
@@ -306,6 +310,17 @@ private:
     // Returns the associated value iff the k-mer `key` is present in the
     // overflow table.
     __attribute__((noinline)) find_ret_t find_in_overflow(Kmer<k> key) const;
+
+    // Sets the value `v` to `f(v)`, in a map: atomically in a concurrent
+    // table, where `f` may be applied more than once.
+    template <typename F> static void update_in_place(mapped_t& v, const F& f);
+
+    // Sets the associated value `v` of the k-mer `key` to `f(v)` iff it is
+    // present in the overflow table, as `update_in_place` does. Returns whether
+    // it is present.
+    // NB: Out of line, as the streaming updates rarely reach the overflow
+    // table.
+    template <typename F> __attribute__((noinline)) bool update_in_overflow(Kmer<k> key, const F& f);
 
     // Directly places the element `e` with checksum `c` into the `i`'th bucket
     // at index `j`.
@@ -497,11 +512,12 @@ private:
 
     // Prefetches the slot where an operation on the k-mer `d` likely ends in
     // its primary bucket: its key's, by checksum, or else the first empty one
-    // iff `write_`, with write intent iff `write_`. If the operation goes
-    // beyond the bucket, prefetches its secondary buckets' metadata instead,
-    // computing them through the cache `sc`, and its overflow-table slot. A
-    // lookup goes beyond only if the spill filter marks its minimizer.
-    template <bool write_> void prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const;
+    // iff it may insert, i.e. iff `insert_`; with write intent iff `write_`.
+    // If the operation goes beyond the bucket, prefetches its secondary
+    // buckets' metadata instead, computing them through the cache `sc`, and
+    // its overflow-table slot. An operation that doesn't insert goes beyond
+    // only if the spill filter marks its minimizer.
+    template <bool write_, bool insert_ = write_> void prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const;
 
     // Prefetches what an operation on the k-mer `key` with minimizer hash `h`
     // touches beyond its full primary bucket, as `prefetch_slot` does,
@@ -512,7 +528,9 @@ private:
     template <bool write_> __attribute__((noinline, cold)) void prefetch_spill(Kmer<k> key, uint64_t h, Sec_Cache& sc) const;
 
     // Lookups' slot prefetches, as `stream` takes them: on while the last
-    // lookup hit. The lanes ask once per chunk whether they are on.
+    // lookup hit, and with write intent iff `write_`, for updates in place.
+    // The lanes ask once per chunk whether they are on.
+    template <bool write_>
     struct Lookup_Pre_Slot
     {
         const Streaming_Kmer_Hash_Table& M; // The table.
@@ -545,7 +563,7 @@ private:
     // ones (resize), rather than leaving it to the compiler's heuristics, whose
     // choices flip with small changes in these large functions.
     template <typename F, typename V>
-    std::size_t update(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token);
+    std::size_t insert_or_update(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token);
 
 public:
 
@@ -577,12 +595,12 @@ public:
     // skipping the ones already present. Non-ACGT characters split the
     // sequence. Returns the number of k-mers inserted. The invoking user
     // thread must provide its token `token`.
-    std::size_t insert(const char* seq, std::size_t len, const Token& token) requires (is_set_) { return update(&seq, &len, 1, [](){}, 0, token); }
+    std::size_t insert(const char* seq, std::size_t len, const Token& token) requires (is_set_) { return insert_or_update(&seq, &len, 1, [](){}, 0, token); }
 
     // Inserts the k-mers of the sequences `seqs[0..c)` of lengths `lens[0..c)`
     // into the set, as `insert` does for one sequence. Batching sequences,
     // such as reads, lets their k-mers be described at once.
-    std::size_t insert(const char* const* seqs, const std::size_t* lens, std::size_t c, const Token& token) requires (is_set_) { return update(seqs, lens, c, [](){}, 0, token); }
+    std::size_t insert(const char* const* seqs, const std::size_t* lens, std::size_t c, const Token& token) requires (is_set_) { return insert_or_update(seqs, lens, c, [](){}, 0, token); }
 
     // Updates the associated value `v` of each k-mer of the sequence `seq` of
     // length `len` present in the map to `f(v)`, and inserts each absent one
@@ -590,12 +608,28 @@ public:
     // order. Non-ACGT characters split the sequence. Returns the number of
     // k-mers inserted. The invoking user thread must provide its token
     // `token`.
-    template <typename F, typename V = T_> std::size_t upsert(const char* seq, std::size_t len, const F& f, const V& val, const Token& token) requires (is_map_) { return update(&seq, &len, 1, f, val, token); }
+    template <typename F, typename V = T_> std::size_t upsert(const char* seq, std::size_t len, const F& f, const V& val, const Token& token) requires (is_map_) { return insert_or_update(&seq, &len, 1, f, val, token); }
 
     // Upserts the k-mers of the sequences `seqs[0..c)` of lengths `lens[0..c)`
     // into the map, as `upsert` does for one sequence. Batching sequences,
     // such as reads, lets their k-mers be described at once.
-    template <typename F, typename V = T_> std::size_t upsert(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token) requires (is_map_) { return update(seqs, lens, c, f, val, token); }
+    template <typename F, typename V = T_> std::size_t upsert(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token) requires (is_map_) { return insert_or_update(seqs, lens, c, f, val, token); }
+
+    // Updates the associated value `v` of each k-mer of the sequence `seq` of
+    // length `len` present in the map to `f(v)`, one k-mer at a time, in an
+    // unspecified order, and skips the absent ones: it inserts none. Non-ACGT
+    // characters split the sequence. In a concurrent map, each value updates
+    // atomically, and `f` may be applied to it more than once, so it must have
+    // no side effects. Returns the number of k-mers present. It takes no
+    // locks, nor a token, and must not overlap operations on the map other
+    // than `update`s.
+    template <typename F> std::size_t update(const char* seq, std::size_t len, const F& f) requires (is_map_) { return update(&seq, &len, 1, f); }
+
+    // Updates the values of the k-mers of the sequences `seqs[0..c)` of lengths
+    // `lens[0..c)` present in the map, as `update` does for one sequence.
+    // Batching sequences, such as reads, lets their k-mers be described at
+    // once.
+    template <typename F> std::size_t update(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f) requires (is_map_);
 
     // Looks up the k-mers of the sequence `seq` of length `len`, calling
     // `g(i, r)` for the k-mer at index `i`, with `r` as `true` in a set, or
@@ -750,6 +784,24 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::set_val(const std::
         T[i].slot[j].second = v;
     else
         std::memcpy(at(i, j) + key_sz, static_cast<const void*>(&v), val_sz);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::update_val(const std::size_t i, const std::size_t j, const F& f) const
+{
+    if constexpr(!packed)
+        update_in_place(T[i].slot[j].second, f);
+    else if constexpr(!mt_)
+        set_val(i, j, f(val(i, j)));
+    else
+    {
+        // A packed value sits at offset `sizeof(Metadata) + j * slot_sz + key_sz` of its aligned bucket.
+        static_assert((sizeof(Metadata) + key_sz) % std::atomic_ref<mapped_t>::required_alignment == 0 &&
+                      slot_sz % std::atomic_ref<mapped_t>::required_alignment == 0, "Packed values are aligned for atomic updates.");
+        update_in_place(*reinterpret_cast<mapped_t*>(at(i, j) + key_sz), f);
+    }
 }
 
 
@@ -1023,6 +1075,37 @@ auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find_in_overflow(const Kmer<k> ke
         const auto p = ov->find(key);
         return !p ? null_val : val_t(*p);
     }
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::update_in_place(mapped_t& v, const F& f)
+{
+    if constexpr(mt_)
+    {
+        static_assert(std::atomic_ref<mapped_t>::is_always_lock_free, "Values of a concurrent map update in place without locks.");
+        assert(reinterpret_cast<uintptr_t>(&v) % std::atomic_ref<mapped_t>::required_alignment == 0);
+
+        const std::atomic_ref<mapped_t> a(v);
+        auto x = a.load(std::memory_order_relaxed);
+        while(!a.compare_exchange_weak(x, f(x), std::memory_order_relaxed))
+            ;
+    }
+    else
+        v = f(v);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F>
+bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::update_in_overflow(const Kmer<k> key, const F& f)
+{
+    const auto p = ov->find(key);
+    if(p)
+        update_in_place(*p, f);
+
+    return p != nullptr;
 }
 
 
@@ -1858,7 +1941,7 @@ void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_spill(const Kmer<k> key,
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-template <bool write_>
+template <bool write_, bool insert_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_Desc& d, Sec_Cache& sc) const
 {
     const auto i = d.h & (cap_ - 1);
@@ -1869,16 +1952,16 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
         const auto empty = eq_mask(c_vec, zero_cs());
         if(!empty)  // The operation goes beyond the primary bucket.
         {
-            if constexpr(!write_)
+            if constexpr(!insert_)
                 if(!may_spill(md(i), d.h))
                     return;
 
-            return prefetch_spill<write_>(d.key, d.h, sc);
+            return prefetch_spill<insert_>(d.key, d.h, sc);
         }
 
         // Updates predicted to insert prefetch the line after their predicted slot's too: a run's insertions cross
         // into it, and with the insertion-frontier prefetches alone, their stores still filled the store buffer.
-        if constexpr(write_)
+        if constexpr(insert_)
             T.prefetch_run(i, std::countr_zero(empty));
 
         return;
@@ -1889,18 +1972,20 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_slot(const Kmer_D
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot::active() const
+template <bool write_>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot<write_>::active() const
 {
     return hit;
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool write_>
 template <typename Make_>
-inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot::operator()(const Make_& make) const
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Lookup_Pre_Slot<write_>::operator()(const Make_& make) const
 {
     if(hit)
-        M.template prefetch_slot<false>(make(), sc);
+        M.template prefetch_slot<write_, false>(make(), sc);
 }
 
 
@@ -1917,7 +2002,7 @@ bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::ov_update(const Kmer<k> key, cons
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 template <typename F, typename V>
-__attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::update(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const F& f, const V& val, const Token& token)
+__attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_or_update(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const F& f, const V& val, const Token& token)
 {
     // The current minimizer run, its primary bucket `b` and secondary buckets `p` and `q`, and the buckets this
     // thread holds locked for it: none (0), `b` (1), or all three (3). Once `b` is found full, the run's remaining
@@ -2132,7 +2217,7 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
     Sec_Cache sc_slot;
     stream<use_lanes, false>(seqs, lens, c,
         [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
-        Lookup_Pre_Slot{*this, sc_slot, hit},
+        Lookup_Pre_Slot<false>{*this, sc_slot, hit},
         [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
         {
             // NB: Branch-free, as a branch on run starts mispredicts once per run.
@@ -2160,6 +2245,52 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
             hit = static_cast<bool>(r);
             g(seq_i, i, r);
         });
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F>
+__attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::update(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const F& f) requires (is_map_)
+{
+    // The current minimizer run, its primary bucket `b`, and its secondary buckets `p` and `q` once computed.
+    uint64_t run_h = 0;
+    bool sec = false;
+    std::size_t b = 0, p = 0, q = 0;
+
+    std::size_t found = 0;  // Number of k-mers present.
+
+    // The k-mers are looked up as in `find`, with the slots prefetched for writing.
+    bool hit = true;
+    Sec_Cache sc_slot;
+    stream<use_lanes, false>(seqs, lens, c,
+        [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
+        Lookup_Pre_Slot<true>{*this, sc_slot, hit},
+        [&](const Kmer_Desc& d, std::size_t, std::size_t)
+        {
+            b = d.h & (cap_ - 1);
+            sec &= (d.h == run_h);
+            run_h = d.h;
+
+            bool full;
+            if(const auto j = probe(d.key, d.c, b, full); j < B)
+                return hit = true, found++, T.update_val(b, j, f);
+            if(!full || !may_spill(md(b), d.h))
+                return (void)(hit = false);
+
+            if(!sec)
+                std::tie(p, q) = secondaries(d.h), sec = true;
+
+            bool full_p, full_q;
+            if(const auto j = probe(d.key, d.c, p, full_p); j < B)
+                return hit = true, found++, T.update_val(p, j, f);
+            if(const auto j = probe(d.key, d.c, q, full_q); j < B)
+                return hit = true, found++, T.update_val(q, j, f);
+
+            hit = (full_p && full_q && update_in_overflow(d.key, f));
+            found += hit;
+        });
+
+    return found;
 }
 
 

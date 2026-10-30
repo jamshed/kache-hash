@@ -51,6 +51,7 @@ const auto token = counts.register_user();  // One per user thread.
 
 counts.upsert(seq, len, [](const uint64_t c){ return c + 1; }, 1, token);   // Count the k-mers of `seq`.
 counts.upsert(seqs, lens, n, [](const uint64_t c){ return c + 1; }, 1, token);  // Of `n` sequences at once.
+counts.update(seqs, lens, n, [](const uint64_t c){ return c + 1; });   // Only the ones already in the map: no token, no locks.
 
 counts.find(seq, len, [&](const std::size_t i, const std::optional<uint64_t>& c){ /* The k-mer at `seq + i`. */ });
 const auto present = counts.count(seq, len);    // Number of k-mers of `seq` in the map.
@@ -61,7 +62,7 @@ const auto set_token = set.register_user();
 const auto inserted = set.insert(seq, len, set_token);  // Number of k-mers newly inserted.
 ```
 
-Queries must not overlap updates that can resize the table.
+Queries must not overlap updates that can resize the table, and `update`s, which insert nothing, must not overlap other operations but `update`s.
 
 ## Benchmarks
 
