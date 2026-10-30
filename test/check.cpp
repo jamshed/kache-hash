@@ -1,6 +1,6 @@
 
 // Correctness checks of the table against an exact reference: sizes, presence, counts, and negative hits, for sets and
-// maps, sequential and concurrent tables, presized and resizing.
+// maps, sequential and concurrent tables, presized and resizing; and for maps, the counts after present-only updates.
 // Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>
 //   Maps hold 64-bit counts, or 8-, 16- or 32-bit ones per the suffix.
 //   stream: operations over the fragments split at N.
@@ -201,10 +201,68 @@ static int check(const std::string& index, const std::string& neg, const std::si
     for(const auto& s : F)
         kmer_c += s.size() - k + 1;
 
-    const bool bad = (M.size() != R.size() || ins_c != R.size() || miss || wrong || calls != kmer_c || neg_wrong || neg_count != neg_expected);
-    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong)%s\n",
+    // Maps: present-only updates by every thread over all the pieces, so that the threads contend on the same values,
+    // then over the raw negatives, split over the threads. Each present k-mer's count gains its multiplicity in them,
+    // and none of the negatives' absent k-mers gets inserted.
+    std::size_t upd_found = 0, upd_exp = 0, upd_wrong = 0, upd_neg_count = 0;
+    if constexpr(!is_set)
+    {
+        const Reference RN(NF);
+        std::vector<std::size_t> c_found(T), c_upd_wrong(L), c_upd_neg(L);
+        std::vector<std::thread> U;
+        for(std::size_t t = 0; t < T; ++t)
+            U.emplace_back([&, t]()
+            {
+                for(std::size_t i = 0; i < S.size(); i += batch_sz)
+                {
+                    const char* seqs[13];
+                    std::size_t lens[13], c = 0;
+                    for(std::size_t j = i; j < std::min(S.size(), i + batch_sz); ++j)
+                        seqs[c] = S[j].data(), lens[c] = S[j].size(), c++;
+
+                    c_found[t] += (mode == "multi" ? M.update(seqs, lens, c, inc) : M.update(seqs[0], lens[0], inc));
+                }
+
+                for(std::size_t i = t; i < NR.size(); i += T)
+                    c_found[t] += M.update(NR[i].data(), NR[i].size(), inc);
+            });
+        for(auto& u : U)
+            u.join();
+
+        std::vector<std::thread> V;
+        for(std::size_t t = 0; t < L; ++t)
+            V.emplace_back([&, t]()
+            {
+                for(std::size_t i = t; i < F.size(); i += L)
+                {
+                    const auto& s = F[i];
+                    M.find(s.data(), s.size(), [&](const std::size_t j, const auto& v)
+                    {
+                        const auto x = canonical(s.data() + j);
+                        const auto exp = (T + 1) * R.count_of(x) + (RN.has(x) ? RN.count_of(x) : 0);
+                        c_upd_wrong[t] += (!v || *v != static_cast<T_>(exp));  // Counts wrap at narrow widths.
+                    });
+                }
+
+                for(std::size_t i = t; i < NR.size(); i += L)
+                    c_upd_neg[t] += M.count(NR[i].data(), NR[i].size());
+            });
+        for(auto& v : V)
+            v.join();
+
+        upd_found = sum(c_found), upd_exp = T * kmer_c + neg_expected;
+        upd_wrong = sum(c_upd_wrong), upd_neg_count = sum(c_upd_neg);
+    }
+
+    char upd[128] = "";
+    if constexpr(!is_set)
+        std::snprintf(upd, sizeof(upd), ", update %zu (ref %zu, %zu wrong, neg %zu)", upd_found, upd_exp, upd_wrong, upd_neg_count);
+
+    const bool bad = (M.size() != R.size() || ins_c != R.size() || miss || wrong || calls != kmer_c || neg_wrong || neg_count != neg_expected
+                      || upd_found != upd_exp || upd_wrong || (!is_set && upd_neg_count != neg_expected));
+    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong)%s%s\n",
                 index.c_str(), mt_ ? "mt" : "seq", is_set ? "set" : "map", T, static_cast<std::size_t>(cap_0), static_cast<std::size_t>(M.capacity()), mode.c_str(),
-                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, bad ? "  <-- WRONG" : "  ok");
+                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, upd, bad ? "  <-- WRONG" : "  ok");
     return bad ? 1 : 0;
 }
 
