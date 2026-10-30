@@ -11,6 +11,7 @@
 #   THREADS_<table>: the thread counts of one table, e.g. `THREADS_sshash`, instead of THREADS;
 #   QUERY_THREADS: further thread counts to query each table with, those below its run's, reported as the phases
 #            `query<i>.T<count>` (default: none);
+#   QUERIES: if set, the inputs to query instead of the workload's, e.g. empty to only build;
 #   REPS:    the repetitions of each run (default: 3);
 #   LAUNCH:  a prefix of each run, e.g. `numactl --cpunodebind=0 --membind=0` (default: none);
 #   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
@@ -44,6 +45,24 @@ failed=0
 workload()
 {
     case "${1}" in
+        # The paper's workloads: each index queried with k-mers it holds (positive), k-mers of another domain of life
+        # (negative), and an application's input (mixed).
+        reference)
+            index=CHM13.fa.gz
+            queries="CHM13.fa.gz SRR5901135.fastq.gz SRR37356339.4M.fastq.gz" ;;
+        short-reads)
+            index=SRR37356339.20M.fastq.gz
+            queries="SRR37356339.4M.fastq.gz SRR5901135.fastq.gz CHM13.fa.gz" ;;
+        long-reads)
+            index=SRR10382246.360K.fastq.gz
+            queries="SRR10382246.45K.fastq.gz SRR5901135.fastq.gz SRR37356339.4M.fastq.gz" ;;
+        pangenome)
+            index=ecoli-3682.fa.gz
+            queries="ecoli-3682.every8.fa.gz SRR37356339.4M.fastq.gz SRR5901135.fastq.gz" ;;
+        metagenome)
+            index=humgut-1in20.fa.gz
+            queries="humgut-1in20.every8.fa.gz SRR37356339.4M.fastq.gz ERR321482.fastq.gz" ;;
+        # The earlier campaigns' workloads.
         grch38)
             index=GRCh38.fa.gz
             queries="GRCh38.fa.gz ecoli.fa.gz SRR5833294.fastq.gz SRR5901135_1.fastq.gz SRR5901135_2.fastq.gz" ;;
@@ -194,6 +213,7 @@ fi
 
 for wl in "$@"; do
     workload "${wl}"
+    queries="${QUERIES-${queries}}"
     out="${out_dir}/${wl}"
     mkdir -p "${out}"
 

@@ -76,6 +76,7 @@ scripts/bench/run.sh build/benchmark data out chr21 srr5833294-1m ecoli-32
 scripts/bench/collate.py out
 ```
 
+`fetch-data.sh` fetches the small set above, the paper's (`full`, the default; HumGut, no longer served, from a copy, as its header describes), or the earlier campaigns' (`legacy`).
 `run.sh` takes its matrix of tables, workloads, sizings, thread counts, and repetitions from the environment, as its header describes.
 `collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree; given several output directories, it collates them as campaigns, e.g. new *k*ache-hash runs against an earlier campaign's baselines.
 On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`; `EXPERIMENTS`, `TOOLS`, and `WORKLOADS` select a part of the plan, e.g. `TOOLS=kache-hash` for *k*ache-hash alone.
