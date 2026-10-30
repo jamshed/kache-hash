@@ -9,6 +9,10 @@ project(${PROJECT_NAME}
             LANGUAGES CXX C
         )
 
+# Whether this is the top-level project, and not a subproject of one that links the `kache_hash` target, e.g. through
+# `FetchContent`: only top-level builds set the build type, export compile commands, and build the benchmarks.
+string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}" KACHE_HASH_TOP_LEVEL)
+
 # Language standards.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -131,21 +135,48 @@ endif()
 set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY XXH_FORCE_MEMORY_ACCESS=0)   # `memcpy` reads: xxHash's default for GCC breaks strict aliasing.
 add_compile_definitions(${XXHASH_DEFS})
 add_compile_definitions(DEVELOP)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
+if(KACHE_HASH_TOP_LEVEL)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
+endif()
 
 execute_process(
     COMMAND getconf LEVEL1_DCACHE_LINESIZE
     COMMAND tr -d '\n'
     OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+    ERROR_QUIET
 )
+
+if(NOT L1_CACHE_LINE_SIZE MATCHES "^[1-9][0-9]*$")  # E.g. on macOS, whose `getconf` lacks the parameter.
+    message("Cache-line size unknown; assuming 64 bytes.")
+    set(L1_CACHE_LINE_SIZE 64)
+endif()
 
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
 # Required packages / libraries from the system.
+find_package(Threads REQUIRED)
+
+
+# The table as a header-only library, for other projects to link. It carries what its headers need: C++20, threads, the
+# include path, and the xxHash and cache-line definitions. Optimization and ISA flags (AVX2 at least) are the linking
+# project's own.
+add_library(kache_hash INTERFACE)
+add_library(kache_hash::kache_hash ALIAS kache_hash)
+target_include_directories(kache_hash INTERFACE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(kache_hash INTERFACE ${XXHASH_DEFS} L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
+target_compile_features(kache_hash INTERFACE cxx_std_20)
+target_link_libraries(kache_hash INTERFACE Threads::Threads)
+
+
+# The rest is for the benchmarks, in top-level builds only: in a subproject, it would set the parent's build type, write
+# into the parent's source tree, and fetch the baselines.
+if(NOT KACHE_HASH_TOP_LEVEL)
+    return()
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
-find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 
 # Required external projects.
