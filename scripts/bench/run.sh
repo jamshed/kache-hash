@@ -13,16 +13,18 @@
 #            `query<i>.T<count>` (default: none);
 #   QUERIES: if set, the inputs to query instead of the workload's, e.g. empty to only build;
 #   REPS:    the repetitions of each run (default: 3);
+#   SELECT:  if set, an extended regular expression that a run's name—its output's path in `<out-dir>`, less `.tsv`—must
+#            match for it to run, to select runs across a plan's matrices, e.g. `^reference/kache-hash\.` or `\.T56\.`;
 #   PLACEMENT: if set, `spread` or `compact`: each run takes a core per thread, alternating between the sockets or
 #            filling one socket before the next, with its memory interleaved over the NUMA nodes (default: none);
 #   LAUNCH:  a prefix of each run, ahead of PLACEMENT's, e.g. `timeout 3h`, or without PLACEMENT, a binding such as
 #            `numactl --cpunodebind=0 --membind=0` (default: none);
 #   SSHASH_THREADS: the thread count of SSHash's index build (default: the most of THREADS);
 #   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
-# The tables skip the configurations they do not support. Per workload, the distinct k-mer count comes from a kache-hash
-# set run grown from a small capacity, with the most threads of THREADS, and the SSHash index from `sshash-index.sh`;
-# both launch as the runs do, and are kept with the outputs, as `distinct.tsv` and `index.*`, so that each machine
-# measures its own. Each launch's command line is kept beside its output, as `<run>.launch`.
+# The tables skip the configurations they do not support. Per workload, as its runs need them, the distinct k-mer count
+# comes from a kache-hash set run grown from a small capacity, with the most threads of THREADS, and the SSHash index
+# from `sshash-index.sh`; both launch as the runs do, and are kept with the outputs, as `distinct.tsv` and `index.*`, so
+# that each machine measures its own. Each launch's command line is kept beside its output, as `<run>.launch`.
 
 bin_dir="${1}"
 data_dir="${2}"
@@ -40,6 +42,7 @@ KINDS="${KINDS:-set map}"
 SIZINGS="${SIZINGS:-presized half}"
 THREADS="${THREADS:-16}"
 REPS="${REPS:-3}"
+SELECT="${SELECT:-}"
 PLACEMENT="${PLACEMENT:-}"
 LAUNCH="${LAUNCH:-}"
 
@@ -211,11 +214,27 @@ configs()
 }
 
 
-# Runs the table $1 for the kind $2, the variant $3, the sizing $4, and the thread count $5, as the repetition $6.
+# Prints the runs of the workload `wl` that SELECT selects, as lines of name, table, kind, variant, sizing, and threads.
+# Repetitions interleave, to spread drifts over configurations.
+runs()
+{
+    local rep table kind variant sizing t name
+
+    for rep in $(seq 1 "${REPS}"); do
+        while read -r table kind variant sizing t; do
+            name="${table}.${kind}.${variant}.${sizing}.T${t}.r${rep}"
+            if [ -z "${SELECT}" ] || [[ "${wl}/${name}" =~ ${SELECT} ]]; then
+                echo "${name} ${table} ${kind} ${variant} ${sizing} ${t}"
+            fi
+        done < <(configs)
+    done
+}
+
+
+# Runs the table $2 for the kind $3, the variant $4, the sizing $5, and the thread count $6, as the run named $1.
 run()
 {
-    local table="${1}" kind="${2}" variant="${3}" sizing="${4}" t="${5}" rep="${6}"
-    local name="${table}.${kind}.${variant}.${sizing}.T${t}.r${rep}" args=() q
+    local name="${1}" table="${2}" kind="${3}" variant="${4}" sizing="${5}" t="${6}" args=() q
 
     [ -s "${out}/${name}.tsv" ] && return
 
@@ -269,6 +288,14 @@ if [ -z "${tables}" ]; then
     exit 0
 fi
 
+if [ -n "${SELECT}" ]; then
+    [[ "" =~ ${SELECT} ]]
+    if (( $? == 2 )); then
+        echo "SELECT is not an extended regular expression: ${SELECT}" >&2
+        exit 1
+    fi
+fi
+
 if [ -n "${PLACEMENT}" ]; then
     if [[ " spread compact " != *" ${PLACEMENT} "* ]] || ! command -v numactl > /dev/null; then
         echo "PLACEMENT is spread or compact, and needs numactl" >&2
@@ -287,23 +314,27 @@ for wl in "$@"; do
     workload "${wl}"
     queries="${QUERIES-${queries}}"
     out="${out_dir}/${wl}"
-    mkdir -p "${out}"
 
-    if configs | grep -qE " (presized|half) "; then
+    selected=$(runs)
+    if [ -z "${selected}" ]; then
+        echo "Skipping ${wl}: no runs selected"
+        continue
+    fi
+
+    mkdir -p "${out}"
+    if grep -qE " (presized|half) " <<< "${selected}"; then
         count_distinct
     fi
 
     indexed=0
-    if configs | grep -q "^sshash "; then
+    if grep -q "^sshash\." <<< "${selected}"; then
         index_sshash
     fi
 
-    for rep in $(seq 1 "${REPS}"); do   # Repetitions interleave, to spread drifts over configurations.
-        while read -r table kind variant sizing t; do
-            [ "${table}" == "sshash" ] && (( ! indexed )) && continue
-            run "${table}" "${kind}" "${variant}" "${sizing}" "${t}" "${rep}" < /dev/null
-        done < <(configs)
-    done
+    while read -r name table kind variant sizing t; do
+        [ "${table}" == "sshash" ] && (( ! indexed )) && continue
+        run "${name}" "${table}" "${kind}" "${variant}" "${sizing}" "${t}" < /dev/null
+    done <<< "${selected}"
 done
 
 if (( failed > 0 )); then

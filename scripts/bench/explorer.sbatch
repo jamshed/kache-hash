@@ -17,8 +17,8 @@
 # preferred there—or with `MEMORY=interleave`, interleaved over all sockets, for tables beyond a socket's memory—unless
 # `PLACEMENT` places each run instead (see `run.sh`); and `TIMEOUT`, a limit of each run, e.g. `3h`. The environment
 # selects what of the plan runs, if set: `EXPERIMENTS`, the names of the lines to run; `TOOLS`, the tables to run (see
-# `run.sh`); and `WORKLOADS`, the workloads to run. The job exits unless the node's CPU model contains `CPU_MODEL`
-# (default: Platinum 8276).
+# `run.sh`); `WORKLOADS`, the workloads to run; and `SELECT`, the runs to run, by name (see `run.sh`). The job exits
+# unless the node's CPU model contains `CPU_MODEL` (default: Platinum 8276).
 # Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>
 
 data_dir="${1}"
