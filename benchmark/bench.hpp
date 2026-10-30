@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <optional>
 #include <memory>
+#include <filesystem>
 
 
 // A table to benchmark is driven through an adapter type `Table_` that has:
@@ -155,15 +156,19 @@ void for_each_canonical(const char* const s, const std::size_t n, const F_& f)
 
 // Looks up the k-mers of each query input of the configuration `cfg` in the
 // table `M`, a phase per input, and then a phase per further query thread count
-// `t`, named `query<i>.T<t>`. Counts the events of the group `perf` per phase,
-// if provided.
+// `t`, named `query<i>.T<t>`. A query of the index's input looks up its
+// fragments `index`, if provided, instead of reading it again. Counts the
+// events of the group `perf` per phase, if provided.
 template <typename Table_>
-void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf)
+void run_queries(const Config& cfg, const Table_& M, Perf_Group* const perf, const Fragments* const index = nullptr)
 {
     for(std::size_t q = 0; q < cfg.query.size(); ++q)
     {
         const auto name = "query" + std::to_string(q);
-        const Fragments query(cfg.query[q]);
+        std::error_code ec;
+        const bool of_index = (index != nullptr && std::filesystem::equivalent(cfg.query[q], cfg.index, ec));
+        const auto read = (of_index ? nullptr : std::make_unique<const Fragments>(cfg.query[q]));
+        const Fragments& query = (of_index ? *index : *read);
         report_input(name, cfg.query[q], query);
 
         // Looks up the query's k-mers with `thread_c` user threads, as the phase `phase`.
@@ -228,7 +233,7 @@ void build_and_query(const Config& cfg, Perf_Group* const perf)
     print("table.size", M.size());
     M.report();
 
-    run_queries(cfg, M, perf);
+    run_queries(cfg, M, perf, &index);
 }
 
 
