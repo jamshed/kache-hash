@@ -20,7 +20,9 @@
 #   LAUNCH:  a prefix of each run, ahead of PLACEMENT's, e.g. `timeout 3h`, or without PLACEMENT, a binding such as
 #            `numactl --cpunodebind=0 --membind=0` (default: none);
 #   SSHASH_THREADS: the thread count of SSHash's index build (default: the most of THREADS);
-#   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s).
+#   SSHASH_M: the minimizer length of SSHash (default: `sshash-index.sh`'s);
+#   VERSION: the code's version, which each run's output records as `version` (default: the repository's version, as
+#            `git describe --always --dirty` names it, with a hash of any uncommitted changes; or `unknown`).
 # The tables skip the configurations they do not support. Per workload, as its runs need them, the distinct k-mer count
 # comes from a kache-hash set run grown from a small capacity, with the most threads of THREADS, and the SSHash index
 # from `sshash-index.sh`; both launch as the runs do, and are kept with the outputs, as `distinct.tsv` and `index.*`, so
@@ -260,6 +262,7 @@ run()
 
     if launch "${out}/${name}.launch" "${t}" "${bin_dir}/bench_${table//-/_}" "${args[@]}" \
             > "${out}/${name}.tsv.tmp" 2> "${out}/${name}.err"; then
+        printf "version\t%s\n" "${VERSION}" >> "${out}/${name}.tsv.tmp"
         mv "${out}/${name}.tsv.tmp" "${out}/${name}.tsv"
         [ -s "${out}/${name}.err" ] || rm -f "${out}/${name}.err"
         echo "Ran ${wl}/${name}"
@@ -268,6 +271,24 @@ run()
     else
         echo "Failed running ${wl}/${name}; see ${out}/${name}.err" >&2
         failed=$(( failed + 1 ))
+    fi
+}
+
+
+# Prints the version of the code, as `git describe` names that of this script's repository, with a hash of its
+# uncommitted changes, if any; or `unknown`, outside a repository.
+version()
+{
+    local repo describe hash
+
+    repo="$(dirname "${0}")"
+    if ! describe=$(git -C "${repo}" describe --always --dirty 2> /dev/null); then
+        echo unknown
+    elif [[ "${describe}" == *-dirty ]]; then
+        hash=$(git -C "${repo}" diff HEAD --binary | { sha256sum 2> /dev/null || shasum -a 256; })
+        echo "${describe}-${hash:0:8}"
+    else
+        echo "${describe}"
     fi
 }
 
@@ -309,6 +330,8 @@ if [ -n "${PLACEMENT}" ]; then
         exit 1
     fi
 fi
+
+VERSION="${VERSION:-$(version)}"
 
 for wl in "$@"; do
     workload "${wl}"
