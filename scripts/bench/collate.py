@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Collates the runs of `run.sh` in output directories, a campaign each, named after its directory, into the first
 one's `summary.tsv`, a row per campaign, workload, and run configuration with the versions of the code that its runs
-ran and the medians over its repetitions, and `build-cost.tsv`, SSHash's index pipeline (GGCAT, then SSHash) against
-the dynamic tables' load, init, and build at the same thread count. Queries are named after their inputs, as
-`query.<input>`. Exits non-zero if the runs of a workload, across the campaigns, disagree on the table size or on any
-query's hits, if a query's hits differ across its thread counts, or if a build's operation count is not its input's
-k-mer count. Warns of campaigns whose runs ran several versions of the code, and of runs left with much of their
-memory in small pages after the build, as on a node short of free huge pages."""
+ran and the medians over its repetitions; `build-cost.tsv`, SSHash's index pipeline (GGCAT, then SSHash) against the
+dynamic tables' load, init, and build at the same thread count; and `counters.tsv`, a row per campaign, workload, run
+configuration, phase, and hardware-counter metric, with its median over the runs that counted it. Queries are named
+after their inputs, as `query.<input>`. Exits non-zero if the runs of a workload, across the campaigns, disagree on
+the table size or on any query's hits, if a query's hits differ across its thread counts, or if a build's operation
+count is not its input's k-mer count. Warns of campaigns whose runs ran several versions of the code, of runs left with
+much of their memory in small pages after the build, as on a node short of free huge pages, and of multiplexed
+counters, whose counts are left out."""
 
 import glob
 import os
@@ -22,6 +24,9 @@ CONFIG = ["campaign", "workload", "table", "kind", "variant", "sizing", "threads
 # A query phase's measurement, as the drivers name it, and an input's file extensions.
 QUERY = re.compile(r"query(?P<q>\d+)(?P<threads>\.T\d+)?\.(?P<stat>hits|seconds|mops)")
 INPUT_EXT = re.compile(r"(\.(fa|fna|fasta|fastq|fq))?(\.gz)?$")
+# A phase that counts hardware events, as the drivers name it: the build, or a query at the run's thread count or a
+# further one.
+PHASE = re.compile(r"build|query(?P<q>\d+)(?P<threads>\.T(?P<t>\d+))?")
 
 # Measurements reported as medians: per-run keys, and per-query key suffixes.
 MEDIANS = ["load.seconds", "init.seconds", "build.seconds", "build.mops", "memory.build_max_rss_bytes",
@@ -60,6 +65,46 @@ def name_queries(run):
     return sorted(name for name, H in hits.items() if len(H) > 1)
 
 
+def counters(run):
+    """Returns the hardware-counter metrics of the run `run` per phase, named as in the summary: each event per
+    operation, instructions per cycle, cycles per reference cycle (the effective frequency over the base one), and the
+    share of the time that its threads spent on a CPU. Returns also the phases whose counters were multiplexed, which
+    are left out."""
+    phases = [key[len("perf."):-len(".running_pct")] for key in run
+              if key.startswith("perf.") and key.endswith(".running_pct")]
+    metrics, multiplexed = {}, []
+    for phase in phases:
+        m = PHASE.fullmatch(phase)
+        if not m:
+            continue
+
+        name, threads = phase, float(run["threads"])
+        if m["q"]:
+            name = "query." + INPUT_EXT.sub("", os.path.basename(run[f"query{m['q']}"])) + (m["threads"] or "")
+            threads = float(m["t"] or threads)
+        if float(run[f"perf.{phase}.running_pct"]) < 99.9:
+            multiplexed.append(name)
+            continue
+
+        events = {}     # The phase's counts, less those of the phases it prefixes, e.g. `query0.T1` of `query0`.
+        for key, val in run.items():
+            owner = max((p for p in phases if key.startswith(f"perf.{p}.")), key=len, default=None)
+            if owner == phase and key != f"perf.{phase}.running_pct":
+                events[key[len(f"perf.{phase}."):]] = float(val)
+
+        ops = float(run[f"{phase}.ops"])
+        vals = {f"{event}.per_op": count / ops for event, count in events.items()}
+        if events.get("cycles"):
+            vals["ipc"] = events["instructions"] / events["cycles"]
+            if events.get("ref_cycles"):
+                vals["cycles_per_ref_cycle"] = events["cycles"] / events["ref_cycles"]
+        if "task_clock_ns" in events:
+            vals["cpu_utilization"] = events["task_clock_ns"] / (threads * float(run[f"{phase}.seconds"]) * 1e9)
+        metrics[name] = vals
+
+    return metrics, multiplexed
+
+
 def median(runs, key):
     vals = [float(run[key]) for run in runs if key in run]
     if not vals:
@@ -95,6 +140,7 @@ def main():
     configs = {}    # Runs per configuration.
     costs = {}  # SSHash index costs per workload and campaign.
     versions = {}   # Run counts per campaign and version.
+    counted = {}    # Counter metrics of the runs per configuration, for the runs that counted any.
     errors, defects, warnings = [], [], []
     for out_dir in out_dirs:
         campaign = os.path.basename(os.path.normpath(out_dir))
@@ -119,6 +165,13 @@ def main():
                             warnings.append(f"{wl}: huge pages back {share:.0%} of the {anon / (1 << 20):.1f} GiB of"
                                             f" anonymous memory after the build in {os.path.basename(path)}"
                                             + (f" ({campaign})" if multi else ""))
+
+                    metrics, multiplexed = counters(run)
+                    for phase in multiplexed:
+                        warnings.append(f"{wl}: counters multiplexed in {phase} of {os.path.basename(path)}, so left"
+                                        " out" + (f" ({campaign})" if multi else ""))
+                    if metrics:
+                        counted.setdefault(cfg, []).append(metrics)
 
                     configs.setdefault(cfg, []).append(run)
                 elif os.path.basename(path) == "index.cost.tsv":
@@ -180,6 +233,18 @@ def main():
                     rss = median(R, "memory.build_max_rss_bytes")
                     print(f"{cfg[6]}\t{wl}\t{cfg[1]}.{cfg[3]}\t{cfg[4]}\t{cfg[5]}\t{ld + it + bd:.6g}\t{rss}"
                           f"\tload {ld:.6g} + init {it:.6g} + build {bd:.6g}", file=f)
+
+    with open(os.path.join(out_dirs[0], "counters.tsv"), "w") as f:
+        print("\t".join(CONFIG + ["phase", "metric", "value", "runs"]), file=f)
+        for cfg, M in sorted(counted.items(), key=lambda c: (c[0][6],) + c[0][:6]):
+            vals = {}   # Per phase and metric, the values of the runs that counted it.
+            for metrics in M:
+                for phase, phase_vals in metrics.items():
+                    for metric, val in phase_vals.items():
+                        vals.setdefault((phase, metric), []).append(val)
+            for (phase, metric), V in vals.items():
+                cells = [cfg[6]] + [str(c) for c in cfg[:6]] + [phase, metric, f"{statistics.median(V):.6g}"]
+                print("\t".join(cells + [str(len(V))]), file=f)
 
     print(f"Collated {sum(len(R) for R in configs.values())} runs of {len(configs)} configurations"
           f" into {out_dirs[0]}.")

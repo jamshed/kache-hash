@@ -13,6 +13,9 @@
 #            `query<i>.T<count>` (default: none);
 #   QUERIES: if set, the inputs to query instead of the workload's, e.g. empty to only build;
 #   REPS:    the repetitions of each run (default: 3);
+#   COUNTERS: the hardware-counter groups of the repetitions, in order: the r-th repetition counts the r-th, by its name
+#            in COUNTER_EVENTS, or nothing for `-`, e.g. `demand noise tlb` (default: none);
+#   COUNTER_EVENTS: the file of those groups (default: `scripts/perf/cascadelake.events`);
 #   SELECT:  if set, an extended regular expression that a run's name—its output's path in `<out-dir>`, less `.tsv`—must
 #            match for it to run, to select runs across a plan's matrices, e.g. `^reference/kache-hash\.` or `\.T56\.`;
 #   PLACEMENT: if set, `spread` or `compact`: each run takes a core per thread, alternating between the sockets or
@@ -44,6 +47,8 @@ KINDS="${KINDS:-set map}"
 SIZINGS="${SIZINGS:-presized half}"
 THREADS="${THREADS:-16}"
 REPS="${REPS:-3}"
+COUNTERS="${COUNTERS:-}"
+COUNTER_EVENTS="${COUNTER_EVENTS:-$(dirname "${0}")/../perf/cascadelake.events}"
 SELECT="${SELECT:-}"
 PLACEMENT="${PLACEMENT:-}"
 LAUNCH="${LAUNCH:-}"
@@ -216,8 +221,8 @@ configs()
 }
 
 
-# Prints the runs of the workload `wl` that SELECT selects, as lines of name, table, kind, variant, sizing, and threads.
-# Repetitions interleave, to spread drifts over configurations.
+# Prints the runs of the workload `wl` that SELECT selects, as lines of name, table, kind, variant, sizing, threads,
+# and repetition. Repetitions interleave, to spread drifts over configurations.
 runs()
 {
     local rep table kind variant sizing t name
@@ -226,17 +231,18 @@ runs()
         while read -r table kind variant sizing t; do
             name="${table}.${kind}.${variant}.${sizing}.T${t}.r${rep}"
             if [ -z "${SELECT}" ] || [[ "${wl}/${name}" =~ ${SELECT} ]]; then
-                echo "${name} ${table} ${kind} ${variant} ${sizing} ${t}"
+                echo "${name} ${table} ${kind} ${variant} ${sizing} ${t} ${rep}"
             fi
         done < <(configs)
     done
 }
 
 
-# Runs the table $2 for the kind $3, the variant $4, the sizing $5, and the thread count $6, as the run named $1.
+# Runs the table $2 for the kind $3, the variant $4, the sizing $5, and the thread count $6, as the run named $1 of the
+# repetition $7, counting its counter group, if any.
 run()
 {
-    local name="${1}" table="${2}" kind="${3}" variant="${4}" sizing="${5}" t="${6}" args=() q
+    local name="${1}" table="${2}" kind="${3}" variant="${4}" sizing="${5}" t="${6}" rep="${7}" args=() q
 
     [ -s "${out}/${name}.tsv" ] && return
 
@@ -259,6 +265,7 @@ run()
     [ "${variant}" == "seq" ] && args+=(--seq)
     [ "${sizing}" == "presized" ] && args+=(--init-cap "${distinct}")
     [ "${sizing}" == "half" ] && args+=(--init-cap "$(( distinct / 2 ))")
+    [ -n "${counter_specs[rep - 1]:-}" ] && args+=(--perf "${counter_specs[rep - 1]}")
 
     if launch "${out}/${name}.launch" "${t}" "${bin_dir}/bench_${table//-/_}" "${args[@]}" \
             > "${out}/${name}.tsv.tmp" 2> "${out}/${name}.err"; then
@@ -317,6 +324,16 @@ if [ -n "${SELECT}" ]; then
     fi
 fi
 
+counter_specs=()    # The raw events that each repetition counts, in order: none if empty.
+for group in ${COUNTERS}; do
+    spec=$(awk -v group="${group}" '$1 == group { print $2 }' "${COUNTER_EVENTS}" 2> /dev/null)
+    if [ "${group}" != "-" ] && [ -z "${spec}" ]; then
+        echo "No counter group ${group} in ${COUNTER_EVENTS}" >&2
+        exit 1
+    fi
+    counter_specs+=("${spec}")
+done
+
 if [ -n "${PLACEMENT}" ]; then
     if [[ " spread compact " != *" ${PLACEMENT} "* ]] || ! command -v numactl > /dev/null; then
         echo "PLACEMENT is spread or compact, and needs numactl" >&2
@@ -354,9 +371,9 @@ for wl in "$@"; do
         index_sshash
     fi
 
-    while read -r name table kind variant sizing t; do
+    while read -r name table kind variant sizing t rep; do
         [ "${table}" == "sshash" ] && (( ! indexed )) && continue
-        run "${name}" "${table}" "${kind}" "${variant}" "${sizing}" "${t}" < /dev/null
+        run "${name}" "${table}" "${kind}" "${variant}" "${sizing}" "${t}" "${rep}" < /dev/null
     done <<< "${selected}"
 done
 
