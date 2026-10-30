@@ -1,7 +1,7 @@
 
-// Correctness checks of the table against an exact reference: sizes, presence, counts, negative hits, and iteration over
-// workers' shares, for sets and maps, sequential and concurrent tables, presized and resizing; and for maps, the counts
-// after present-only updates.
+// Correctness checks of the table against an exact reference: sizes, presence, counts, negative hits, single-k-mer
+// lookups, and iteration over workers' shares, for sets and maps, sequential and concurrent tables, presized and
+// resizing; and for maps, the counts after present-only updates.
 // Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>
 //   Maps hold 64-bit counts, or 8-, 16- or 32-bit ones per the suffix.
 //   stream: operations over the fragments split at N.
@@ -140,6 +140,7 @@ static int check(const std::string& index, const std::string& neg, const std::si
     const auto NF = read(neg, false), NR = read(neg, true);
     const std::size_t L = std::max<std::size_t>(T, std::thread::hardware_concurrency());
     std::vector<std::size_t> c_miss(L), c_wrong(L), c_calls(L), c_neg(L), c_neg_wrong(L), c_neg_exp(L), c_neg_count(L);
+    std::vector<std::size_t> c_single(L), c_single_wrong(L), c_single_neg_wrong(L);
     std::vector<std::thread> Q;
     for(std::size_t t = 0; t < L; ++t)
         Q.emplace_back([&, t]()
@@ -191,6 +192,39 @@ static int check(const std::string& index, const std::string& neg, const std::si
             else
                 for(std::size_t i = t; i < NR.size(); i += L)
                     c_neg_count[t] += M.count(NR[i].data(), NR[i].size());
+
+            // Single-k-mer lookups: of each index k-mer in both orientations, and with an N; and of each window of the
+            // raw negatives, N's included.
+            char rc[k], n[k];
+            for(std::size_t i = t; i < F.size(); i += L)
+                for(std::size_t j = 0; j + k <= F[i].size(); ++j)
+                {
+                    const char* const x = F[i].data() + j;
+                    for(std::size_t p = 0; p < k; ++p)
+                        rc[p] = DNA_Utility::complement(x[k - 1 - p]);
+
+                    for(const auto y : {x, static_cast<const char*>(rc)})
+                    {
+                        const auto v = M.find(y);
+                        c_single[t]++;
+                        if constexpr(is_set)
+                            c_single_wrong[t] += !v;
+                        else    // Counts wrap at narrow widths.
+                            c_single_wrong[t] += (!v || *v != static_cast<T_>(R.count_of(canonical(x))));
+                    }
+
+                    // With an N at a varying position, it is absent, though `Kmer` would encode the N as a base.
+                    std::copy(x, x + k, n), n[j % k] = 'N';
+                    c_single_neg_wrong[t] += static_cast<bool>(M.find(n));
+                }
+
+            for(std::size_t i = t; i < NR.size(); i += L)
+                for(std::size_t j = 0; j + k <= NR[i].size(); ++j)
+                {
+                    const char* const x = NR[i].data() + j;
+                    const bool exp = (DNA_Utility::acgt_prefix(x, k) == k && R.has(canonical(x)));
+                    c_single_neg_wrong[t] += (static_cast<bool>(M.find(x)) != exp);
+                }
         });
     for(auto& q : Q)
         q.join();
@@ -198,6 +232,7 @@ static int check(const std::string& index, const std::string& neg, const std::si
     const auto sum = [](const std::vector<std::size_t>& v){ std::size_t x = 0; for(const auto y : v) x += y; return x; };
     const auto miss = sum(c_miss), wrong = sum(c_wrong), calls = sum(c_calls);
     const auto neg_hits = sum(c_neg), neg_wrong = sum(c_neg_wrong), neg_expected = sum(c_neg_exp), neg_count = sum(c_neg_count);
+    const auto single = sum(c_single), single_wrong = sum(c_single_wrong), single_neg_wrong = sum(c_single_neg_wrong);
 
     std::size_t kmer_c = 0;
     for(const auto& s : F)
@@ -289,11 +324,12 @@ static int check(const std::string& index, const std::string& neg, const std::si
         std::snprintf(upd, sizeof(upd), ", update %zu (ref %zu, %zu wrong, neg %zu)", upd_found, upd_exp, upd_wrong, upd_neg_count);
 
     const bool bad = (M.size() != R.size() || ins_c != R.size() || miss || wrong || calls != kmer_c || neg_wrong || neg_count != neg_expected
+                      || single != 2 * kmer_c || single_wrong || single_neg_wrong
                       || !it_diff.empty() || it_wrong || upd_found != upd_exp || upd_wrong || (!is_set && upd_neg_count != neg_expected));
-    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong), iterate %zu (%zu unmatched, %zu wrong)%s%s\n",
+    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong), single %zu (ref %zu, %zu wrong, neg %zu wrong), iterate %zu (%zu unmatched, %zu wrong)%s%s\n",
                 index.c_str(), mt_ ? "mt" : "seq", is_set ? "set" : "map", T, static_cast<std::size_t>(cap_0), static_cast<std::size_t>(M.capacity()), mode.c_str(),
-                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, it_kmer.size(), it_diff.size(), it_wrong,
-                upd, bad ? "  <-- WRONG" : "  ok");
+                M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, single, 2 * kmer_c, single_wrong, single_neg_wrong,
+                it_kmer.size(), it_diff.size(), it_wrong, upd, bad ? "  <-- WRONG" : "  ok");
     return bad ? 1 : 0;
 }
 
