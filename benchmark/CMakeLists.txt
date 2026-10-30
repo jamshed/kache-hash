@@ -95,10 +95,10 @@ install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo
 )
 
 
-# kache-hash's benchmark at each minimizer size l in 15–23, as `bench_kache_hash_l<l>`, if `LSWEEP` is set: the drivers
+# kache-hash's benchmark at each minimizer size l in 15–31, as `bench_kache_hash_l<l>`, if `LSWEEP` is set: the drivers
 # of the minimizer-size sweep.
 if(LSWEEP)
-    foreach(L RANGE 15 23)
+    foreach(L RANGE 15 31)
         add_executable(bench_kache_hash_l${L} bench-kache-hash.cpp)
 
         target_compile_definitions(bench_kache_hash_l${L} PRIVATE MINIMIZER_SIZE=${L})
