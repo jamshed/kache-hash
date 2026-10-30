@@ -55,6 +55,7 @@ counts.update(seqs, lens, n, [](const uint64_t c){ return c + 1; });   // Only t
 
 counts.find(seq, len, [&](const std::size_t i, const std::optional<uint64_t>& c){ /* The k-mer at `seq + i`. */ });
 const auto present = counts.count(seq, len);    // Number of k-mers of `seq` in the map.
+counts.for_each([&](const Kmer<31>& x, const uint64_t c){ /* Each k-mer of share `w_id` of `w_c`. */ }, w_c, w_id);
 
 // A set of 31-mers.
 Streaming_Kmer_Hash_Table<31, true> set(100'000'000);
@@ -62,7 +63,8 @@ const auto set_token = set.register_user();
 const auto inserted = set.insert(seq, len, set_token);  // Number of k-mers newly inserted.
 ```
 
-Queries must not overlap updates that can resize the table, and `update`s, which insert nothing, must not overlap other operations but `update`s.
+Queries must not overlap updates that can resize the table, and `for_each` must not overlap any updates.
+`update`s, which insert nothing, must not overlap other operations but `update`s.
 
 ## Benchmarks
 

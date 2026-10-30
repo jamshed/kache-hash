@@ -653,6 +653,14 @@ public:
     // resize the table.
     std::size_t count(const char* const* seqs, const std::size_t* lens, std::size_t c) const;
 
+    // Calls `f(x)` for each k-mer `x` in the set, or `f(x, v)` for each k-mer
+    // `x` with its value `v` in the map, that lies in the share of worker
+    // `w_id` of a group of `w_c` workers, in an unspecified order. The group's
+    // shares partition the table, so that its workers, concurrent or not,
+    // visit each k-mer once. Must not overlap operations that modify the
+    // table.
+    template <typename F> void for_each(const F& f, std::size_t w_c, std::size_t w_id) const;
+
     // Registers a new user and returns a unique token for it.
     Token register_user() { return Token(registered_thread_count++); }
 
@@ -2300,6 +2308,31 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::count(const char* c
     std::size_t hit_c = 0;
     find(seqs, lens, c, [&](std::size_t, std::size_t, const find_ret_t& r){ hit_c += static_cast<bool>(r); });
     return hit_c;
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <typename F>
+inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::for_each(const F& f, const std::size_t w_c, const std::size_t w_id) const
+{
+    assert(w_id < w_c);
+
+    // The worker's range of buckets, then its range of the overflow table.
+    for(std::size_t b = cap_ * w_id / w_c; b < cap_ * (w_id + 1) / w_c; ++b)
+        for(std::size_t j = 0, n = bucket_size(b); j < n; ++j)
+            if constexpr(is_set_)
+                f(T.key(b, j));
+            else
+                f(T.key(b, j), T.val(b, j));
+
+    auto it = ov->iterator(w_c, w_id);
+    Kmer<k> key;
+    ov_val_t val;
+    while(it.next(key, val))
+        if constexpr(is_set_)
+            f(key);
+        else
+            f(key, val);
 }
 
 
