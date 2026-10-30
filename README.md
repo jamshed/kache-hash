@@ -54,6 +54,7 @@ counts.upsert(seqs, lens, n, [](const uint64_t c){ return c + 1; }, 1, token);  
 counts.update(seqs, lens, n, [](const uint64_t c){ return c + 1; });   // Only the ones already in the map: no token, no locks.
 
 counts.find(seq, len, [&](const std::size_t i, const std::optional<uint64_t>& c){ /* The k-mer at `seq + i`. */ });
+const std::optional<uint64_t> c = counts.find(kmer);  // One k-mer: the 31 characters at `kmer`.
 const auto present = counts.count(seq, len);    // Number of k-mers of `seq` in the map.
 counts.for_each([&](const Kmer<31>& x, const uint64_t c){ /* Each k-mer of share `w_id` of `w_c`. */ }, w_c, w_id);
 

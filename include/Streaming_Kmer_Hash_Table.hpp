@@ -643,6 +643,13 @@ public:
     // `q`'th sequence, as `find` does for one sequence.
     template <typename G> void find(const char* const* seqs, const std::size_t* lens, std::size_t c, const G& g) const;
 
+    // Looks up the k-mer of the `k` characters at `kmer`, in either
+    // orientation. Returns its value in a map, or `true` in a set, iff it is
+    // present; `std::nullopt`, or `false`, otherwise, as for a k-mer with a
+    // non-ACGT character. Streams of k-mers go faster through the sequence
+    // `find`s. Must not overlap updates that can resize the table.
+    find_ret_t find(const char* kmer) const;
+
     // Returns the number of k-mers of the sequence `seq` of length `len`
     // present in the table. Must not overlap updates that can resize the
     // table.
@@ -2253,6 +2260,47 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
             hit = static_cast<bool>(r);
             g(seq_i, i, r);
         });
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::find(const char* const kmer) const -> find_ret_t
+{
+    if(DNA_Utility::acgt_prefix(kmer, k) < k)
+        return null_val;
+
+    // The k-mer's descriptor, as the describers give it.
+    const auto key = Kmer<k>(kmer).canonical();
+    const auto x = key.as_int();
+    uint64_t h;
+    Kmer_Lanes<k, l>::minimizer_hashes(&x, 1, &h);
+    const auto c = kmer_checksum(x);
+
+    // Returns what `find` returns for the present k-mer at the `i`'th bucket's slot `j`.
+    const auto present = [&](const std::size_t i, const std::size_t j) -> find_ret_t
+    {
+        (void)i, (void)j;
+        if constexpr(is_map_)   return T.val(i, j);
+        else                    return true;
+    };
+
+    // Probed as the sequence `find`s probe: absent past a full primary bucket too, unless its spill filter marks the
+    // minimizer.
+    const auto b = h & (cap_ - 1);
+    bool full;
+    if(const auto j = probe(key, c, b, full); j < B)
+        return present(b, j);
+    if(!full || !may_spill(md(b), h))
+        return null_val;
+
+    const auto [p, q] = secondaries(h);
+    bool full_p, full_q;
+    if(const auto j = probe(key, c, p, full_p); j < B)
+        return present(p, j);
+    if(const auto j = probe(key, c, q, full_q); j < B)
+        return present(q, j);
+
+    return (full_p && full_q) ? find_in_overflow(key) : find_ret_t(null_val);
 }
 
 
