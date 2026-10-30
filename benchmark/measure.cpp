@@ -97,6 +97,7 @@ void measure(const Config& cfg, Perf_Group* const perf)
         if(perf)
             report_perf("build", *perf);
 
+        report_huge_pages("build");
         print("table.capacity", M.capacity());
         print("table.bucket_bytes", M.bucket_bytes());
         print("table.size", M.size());
@@ -139,7 +140,7 @@ void measure(const Config& cfg, Perf_Group* const perf)
                 report_perf(name, *perf);
         }
 
-        report_memory();    // With the table still in place.
+        report_memory();
     }
 }
 

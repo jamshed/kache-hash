@@ -160,7 +160,27 @@ inline void report_rss(const std::string& name)
 }
 
 
-// Prints the memory statistics of the process.
+// Prints the anonymous memory of the process, and how much of it transparent
+// huge pages back, as of the point `name` in the run.
+inline void report_huge_pages(const std::string& name)
+{
+#ifdef __linux__
+    std::ifstream smaps("/proc/self/smaps_rollup");
+    std::string field;
+    std::size_t kb;
+    while(smaps >> field)
+        if(field == "Anonymous:" && smaps >> kb)
+            print("memory." + name + "_anon_kb", kb);
+        else if(field == "AnonHugePages:" && smaps >> kb)
+            print("memory." + name + "_anon_huge_pages_kb", kb);
+#else
+    (void)name;
+#endif
+}
+
+
+// Prints the maximum resident set size of the process, and the mode of its
+// transparent huge pages.
 inline void report_memory()
 {
     print("memory.max_rss_bytes", max_rss_bytes());
@@ -171,13 +191,6 @@ inline void report_memory()
     while(thp >> mode)
         if(mode.front() == '[')
             print("memory.thp", mode.substr(1, mode.size() - 2));
-
-    std::ifstream smaps("/proc/self/smaps_rollup");
-    std::string field;
-    std::size_t kb;
-    while(smaps >> field)
-        if(field == "AnonHugePages:" && smaps >> kb)
-            print("memory.anon_huge_pages_kb", kb);
 #endif
 }
 

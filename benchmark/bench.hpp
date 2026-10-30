@@ -222,6 +222,7 @@ void build_and_query(const Config& cfg, Perf_Group* const perf)
         report_perf("build", *perf);
 
     report_rss("build");
+    report_huge_pages("build");
     if constexpr(requires { M.capacity(); })
         print("table.capacity", M.capacity());
     print("table.size", M.size());
@@ -244,6 +245,7 @@ void load_and_query(const Config& cfg, Perf_Group* const perf)
     print("init.seconds", duration(t_init_e - t_init_s));
 
     report_rss("build");    // The loaded table is a built one.
+    report_huge_pages("build");
     print("table.size", M.size());
     M.report();
 
