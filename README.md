@@ -86,7 +86,7 @@ const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters 
 
 ## Benchmarks
 
-The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), CBL, and SSHash.
+The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.
 Each builds its table over the *k*-mers of an input and queries it with other inputs, and prints its measurements as TSV.
 CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's maximal unitigs of the input by `scripts/bench/sshash-index.sh`.
 

@@ -18,6 +18,7 @@
 #include <optional>
 #include <memory>
 #include <filesystem>
+#include <functional>
 
 
 // A table to benchmark is driven through an adapter type `Table_` that has:
@@ -38,6 +39,9 @@
 //   the same over the `c` sequences `seqs[i]` of `lens[i]` bases, for tables
 //   whose operations take batches of sequences; the benchmark then hands them
 //   batches of up to `batch_sz` fragment pieces;
+// - optionally, `done(t_id)`: ends the insertions of the `t_id`'th user thread,
+//   for tables whose user threads all take part in growing them until each is
+//   done; the benchmark calls it on each user thread after its last insertion;
 // - `size()`: its number of k-mers;
 // - `capacity()`: its number of k-mer slots—only if it has slots;
 // - `report()`: prints its statistics.
@@ -113,16 +117,16 @@ constexpr bool takes_batches = requires(Table_& M, const char* const* seqs, cons
 // Runs the operation `op` of the table `Table_` over the k-mers of the
 // fragments `F` with `thread_c` threads, as `run_parallel` does: in batches of
 // up to `batch_sz` fragment pieces, `op(t_id, seqs, lens, c)`, if the table
-// takes batches, and a piece at a time, `op(t_id, s, n)`, otherwise. Counts the
-// events of the group `perf` over the run, if provided. Returns the elapsed
-// time in seconds.
+// takes batches, and a piece at a time, `op(t_id, s, n)`, otherwise; and then
+// `done(t_id)` on each thread, if `done` is given. Counts the events of the
+// group `perf` over the run, if provided. Returns the elapsed time in seconds.
 template <typename Table_, typename F_>
-double run_op(const Fragments& F, const std::size_t thread_c, const F_& op, Perf_Group* const perf)
+double run_op(const Fragments& F, const std::size_t thread_c, const F_& op, Perf_Group* const perf, const std::function<void(std::size_t)>& done = nullptr)
 {
     if constexpr(takes_batches<Table_>)
-        return run_parallel_batched(F, thread_c, batch_sz, op, perf);
+        return run_parallel_batched(F, thread_c, batch_sz, op, perf, done);
     else
-        return run_parallel(F, thread_c, op, perf);
+        return run_parallel(F, thread_c, op, perf, done);
 }
 
 
@@ -217,10 +221,14 @@ void build_and_query(const Config& cfg, Perf_Group* const perf)
         print("table.init_capacity", M.capacity());
     print("init.seconds", duration(t_init_e - t_init_s));
 
+    std::function<void(std::size_t)> done;  // Ends each user thread's insertions, for tables that need it.
+    if constexpr(requires { M.done(std::size_t(0)); })
+        done = [&](const std::size_t t_id){ M.done(t_id); };
+
     const auto t_build = run_op<Table_>(index, cfg.thread_c, [&](const std::size_t t_id, const auto... pieces)
     {
         M.insert(t_id, pieces...);
-    }, perf);
+    }, perf, done);
 
     report_phase("build", index.kmer_count(), t_build);
     if(perf)

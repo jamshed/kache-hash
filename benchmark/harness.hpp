@@ -18,6 +18,7 @@
 #include <fstream>
 #include <thread>
 #include <algorithm>
+#include <functional>
 
 #include <sys/resource.h>
 
@@ -203,11 +204,11 @@ inline void report_memory()
 
 // Runs `f(t_id, s, n)` in parallel with `thread_c` threads, where the `t_id`'th
 // thread gets the `t_id`'th contiguous share of the k-mers in the fragments
-// `F`, in runs of `n` k-mers starting at `s`, each within a fragment. Counts the
-// events of the group `perf` over the run, if provided. Returns the elapsed time
-// in seconds.
+// `F`, in runs of `n` k-mers starting at `s`, each within a fragment; and then
+// `done(t_id)` on each thread, if `done` is given. Counts the events of the
+// group `perf` over the run, if provided. Returns the elapsed time in seconds.
 template <typename F_>
-double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f, Perf_Group* const perf = nullptr)
+double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f, Perf_Group* const perf = nullptr, const std::function<void(std::size_t)>& done = nullptr)
 {
     const auto kmer_c = F.kmer_count();
     const auto share_start = [&](const std::size_t t){ return t * kmer_c / thread_c; };
@@ -241,6 +242,9 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f,
                 f(t_id, F[i] + p, m);
                 n -= m;
             }
+
+            if(done)
+                done(t_id);
         }, t);
 
     std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
@@ -258,10 +262,11 @@ double run_parallel(const Fragments& F, const std::size_t thread_c, const F_& f,
 // `t_id`'th thread gets the `t_id`'th contiguous share of the k-mers in the
 // fragments `F` as in `run_parallel`, in batches of up to `batch_sz` pieces of
 // fragments: `seqs[i]` and `lens[i]` are a piece's start and its length in
-// bases. Counts the events of the group `perf` over the run, if provided.
-// Returns the elapsed time in seconds.
+// bases; and then `done(t_id)` on each thread, if `done` is given. Counts the
+// events of the group `perf` over the run, if provided. Returns the elapsed time
+// in seconds.
 template <typename F_>
-double run_parallel_batched(const Fragments& F, const std::size_t thread_c, const std::size_t batch_sz, const F_& f, Perf_Group* const perf = nullptr)
+double run_parallel_batched(const Fragments& F, const std::size_t thread_c, const std::size_t batch_sz, const F_& f, Perf_Group* const perf = nullptr, const std::function<void(std::size_t)>& done = nullptr)
 {
     struct Batch
     {
@@ -294,7 +299,7 @@ double run_parallel_batched(const Fragments& F, const std::size_t thread_c, cons
         left[t_id].unwrap() -= n;
         if(b.seqs.size() == batch_sz || left[t_id].unwrap() == 0)
             flush(t_id);
-    }, perf);
+    }, perf, done);
 }
 
 

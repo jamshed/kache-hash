@@ -46,6 +46,32 @@ ExternalProject_Add(prj_libcuckoo
 )
 
 
+# Prepare the `Jellyfish` library. It provides a concurrent k-mer counting table. Its own build system configures and
+# builds it, in the build tree: its headers take their fast paths, e.g. for hashing, only with the `config.h` that its
+# `configure` writes there.
+set(JELLYFISH_VERSION "2.3.1")
+set(JELLYFISH_DIR ${CMAKE_SOURCE_DIR}/external/jellyfish-${JELLYFISH_VERSION})
+set(JELLYFISH_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/jellyfish)
+message("Build system will fetch and build the `Jellyfish` library")
+ExternalProject_Add(prj_jellyfish
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/gmarcais/Jellyfish/releases/download/v${JELLYFISH_VERSION}/jellyfish-${JELLYFISH_VERSION}.tar.gz -o jellyfish-${JELLYFISH_VERSION}.tar.gz &&
+                        tar -xzf jellyfish-${JELLYFISH_VERSION}.tar.gz &&
+                        rm jellyfish-${JELLYFISH_VERSION}.tar.gz
+
+    SOURCE_DIR          ${JELLYFISH_DIR}
+    BINARY_DIR          ${JELLYFISH_BUILD_DIR}
+    CONFIGURE_COMMAND   ${JELLYFISH_DIR}/configure CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER}
+                        --disable-shared --silent
+    BUILD_COMMAND       $(MAKE) libjellyfish-2.0.la   # Its library only, not its tools.
+    INSTALL_COMMAND     cp .libs/libjellyfish-2.0.a ${EXT_LIB}
+)
+
+add_library(jellyfish STATIC IMPORTED)
+set_target_properties(jellyfish PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjellyfish-2.0.a)
+add_dependencies(jellyfish prj_jellyfish)
+
+
 # Executables.
 add_executable(measure measure.cpp)
 
@@ -53,6 +79,7 @@ add_executable(measure measure.cpp)
 add_executable(bench_kache_hash bench-kache-hash.cpp)
 add_executable(bench_boost bench-boost.cpp)
 add_executable(bench_libcuckoo bench-libcuckoo.cpp)
+add_executable(bench_jellyfish bench-jellyfish.cpp)
 
 
 # Dependencies.
@@ -67,18 +94,24 @@ target_include_directories(measure PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_kache_hash PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_boost PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_libcuckoo PRIVATE ${INCLUDE_DIR})
+target_include_directories(bench_jellyfish PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_boost SYSTEM PRIVATE ${EXT_INCLUDE})   # Third-party headers; their warnings are not ours.
 target_include_directories(bench_libcuckoo SYSTEM PRIVATE ${EXT_INCLUDE})
+target_include_directories(bench_jellyfish SYSTEM PRIVATE ${JELLYFISH_DIR}/include ${JELLYFISH_BUILD_DIR})
+
+target_compile_definitions(bench_jellyfish PRIVATE HAVE_CONFIG_H)  # Jellyfish's headers then include its `config.h`.
 
 target_compile_options(measure PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_kache_hash PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_boost PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_libcuckoo PRIVATE ${COMPILE_FLAGS})
+target_compile_options(bench_jellyfish PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(measure PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_kache_hash PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_boost PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_libcuckoo PRIVATE ${LINK_FLAGS})
+target_link_libraries(bench_jellyfish PRIVATE ${LINK_FLAGS})
 
 
 # Target-links.
@@ -87,10 +120,11 @@ target_link_libraries(measure PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threa
 target_link_libraries(bench_kache_hash PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_boost PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_libcuckoo PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
+target_link_libraries(bench_jellyfish PRIVATE jellyfish jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 
 
 # Installation path.
-install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo
+install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo bench_jellyfish
         DESTINATION bin
 )
 
