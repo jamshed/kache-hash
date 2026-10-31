@@ -1,6 +1,6 @@
 
-# Include paths.
-set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
+# Include paths: the library's, and the tools' for the hardware counters (`Perf_Group.hpp`).
+set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/tools)
 
 
 # Baselines' external projects.
