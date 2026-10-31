@@ -25,10 +25,10 @@
 using namespace kache_hash;
 
 
-// The minimizer size of the kache-hash tables is 19, unless a build sets `MINIMIZER_SIZE`, as the drivers of the
-// minimizer-size sweep do.
+// The minimizer size of the kache-hash tables is 22, unless a build sets
+// `MINIMIZER_SIZE`, as the drivers of the minimizer-size sweep do.
 #ifndef MINIMIZER_SIZE
-#define MINIMIZER_SIZE 19
+#define MINIMIZER_SIZE 22
 #endif
 
 constexpr uint16_t k = 31;  // k-mer size.

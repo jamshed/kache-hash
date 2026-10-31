@@ -46,7 +46,7 @@ namespace kache_hash
 // computations.
 // NB: concurrent insertions are guaranteed to function correctly only if
 // deletions are not performed, as of now.
-template <uint16_t k, bool mt_, typename T_ = void, uint16_t l = 19>
+template <uint16_t k, bool mt_, typename T_ = void, uint16_t l = 22>
 class Streaming_Kmer_Hash_Table
 {
     static_assert(k <= 32, "The k-mers need to fit in a machine word.");

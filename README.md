@@ -28,7 +28,7 @@ Or, with CMake, link its header-only target `kache_hash::kache_hash`, e.g. after
 The hash table class has the following template signature:
 
 ```cpp
-template <uint16_t k, bool mt_, typename T_ = void, uint16_t l = 19>
+template <uint16_t k, bool mt_, typename T_ = void, uint16_t l = 22>
 class Streaming_Kmer_Hash_Table
 {...}
 ```

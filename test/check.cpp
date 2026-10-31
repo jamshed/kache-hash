@@ -25,7 +25,7 @@
 using namespace kache_hash;
 
 constexpr uint16_t k = 31;
-constexpr uint16_t l = 19;
+constexpr uint16_t l = 22;
 
 
 // Returns the sequences at `path`: raw iff `raw`, else their maximal stretches of at least `k` ACGT bases.
