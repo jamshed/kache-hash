@@ -12,11 +12,11 @@
 namespace kache_hash
 {
 
-// The counter of 31-mers, with minimizers of length 19.
+// The counter of 31-mers, with minimizers of length 22.
 struct Kmer_Set_Counter::Impl
 {
     static constexpr uint16_t k = 31;
-    static constexpr uint16_t l = 19;
+    static constexpr uint16_t l = 22;
     static constexpr std::size_t max_thread_c = 128;    // As many users as the table takes.
 
     typedef Streaming_Kmer_Hash_Table<k, true, uint32_t, l> table_t;
