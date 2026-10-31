@@ -22,15 +22,15 @@ EXPERIMENT=sockets-spread PLACEMENT=spread TABLES="kache-hash boost libcuckoo ic
     THREADS=28 REPS=1 reference
 
 # Main: the concurrent tables and SSHash, sets and maps, presized and grown from half the distinct k-mers.
-EXPERIMENT=main PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" THREADS=56 REPS=3 \
+EXPERIMENT=main PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish sshash" THREADS=56 REPS=3 \
     COUNTERS="demand noise tlb" reference short-reads long-reads pangenome metagenome
 
 # Scaling of builds, without queries: every concurrent table on the reference, the slow baselines once at up to 4
 # threads; and kache-hash alone on the other indexes.
-EXPERIMENT=scaling-build PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg" KINDS=set SIZINGS=presized \
-    VARIANTS=mt THREADS="8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
-EXPERIMENT=scaling-build PLACEMENT=spread TABLES="boost libcuckoo iceberg" KINDS=set SIZINGS=presized VARIANTS=mt \
-    THREADS="1 2 4" REPS=1 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish" KINDS=set \
+    SIZINGS=presized VARIANTS=mt THREADS="8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build PLACEMENT=spread TABLES="boost libcuckoo iceberg jellyfish" KINDS=set SIZINGS=presized \
+    VARIANTS=mt THREADS="1 2 4" REPS=1 QUERIES= COUNTERS="demand noise tlb" reference
 EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized VARIANTS=mt THREADS="1 2 4" \
     REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
 EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized VARIANTS=mt \
@@ -39,7 +39,7 @@ EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=pr
 
 # Scaling of queries: each count's queries of one 56-thread build, for every concurrent table and SSHash on the
 # reference, and for kache-hash alone on the other indexes.
-EXPERIMENT=scaling-query PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" KINDS=set \
+EXPERIMENT=scaling-query PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish sshash" KINDS=set \
     SIZINGS=presized THREADS=56 QUERY_THREADS="1 2 4 8 16 24 32 40 48" REPS=3 COUNTERS="demand noise tlb" reference
 EXPERIMENT=scaling-query PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=presized THREADS=56 \
     QUERY_THREADS="1 2 4 8 16 24 32 40 48" REPS=3 COUNTERS="demand noise tlb" \
@@ -69,5 +69,5 @@ EXPERIMENT=roof PLACEMENT=spread TABLES=memory-roof THREADS="1 56" REPS=3 COUNTE
 
 # The stall cycles of the roofline's runs, behind its labels of what bounds each: a repetition of each table's presized
 # set on the reference, at the main runs' thread count.
-EXPERIMENT=roofline-stalls PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" KINDS=set \
+EXPERIMENT=roofline-stalls PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish sshash" KINDS=set \
     SIZINGS=presized VARIANTS=mt THREADS=56 REPS=1 COUNTERS=stalls reference
