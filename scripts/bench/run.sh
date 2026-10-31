@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Runs the benchmark drivers built in a directory over workloads, a process per run, and writes each run's output to
-# `<out-dir>/<workload>/<table>.<set|map>.<mt|seq>.<sizing>.T<threads>.r<rep>.tsv`. Runs with an output are skipped,
-# so a rerun continues where an earlier one stopped. The environment sets the matrix:
+# `<out-dir>/<workload>/<table>.<set|map|na>.<mt|seq|na>.<sizing>.T<threads>.r<rep>.tsv`. Runs with an output are
+# skipped, so a rerun continues where an earlier one stopped. The environment sets the matrix:
 #   TABLES:  the tables to run, of those built (default: kache-hash boost libcuckoo iceberg jellyfish cbl sshash); a
 #            build with `LSWEEP` adds `kache-hash-l<l>`, kache-hash at minimizer size l, for l in 15–31;
 #   TOOLS:   if set, the only tables of TABLES to run, to select tables across a plan's matrices;
@@ -31,11 +31,15 @@
 # The tables skip the configurations they do not support. Per workload, as its runs need them, the distinct k-mer count
 # comes from a kache-hash set run grown from a small capacity, with the most threads of THREADS, and the SSHash index
 # from `sshash-index.sh`; both launch as the runs do, and are kept with the outputs, as `distinct.tsv` and `index.*`, so
-# that each machine measures its own. Each launch's command line is kept beside its output, as `<run>.launch`.
+# that each machine measures its own. Each launch's command line is kept beside its output, as `<run>.launch`. A table
+# can also be a tool of `tools/`, built in the directory beside `<bin-dir>`, which takes only its threads and counters,
+# and whose runs have no kind, variant, or sizing (`na`): `memory-roof`, the measurement of the memory roofs (see
+# `tools/memory-roof.cpp`), on the workload `roof`, of no input.
 
 bin_dir="${1}"
 data_dir="${2}"
 out_dir="${3}"
+tools_dir="$(dirname "${bin_dir}")/tools"
 
 if [ $# -lt 4 ]; then
     echo "Usage: $0 <bin-dir> <data-dir> <out-dir> <workload>..." >&2
@@ -157,6 +161,10 @@ workload()
         ecoli-32)
             index=ecoli-32.fa.gz
             queries="ecoli.fa.gz SRR5901135_1.500K.fastq.gz chr21.fa.gz" ;;
+        # The memory roofs, of no input, for the tool `memory-roof`.
+        roof)
+            index=""
+            queries="" ;;
         *)
             echo "Unknown workload ${1}" >&2
             exit 1 ;;
@@ -199,6 +207,24 @@ index_sshash()
 }
 
 
+# Returns whether the table $1 is a tool of `tools/` rather than a benchmark driver.
+is_tool()
+{
+    [ "${1}" == "memory-roof" ]
+}
+
+
+# Prints the executable of the table $1: a tool's, in the tools' build directory, or a driver's, in `<bin-dir>`.
+executable()
+{
+    if is_tool "${1}"; then
+        echo "${tools_dir}/${1//-/_}"
+    else
+        echo "${bin_dir}/bench_${1//-/_}"
+    fi
+}
+
+
 # Prints the run configurations of the matrix, as lines of table, kind, variant, sizing, and threads.
 configs()
 {
@@ -211,6 +237,14 @@ configs()
         esac
 
         threads="THREADS_${table//-/_}"
+        if is_tool "${table}"; then
+            for t in ${!threads:-${THREADS}}; do
+                echo "${table} na na na ${t}"
+            done
+
+            continue
+        fi
+
         for kind in ${KINDS}; do
             for t in ${!threads:-${THREADS}}; do
                 for variant in mt $([ "${t}" -eq 1 ] && echo seq); do
@@ -250,28 +284,33 @@ run()
 
     [ -s "${out}/${name}.tsv" ] && return
 
-    if [ "${table}" == "sshash" ]; then
-        args+=(--index "${out}/index.sshash")
+    if is_tool "${table}"; then     # A tool takes only its threads and counters.
+        args+=(--threads "${t}")
     else
-        args+=(--index "${data_dir}/${index}")
+        if [ "${table}" == "sshash" ]; then
+            args+=(--index "${out}/index.sshash")
+        else
+            args+=(--index "${data_dir}/${index}")
+        fi
+
+        for q in ${queries}; do
+            args+=(--query "${data_dir}/${q}")
+        done
+
+        args+=(--threads "${t}")
+        for q in ${QUERY_THREADS:-}; do
+            [ "${q}" -lt "${t}" ] && args+=(--query-threads "${q}")
+        done
+
+        [ "${kind}" == "set" ] && args+=(--set)
+        [ "${variant}" == "seq" ] && args+=(--seq)
+        [ "${sizing}" == "presized" ] && args+=(--init-cap "${distinct}")
+        [ "${sizing}" == "half" ] && args+=(--init-cap "$(( distinct / 2 ))")
     fi
 
-    for q in ${queries}; do
-        args+=(--query "${data_dir}/${q}")
-    done
-
-    args+=(--threads "${t}")
-    for q in ${QUERY_THREADS:-}; do
-        [ "${q}" -lt "${t}" ] && args+=(--query-threads "${q}")
-    done
-
-    [ "${kind}" == "set" ] && args+=(--set)
-    [ "${variant}" == "seq" ] && args+=(--seq)
-    [ "${sizing}" == "presized" ] && args+=(--init-cap "${distinct}")
-    [ "${sizing}" == "half" ] && args+=(--init-cap "$(( distinct / 2 ))")
     [ -n "${counter_specs[rep - 1]:-}" ] && args+=(--perf "${counter_specs[rep - 1]}")
 
-    if launch "${out}/${name}.launch" "${t}" "${bin_dir}/bench_${table//-/_}" "${args[@]}" \
+    if launch "${out}/${name}.launch" "${t}" "$(executable "${table}")" "${args[@]}" \
             > "${out}/${name}.tsv.tmp" 2> "${out}/${name}.err"; then
         printf "version\t%s\n" "${VERSION}" >> "${out}/${name}.tsv.tmp"
         mv "${out}/${name}.tsv.tmp" "${out}/${name}.tsv"
@@ -308,8 +347,10 @@ tables=""
 for table in ${TABLES}; do
     if [ -n "${TOOLS:-}" ] && [[ " ${TOOLS} " != *" ${table} "* ]]; then
         continue
-    elif [ -x "${bin_dir}/bench_${table//-/_}" ]; then
+    elif [ -x "$(executable "${table}")" ]; then
         tables="${tables} ${table}"
+    elif is_tool "${table}"; then
+        echo "Skipping ${table}: no tool in ${tools_dir}"
     else
         echo "Skipping ${table}: no driver in ${bin_dir}"
     fi

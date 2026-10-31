@@ -61,4 +61,13 @@ EXPERIMENT=lsweep PLACEMENT=spread KINDS=set SIZINGS=presized VARIANTS=mt THREAD
     TABLES="kache-hash-l15 kache-hash-l16 kache-hash-l17 kache-hash-l18 kache-hash-l19 kache-hash-l20 kache-hash-l21 \
     kache-hash-l22 kache-hash-l23" COUNTERS="demand noise tlb" reference
 
-# The roof: added with its microbenchmark.
+# The memory roofs of the tables' roofline (see `tools/memory-roof.cpp`): sequential reads, independent random reads
+# and updates of cache lines, and a pointer chase, over a 32 GiB array, at the main runs' thread count and at one. The
+# first repetition counts the misses per line, which the roofline's intensity counts too, and the second the stall
+# cycles, as the next runs do.
+EXPERIMENT=roof PLACEMENT=spread TABLES=memory-roof THREADS="1 56" REPS=3 COUNTERS="noise stalls" roof
+
+# The stall cycles of the roofline's runs, behind its labels of what bounds each: a repetition of each table's presized
+# set on the reference, at the main runs' thread count.
+EXPERIMENT=roofline-stalls PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg sshash" KINDS=set \
+    SIZINGS=presized VARIANTS=mt THREADS=56 REPS=1 COUNTERS=stalls reference

@@ -18,15 +18,15 @@ import sys
 
 multi = False   # Whether there are several campaigns.
 
-RUN = re.compile(r"(?P<table>[^.]+)\.(?P<kind>set|map)\.(?P<variant>mt|seq)\.(?P<sizing>[^.]+)\.T(?P<threads>\d+)"
-                 r"\.r(?P<rep>\d+)\.tsv")
+# A run's output, as `run.sh` names it: a tool's runs have no kind or variant (`na`).
+RUN = re.compile(r"(?P<table>[^.]+)\.(?P<kind>set|map|na)\.(?P<variant>mt|seq|na)\.(?P<sizing>[^.]+)"
+                 r"\.T(?P<threads>\d+)\.r(?P<rep>\d+)\.tsv")
 CONFIG = ["campaign", "workload", "table", "kind", "variant", "sizing", "threads"]
 # A query phase's measurement, as the drivers name it, and an input's file extensions.
 QUERY = re.compile(r"query(?P<q>\d+)(?P<threads>\.T\d+)?\.(?P<stat>hits|seconds|mops)")
 INPUT_EXT = re.compile(r"(\.(fa|fna|fasta|fastq|fq))?(\.gz)?$")
-# A phase that counts hardware events, as the drivers name it: the build, or a query at the run's thread count or a
-# further one.
-PHASE = re.compile(r"build|query(?P<q>\d+)(?P<threads>\.T(?P<t>\d+))?")
+# A query phase, as the drivers name it: at the run's thread count, or at a further one.
+QUERY_PHASE = re.compile(r"query(?P<q>\d+)(?P<threads>\.T(?P<t>\d+))?")
 
 # Measurements reported as medians: per-run keys, and per-query key suffixes.
 MEDIANS = ["load.seconds", "init.seconds", "build.seconds", "build.mops", "memory.build_max_rss_bytes",
@@ -74,12 +74,9 @@ def counters(run):
               if key.startswith("perf.") and key.endswith(".running_pct")]
     metrics, multiplexed = {}, []
     for phase in phases:
-        m = PHASE.fullmatch(phase)
-        if not m:
-            continue
-
         name, threads = phase, float(run["threads"])
-        if m["q"]:
+        m = QUERY_PHASE.fullmatch(phase)
+        if m:
             name = "query." + INPUT_EXT.sub("", os.path.basename(run[f"query{m['q']}"])) + (m["threads"] or "")
             threads = float(m["t"] or threads)
         if float(run[f"perf.{phase}.running_pct"]) < 99.9:
@@ -213,13 +210,20 @@ def main():
             if m and m[1] not in queries:
                 queries.append(m[1])
 
-    query_cols = [f"query.{q}.{s}" for q in queries for s in QUERY_MEDIANS]
+    phases = []     # The phases other than the build and the queries, e.g. the memory roofs', in order of appearance.
+    for run in (run for R in configs.values() for run in R):
+        for key in run:
+            m = re.fullmatch(r"([a-z_]+)\.mops", key)
+            if m and m[1] not in ("build", "init") and m[1] not in phases:
+                phases.append(m[1])
+
+    cols = MEDIANS + [f"query.{q}.{s}" for q in queries for s in QUERY_MEDIANS] + [f"{p}.mops" for p in phases]
     with open(os.path.join(out_dirs[0], "summary.tsv"), "w") as f:
-        print("\t".join(CONFIG + ["reps", "version", "table.size"] + MEDIANS + query_cols), file=f)
+        print("\t".join(CONFIG + ["reps", "version", "table.size"] + cols), file=f)
         for cfg, R in sorted(configs.items(), key=lambda c: (c[0][6],) + c[0][:6]):
             version = ",".join(sorted({run["version"] for run in R if "version" in run}))
             cells = [cfg[6]] + [str(c) for c in cfg[:6]] + [str(len(R)), version, R[0].get("table.size", "")]
-            print("\t".join(cells + [median(R, key) for key in MEDIANS + query_cols]), file=f)
+            print("\t".join(cells + [median(R, key) for key in cols]), file=f)
 
     with open(os.path.join(out_dirs[0], "build-cost.tsv"), "w") as f:
         print("campaign\tworkload\tstructure\tsizing\tthreads\tseconds\tmax_rss_bytes\tstages", file=f)

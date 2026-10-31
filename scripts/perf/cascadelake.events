@@ -11,6 +11,7 @@ numa        mem_load_l3_miss_retired.local_dram=r01d3,mem_load_l3_miss_retired.r
 latency     mem_load_l3_miss_retired.remote_fwd=r08d3,offcore_requests.l3_miss_demand_data_rd=r10b0,offcore_requests_outstanding.l3_miss_demand_data_rd=r1060,ref_cycles=r0300
 mlp_l1d     l1d_pend_miss.pending=r0148,l1d_pend_miss.pending_cycles=r1000148,l1d_pend_miss.fb_full=r0248,ref_cycles=r0300
 mlp_dram    offcore_requests_outstanding.demand_data_rd=r0160,offcore_requests_outstanding.cycles_with_demand_data_rd=r1000160,cycle_activity.stalls_l3_miss=r60006a3,ref_cycles=r0300
+stalls      cycle_activity.stalls_total=r40004a3,cycle_activity.stalls_mem_any=r140014a3,cycle_activity.stalls_l3_miss=r60006a3,ref_cycles=r0300
 tlb         dtlb_load_misses.walk_completed=r0e08,dtlb_load_misses.walk_pending=r1008,dtlb_load_misses.walk_active=r1001008,ref_cycles=r0300
 tlb_page    dtlb_load_misses.walk_completed_2m_4m=r0408,dtlb_load_misses.stlb_hit=r2008,dtlb_store_misses.walk_completed=r0e49,ref_cycles=r0300
 sync        mem_inst_retired.lock_loads=r21d0,mem_inst_retired.all_loads=r81d0,mem_inst_retired.all_stores=r82d0,ref_cycles=r0300
