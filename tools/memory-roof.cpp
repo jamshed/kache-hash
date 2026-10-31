@@ -217,3 +217,138 @@ std::pair<std::size_t, double> run_phase(const std::string& name, const std::siz
 
     return {line_c, t};
 }
+
+
+int main(int argc, char* argv[])
+{
+    const auto cfg = parse_config(argc, argv);
+
+    // The counters only follow the threads spawned after they are opened.
+    const auto perf = (cfg.perf ? std::make_unique<Perf_Group>(*cfg.perf) : nullptr);
+
+    const std::size_t line_c = cfg.bytes / L1_CACHE_LINE_SIZE;
+    const int shift = 64 - __builtin_ctzll(line_c);    // Shift of a random number to a line index.
+    const std::size_t thread_c = cfg.thread_c;
+    const std::size_t depth = cfg.depth;
+
+    print("tool", "memory-roof");
+    print("threads", thread_c);
+    print("array.bytes", cfg.bytes);
+    print("array.lines", line_c);
+    print("prefetch.depth", depth);
+    if(cfg.perf)
+        print("perf.events", *cfg.perf);
+
+    void* const mem = mmap(nullptr, cfg.bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if(mem == MAP_FAILED)
+    {
+        std::cerr << "Error mapping " << cfg.bytes << " bytes. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+#ifdef __linux__
+    madvise(mem, cfg.bytes, MADV_HUGEPAGE);
+#endif
+    uint64_t* const A = static_cast<uint64_t*>(mem);   // The array; the first word of a line holds the next line on the chase.
+    std::atomic<uint64_t> sink(0);  // Sum of the words read, so that the reads are not optimized away.
+
+    // Touches every line from the threads, each a contiguous share, laying out
+    // the chase.
+    const auto t_init_s = std::chrono::steady_clock::now();
+    std::vector<std::thread> W;
+    for(std::size_t t = 0; t < thread_c; ++t)
+        W.emplace_back([&](const std::size_t t_id)
+        {
+            for(std::size_t i = t_id * line_c / thread_c; i < (t_id + 1) * line_c / thread_c; ++i)
+                A[i * line_words] = chase_next(i, line_c), A[i * line_words + 1] = 0;
+        }, t);
+
+    std::for_each(W.begin(), W.end(), [](auto& w){ w.join(); });
+    const auto t_init_e = std::chrono::steady_clock::now();
+    report_phase("init", line_c, std::chrono::duration<double>(t_init_e - t_init_s).count());
+    report_huge_pages("init");
+
+    // Sequential reads: each thread reads a word of each line of its share, over
+    // and over.
+    run_phase("stream", thread_c, cfg.seconds, [&](const std::size_t t_id, const auto& deadline)
+    {
+        const std::size_t b = t_id * line_c / thread_c;
+        const std::size_t e = (t_id + 1) * line_c / thread_c;
+        constexpr std::size_t chunk = 4096; // Lines read between the clock's checks.
+        uint64_t sum = 0;
+        std::size_t n = 0;
+        for(std::size_t i = b; std::chrono::steady_clock::now() < deadline; i = (i + chunk < e ? i + chunk : b))
+        {
+            const auto i_e = std::min(i + chunk, e);
+            for(std::size_t j = i; j < i_e; ++j)
+                sum += A[j * line_words];
+
+            n += i_e - i;
+        }
+
+        sink.fetch_add(sum, std::memory_order_relaxed);
+        return n;
+    }, perf.get());
+
+    // Independent random accesses: each thread prefetches the lines of its next
+    // `depth` accesses, and reads—or updates, with `write_`—a word of each.
+    const auto random_access = [&]<bool write_>(const std::size_t t_id, const auto& deadline)
+    {
+        uint64_t x = 0x9E3779B97F4A7C15ULL * (t_id + 1);
+        std::vector<uint64_t*> P(depth);
+        for(auto& p : P)
+            p = A + (next_random(x) >> shift) * line_words, __builtin_prefetch(p, write_, 3);
+
+        uint64_t sum = 0;
+        std::size_t n = 0;
+        for(std::size_t j = 0; ; j = (j + 1 == depth ? 0 : j + 1))
+        {
+            if constexpr(write_)
+                P[j][1]++;
+            else
+                sum += P[j][0];
+
+            P[j] = A + (next_random(x) >> shift) * line_words;
+            __builtin_prefetch(P[j], write_, 3);
+            if((++n & 1023) == 0 && std::chrono::steady_clock::now() >= deadline)
+                break;
+        }
+
+        sink.fetch_add(sum, std::memory_order_relaxed);
+        return n;
+    };
+
+    run_phase("random_read", thread_c, cfg.seconds, [&](const std::size_t t_id, const auto& deadline)
+    {
+        return random_access.template operator()<false>(t_id, deadline);
+    }, perf.get());
+
+    run_phase("random_update", thread_c, cfg.seconds, [&](const std::size_t t_id, const auto& deadline)
+    {
+        return random_access.template operator()<true>(t_id, deadline);
+    }, perf.get());
+
+    // The pointer chase: each thread follows the cycle from its own start, the
+    // starts spaced evenly along it, each load's line given by the previous load.
+    const auto [chase_c, chase_t] = run_phase("chase", thread_c, cfg.seconds, [&](const std::size_t t_id, const auto& deadline)
+    {
+        uint64_t i = chase_after(0, t_id * (line_c / thread_c), line_c);
+        std::size_t n = 0;
+        while(std::chrono::steady_clock::now() < deadline)
+        {
+            for(std::size_t s = 0; s < 64; ++s)
+                i = A[i * line_words];
+
+            n += 64;
+        }
+
+        sink.fetch_add(i, std::memory_order_relaxed);
+        return n;
+    }, perf.get());
+    print("chase.latency_ns", thread_c * chase_t * 1e9 / chase_c);
+
+    print("sink", sink.load());
+    munmap(mem, cfg.bytes);
+
+    return 0;
+}
