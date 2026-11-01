@@ -121,6 +121,18 @@ kache_count_masked(strands, reads, read_lens, m, 1, 2, members);    // `members[
 The functions that can fail return a status code, `KACHE_OK` on success, which `kache_strerror` describes.
 Inserts may overlap one another, each user on its own thread, and updates may overlap one another; queries may overlap one another, but neither inserts nor updates.
 
+The crate `kache-hash-sys`, in `rust/kache-hash-sys`, builds the library with *k*ache-hash's CMake and wraps it for Rust, as typed sets and maps of `u8` to `u64` values.
+A table is built through a `Builder`, with an `Inserter` per thread, then frozen into a `Table` for queries from any number of threads; a map's `Updater` borrows it to update it, so that the borrow checker keeps the operations from overlapping.
+
+```rust
+use kache_hash_sys::{Builder, Op, Options};
+
+let b = Builder::<u32>::new(&Options::new(31))?;    // A map from 31-mers to 32-bit counts.
+b.inserter()?.insert(&seqs, Op::Add, 1)?;   // An inserter per thread.
+let counts = b.freeze();    // Queries from any number of threads.
+counts.count(&reads, &mut present)?;
+```
+
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.
