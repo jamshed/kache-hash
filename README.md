@@ -90,6 +90,37 @@ const auto bins = counter.histogram(10'000);    // `bins[c]`: the number of k-me
 const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters at `kmer`.
 ```
 
+### Tables of k-mers, from C
+
+The library `kache_capi`, in `capi`, puts concurrent sets of 31-mers, and maps from 31-mers to unsigned values of 8, 16, 32 or 64 bits, behind a C interface, for callers in other languages, such as Rust.
+Inserts and updates combine a k-mer's value with an operand: keep, assign, add (saturating), or, min, or max; oriented inserts choose the operand by whether a k-mer occurs as is or as its reverse complement, so that a map of orientation masks gives forward-strand membership.
+Queries count, sum, or look up the k-mers of batches of sequences, reduce the whole table, or iterate over its keys in shares.
+A project links it as `kache_hash::kache_capi`; CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DKACHE_HASH_CAPI=ON`.
+
+```c
+#include "kache_capi.h"
+
+kache_options opt = kache_default_options(31, 4);   // 31-mers, with 32-bit values.
+opt.expected_keys = 100000000;  // It grows beyond, as needed.
+kache_table* counts;
+kache_new(&opt, &counts);
+uint32_t user;
+kache_register(counts, &user);  // One per inserting thread.
+kache_insert(counts, user, seqs, lens, n, KACHE_ADD, 1, NULL);  // Counts the k-mers of `n` sequences.
+kache_count(counts, reads, read_lens, m, present);  // `present[i]`: the k-mer positions of read `i` in the map.
+kache_sum(counts, reads, read_lens, m, sums);   // `sums[i]`: the counts of those k-mers, summed.
+kache_lookup(counts, reads, read_lens, m, found, values, NULL); // Each k-mer position's presence and count.
+kache_for_each(counts, 1, 0, f, ctx);   // `f(ctx, keys, values, n)` gets the k-mers and their counts, in chunks.
+kache_free(counts);
+
+// Forward-strand membership, in a map of 8-bit masks of the orientations each k-mer was inserted in.
+kache_insert_oriented(strands, user, seqs, lens, n, KACHE_OR, 1, 2, NULL);
+kache_count_masked(strands, reads, read_lens, m, 1, 2, members);    // `members[i]`: read `i`'s k-mers inserted as they occur in it.
+```
+
+The functions that can fail return a status code, `KACHE_OK` on success, which `kache_strerror` describes.
+Inserts may overlap one another, each user on its own thread, and updates may overlap one another; queries may overlap one another, but neither inserts nor updates.
+
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.

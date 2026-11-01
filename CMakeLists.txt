@@ -178,6 +178,12 @@ if(COUNTER OR NOT KACHE_HASH_TOP_LEVEL)
     add_subdirectory(counter)
 endif()
 
+# The C interface library, in `capi/`: for the projects that link it, and in top-level builds if `KACHE_HASH_CAPI` is
+# set.
+if(KACHE_HASH_CAPI OR NOT KACHE_HASH_TOP_LEVEL)
+    add_subdirectory(capi)
+endif()
+
 
 # The rest is for the benchmarks, in top-level builds only: in a subproject, it would set the parent's build type, write
 # into the parent's source tree, and fetch the baselines.
