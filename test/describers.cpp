@@ -1,8 +1,9 @@
 // Checks the k-mer describers, the batch and the SIMD lanes, against a brute-force reference: for every k-mer of the
 // inputs, its canonical form, checksum, and minimizer hash, the least Wang hash over the canonical forms of all its
 // l-mers. The inputs go whole, split at N, and cut into ragged pieces, so that stretches end at every offset of a
-// chunk; the lanes take them 4 at a time. Also checks the minimizer hashes that resizes recompute from the canonical
-// k-mers, in batches of every size up to a bucket's.
+// chunk; the lanes take them 4 at a time. Both describers also go once with the k-mers' orientations, which the
+// reference checks too. Also checks the minimizer hashes that resizes recompute from the canonical k-mers, in batches
+// of every size up to a bucket's.
 // Usage: describers <path>...
 
 #include "Kmer_Batch.hpp"
@@ -16,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <type_traits>
 
 
 using namespace kache_hash;
@@ -82,10 +84,11 @@ static uint64_t min_hash(const char* const s)
 // Mismatch counts of the descriptions of some k-mers against the reference.
 struct Tally
 {
-    std::size_t kmer_c = 0, key = 0, c = 0, h = 0;
+    std::size_t kmer_c = 0, key = 0, c = 0, h = 0, o = 0;
 
-    // Checks the description `key`, `h` and `c` of the k-mer at `s`.
-    void check(const char* const s, const uint64_t key, const uint64_t h, const uint8_t c)
+    // Checks the description `key`, `h` and `c` of the k-mer at `s`, and its orientation `fwd` unless it is negative:
+    // whether the k-mer, as it occurs, is its canonical form.
+    void check(const char* const s, const uint64_t key, const uint64_t h, const uint8_t c, const int fwd = -1)
     {
         uint64_t rc;
         const auto x = encode(s, k, rc);
@@ -94,23 +97,26 @@ struct Tally
         this->key += (key != canon || Kmer<k>(s).canonical().as_int() != canon);
         this->c += (c != kmer_checksum(canon) || c == 0);
         this->h += (h != min_hash(s));
+        this->o += (fwd >= 0 && fwd != (x == canon));
     }
 
-    bool bad() const { return key || c || h; }
+    bool bad() const { return key || c || h || o; }
 };
 
 
 // Checks both describers on the sequences `S` of the input `path`, which are
-// `pieces` of it or its stretches. Returns the number of describers that
-// failed.
+// `pieces` of it or its stretches, with the k-mers' orientations iff
+// `orient_`. Returns the number of describers that failed.
+template <bool orient_>
 static int check(const char* const path, const std::vector<std::string>& S, const bool pieces)
 {
     const char* const what = (pieces ? "pieces" : "stretches");
+    const char* const how = (orient_ ? ", oriented" : "");
 
     Tally t;
     std::size_t expected = 0;
     Kmer_Batch<k, l> kb;
-    typename Kmer_Batch<k, l>::Chunk ch;
+    std::conditional_t<orient_, typename Kmer_Batch<k, l>::Oriented_Chunk, typename Kmer_Batch<k, l>::Chunk> ch;
     for(const auto& s : S)
     {
         const auto n = s.size() - k + 1;
@@ -118,12 +124,15 @@ static int check(const char* const path, const std::vector<std::string>& S, cons
         kb.reset(s.data(), n);
         for(std::size_t i = 0; kb.next(ch); i += ch.n)
             for(std::size_t j = 0; j < ch.n; ++j)
-                t.check(s.data() + i + j, ch.key[j], ch.h[j], ch.c[j]);
+                if constexpr(orient_)
+                    t.check(s.data() + i + j, ch.key[j], ch.h[j], ch.c[j], ch.o[j]);
+                else
+                    t.check(s.data() + i + j, ch.key[j], ch.h[j], ch.c[j]);
     }
 
     const bool bad = (t.bad() || t.kmer_c != expected);
-    std::printf("describers %s, batch over %zu %s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu%s\n",
-                path, S.size(), what, t.kmer_c, expected, t.key, t.c, t.h, bad ? "  <-- WRONG" : "  ok");
+    std::printf("describers %s, batch over %zu %s%s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu, orientations %zu%s\n",
+                path, S.size(), what, how, t.kmer_c, expected, t.key, t.c, t.h, t.o, bad ? "  <-- WRONG" : "  ok");
 
     typedef Kmer_Lanes<k, l> lanes_t;
     constexpr auto L = lanes_t::L;
@@ -139,18 +148,23 @@ static int check(const char* const path, const std::vector<std::string>& S, cons
             T[j] = S[g + j].data(), len[j] = S[g + j].size();
 
         kl.reset(T, len, c);
-        while(kl.next(lc))
+        while(kl.template next<orient_>(lc))
             for(std::size_t j = 0; j < c; ++j)
             {
                 const auto [t_b, t_e] = lc.range(j);
                 for(std::size_t t = t_b; t < t_e; ++t)
-                    u.check(T[j] + lc.first + static_cast<int64_t>(t), lc.key[t][j], lc.h[t][j], static_cast<uint8_t>(lc.c[t][j]));
+                {
+                    // The orientation, if asked for, is bit 8 of the checksum's lane; the bits above it stay clear.
+                    const auto c_l = lc.c[t][j];
+                    u.check(T[j] + lc.first + static_cast<int64_t>(t), lc.key[t][j], lc.h[t][j], static_cast<uint8_t>(c_l), orient_ ? int((c_l >> 8) & 1) : -1);
+                    u.c += ((c_l >> (orient_ ? 9 : 8)) != 0);
+                }
             }
     }
 
     const bool l_bad = (u.bad() || u.kmer_c != expected);
-    std::printf("describers %s, lanes over %zu %s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu%s\n",
-                path, S.size(), what, u.kmer_c, expected, u.key, u.c, u.h, l_bad ? "  <-- WRONG" : "  ok");
+    std::printf("describers %s, lanes over %zu %s%s: k-mers %zu (ref %zu), bad keys %zu, checksums %zu, hashes %zu, orientations %zu%s\n",
+                path, S.size(), what, how, u.kmer_c, expected, u.key, u.c, u.h, u.o, l_bad ? "  <-- WRONG" : "  ok");
 
     return bad + l_bad;
 }
@@ -212,7 +226,7 @@ int main(int argc, char* argv[])
 
         const std::vector<std::string>* const inputs[] = {&F, &G};
         for(const auto* S : inputs)
-            fail += check(argv[a], *S, S == &G);
+            fail += check<false>(argv[a], *S, S == &G) + check<true>(argv[a], *S, S == &G);
 
         fail += check_recompute(argv[a], F);
     }
