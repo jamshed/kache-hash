@@ -33,7 +33,9 @@ private:
     static constexpr uint16_t reprobe_limit = 126;  // Most reprobes of a key.
 
     // A user thread's k-mers: the current one, its reverse complement, and
-    // scratch space for lookups. Each allocates its words, so they are reused.
+    // scratch space for lookups. NB: each k-mer allocates its words, so each
+    // operation makes its own—k-mers made together for all the threads share
+    // cache lines, and the threads' writes to them contend.
     struct Mers
     {
         jellyfish::mer_dna fw;
@@ -42,7 +44,7 @@ private:
     };
 
     ht_t M; // The table.
-    mutable std::vector<Padded<Mers>> mers; // `mers[t]` are the `t`'th user thread's k-mers.
+    const std::size_t thread_c; // Number of user threads.
 
     // Applies `f` to the canonical form of each of the `n` k-mers of the
     // sequence `s`, rolling them through the k-mers `m`, as Jellyfish's
@@ -90,7 +92,7 @@ public:
 template <typename T_>
 inline Jellyfish<T_>::Jellyfish(const std::size_t init_cap, const std::size_t thread_c):
       M(init_cap, 2 * k, val_len, thread_c, reprobe_limit)
-    , mers(thread_c)
+    , thread_c(thread_c)
 {}
 
 
@@ -118,9 +120,10 @@ inline void Jellyfish<T_>::for_each_mer(Mers& m, const char* const s, const std:
 
 
 template <typename T_>
-inline void Jellyfish<T_>::insert(const std::size_t t_id, const char* const s, const std::size_t n)
+inline void Jellyfish<T_>::insert(std::size_t, const char* const s, const std::size_t n)
 {
-    for_each_mer(mers[t_id].unwrap(), s, n, [&](const jellyfish::mer_dna& key)
+    Mers m; // This thread's own; see `Mers`.
+    for_each_mer(m, s, n, [&](const jellyfish::mer_dna& key)
     {
         if constexpr(is_set)
             M.set(key);
@@ -131,9 +134,9 @@ inline void Jellyfish<T_>::insert(const std::size_t t_id, const char* const s, c
 
 
 template <typename T_>
-inline std::size_t Jellyfish<T_>::find(const std::size_t t_id, const char* const s, const std::size_t n) const
+inline std::size_t Jellyfish<T_>::find(std::size_t, const char* const s, const std::size_t n) const
 {
-    auto& m = mers[t_id].unwrap();
+    Mers m; // This thread's own; see `Mers`.
     const auto& A = *M.ary();   // Doubling replaces the array; it is the last one after all insertions.
     std::size_t h = 0;
     std::size_t id;
@@ -146,7 +149,7 @@ template <typename T_>
 inline std::size_t Jellyfish<T_>::size() const
 {
     const auto& A = *M.ary();
-    const auto slice_c = mers.size();
+    const auto slice_c = thread_c;
     std::vector<Padded<std::size_t>> C(slice_c, Padded<std::size_t>(0));    // `C[t]` is the number of k-mers in the `t`'th slice.
     std::vector<std::thread> W;
     W.reserve(slice_c);
