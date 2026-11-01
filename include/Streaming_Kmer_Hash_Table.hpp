@@ -392,6 +392,11 @@ private:
         uint8_t c;  // Its checksum.
     };
 
+    // Whether the streaming operation `Op_` takes the k-mers' orientations, as
+    // `op(d, q, i, fwd)`.
+    template <typename Op_>
+    static constexpr bool oriented_op = std::is_invocable_v<const Op_&, const Kmer_Desc&, std::size_t, std::size_t, bool>;
+
     static constexpr std::size_t slot_dist = 16;    // How many k-mers ahead of their table operations the streaming
                                                     // operations prefetch the slots of their keys in their primary
                                                     // buckets, or else what they touch beyond. In the lanes, that
@@ -399,7 +404,9 @@ private:
 
     // Applies `op(d, q, i)` to the descriptor `d` of each k-mer of the
     // sequences `seqs[0..c)` of lengths `lens[0..c)`, the k-mer being at index
-    // `i` of the `q`'th sequence. Non-ACGT characters split the sequences. A
+    // `i` of the `q`'th sequence; or `op(d, q, i, fwd)` iff `op` takes it, with
+    // `fwd` as whether the k-mer, as it occurs, is its canonical form, i.e.
+    // its key. Non-ACGT characters split the sequences. A
     // stretch's k-mers come in order, but stretches may interleave. Applies
     // `pre_meta(d)` to each descriptor some k-mers ahead of `op`, and
     // `pre_slot(make)` `slot_dist` k-mers ahead, where `make()` returns the
@@ -436,8 +443,10 @@ private:
     // The streaming operations describe k-mers in SIMD lanes only for targets
     // with AVX-512, whose cores run 256-bit vectors at full width. Cores that
     // split them into 128-bit halves, such as Sierra Forest's E-cores, run the
-    // batch describer faster.
-#ifdef __AVX512F__
+    // batch describer faster. Tests may force either with `KACHE_HASH_LANES`.
+#if defined(KACHE_HASH_LANES)
+    static constexpr bool use_lanes = (KACHE_HASH_LANES != 0);
+#elif defined(__AVX512F__)
     static constexpr bool use_lanes = true;
 #else
     static constexpr bool use_lanes = false;
@@ -471,10 +480,11 @@ private:
     template <bool cont_, typename Pre_Meta_, typename Pre_Slot_, typename Op_>
     static void stream_lanes(const Stretch* S, const std::size_t* G_c, std::size_t g_c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op);
 
-    // Describes the next chunk of the lanes `kl` into `out`. Returns what
-    // `Kmer_Lanes::next` does.
+    // Describes the next chunk of the lanes `kl` into `out`, with the k-mers'
+    // orientations iff `orient_`. Returns what `Kmer_Lanes::next` does.
     // NB: Out of line, so that the lanes' unrolled body stays apart from the
     // operations' loops. The batch describer runs faster inlined.
+    template <bool orient_ = false>
     __attribute__((noinline)) static bool describe_lanes(Kmer_Lanes<k, l>& kl, typename Kmer_Lanes<k, l>::Chunk& out);
 
     // Returns the index of the slot holding the k-mer `key` with checksum `c`
@@ -556,13 +566,15 @@ private:
 
     // Updates the table with the k-mers of the sequences `seqs[0..c)` of
     // lengths `lens[0..c)`: inserts each absent k-mer with value `val`, and in
-    // a map, updates the value `v` of each present one to `f(v)`. Returns the
-    // number of k-mers inserted. The invoking user thread must provide its
-    // token `token`.
+    // a map, updates the value `v` of each present one to `f(v)`. Iff
+    // `orient_`, in a map, updates each k-mer's value `v` to `f(v, fwd)`
+    // instead, from `val` for an absent one, with `fwd` as whether it occurs in
+    // its canonical form. Returns the number of k-mers inserted. The invoking
+    // user thread must provide its token `token`.
     // NB: The streaming operations force-inline all their callees but the cold
     // ones (resize), rather than leaving it to the compiler's heuristics, whose
     // choices flip with small changes in these large functions.
-    template <typename F, typename V>
+    template <bool orient_ = false, typename F, typename V>
     std::size_t insert_or_update(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token);
 
 public:
@@ -615,6 +627,16 @@ public:
     // such as reads, lets their k-mers be described at once.
     template <typename F, typename V = T_> std::size_t upsert(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const V& val, const Token& token) requires (is_map_) { return insert_or_update(seqs, lens, c, f, val, token); }
 
+    // Upserts the k-mers of the sequences `seqs[0..c)` of lengths `lens[0..c)`
+    // into the map with their orientations: updates the associated value `v`
+    // of each k-mer to `f(v, fwd)`, from `T_()` for an absent one, one k-mer
+    // at a time, in an unspecified order, where `fwd` is whether the k-mer
+    // occurs in its canonical form, i.e. as is rather than as its reverse
+    // complement. `f` must have no side effects. Non-ACGT characters split the
+    // sequences. Returns the number of k-mers inserted. The invoking user
+    // thread must provide its token `token`.
+    template <typename F> std::size_t upsert_oriented(const char* const* seqs, const std::size_t* lens, std::size_t c, const F& f, const Token& token) requires (is_map_ && std::is_invocable_r_v<T_, const F&, T_, bool>) { return insert_or_update<true>(seqs, lens, c, f, T_(), token); }
+
     // Updates the associated value `v` of each k-mer of the sequence `seq` of
     // length `len` present in the map to `f(v)`, one k-mer at a time, in an
     // unspecified order, and skips the absent ones: it inserts none. Non-ACGT
@@ -640,7 +662,9 @@ public:
 
     // Looks up the k-mers of the sequences `seqs[0..c)` of lengths
     // `lens[0..c)`, calling `g(q, i, r)` for the k-mer at index `i` of the
-    // `q`'th sequence, as `find` does for one sequence.
+    // `q`'th sequence, as `find` does for one sequence. Iff `g` takes it,
+    // calls `g(q, i, r, fwd)` instead, with `fwd` as whether the k-mer occurs
+    // in its canonical form, as in `upsert_oriented`.
     template <typename G> void find(const char* const* seqs, const std::size_t* lens, std::size_t c, const G& g) const;
 
     // Looks up the k-mer of the `k` characters at `kmer`, in either
@@ -1642,11 +1666,13 @@ template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_batched(const char* const t, const std::size_t n, const std::size_t q, const std::size_t base, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
 {
     typedef Kmer_Batch<k, l> batch_t;
+    constexpr bool orient_ = oriented_op<Op_>;
+    typedef std::conditional_t<orient_, typename batch_t::Oriented_Chunk, typename batch_t::Chunk> chunk_t;
     batch_t kb;
-    typename batch_t::Chunk ch[2];  // The chunk being operated on, and the next; each is refilled two chunks ahead once done.
+    chunk_t ch[2];  // The chunk being operated on, and the next; each is refilled two chunks ahead once done.
 
     const auto desc = [](const typename batch_t::Chunk& c, const std::size_t j){ return Kmer_Desc{Kmer<k>(c.key[j]), c.h[j], c.c[j]}; };
-    const auto fill = [&](typename batch_t::Chunk& c)
+    const auto fill = [&](chunk_t& c)
     {
         kb.next(c);
         for(std::size_t j = 0; j < c.n; ++j)
@@ -1668,7 +1694,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_batched(const char*
             else if(x - A.n < A_next.n)
                 pre_slot([&](){ return desc(A_next, x - A.n); });
 
-            op(desc(A, j), q, first + j);
+            if constexpr(orient_)
+                op(desc(A, j), q, first + j, A.o[j]);
+            else
+                op(desc(A, j), q, first + j);
         }
 
         first += A.n;
@@ -1682,9 +1711,11 @@ template <typename Pre_Meta_, typename Pre_Slot_, typename Op_>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_stretches(const Stretch* const S, const std::size_t c, const Pre_Meta_& pre_meta, const Pre_Slot_& pre_slot, const Op_& op)
 {
     typedef Kmer_Batch<k, l> batch_t;
+    constexpr bool orient_ = oriented_op<Op_>;
+    typedef std::conditional_t<orient_, typename batch_t::Oriented_Chunk, typename batch_t::Chunk> chunk_t;
     constexpr std::size_t depth = 3;    // Number of chunks in flight: the one operated on, and the next ones, whose metadata is being prefetched. Short stretches make short chunks, so two ahead keep the prefetches early enough.
     batch_t kb;
-    typename batch_t::Chunk ch[depth];  // Each is refilled `depth` chunks ahead once done.
+    chunk_t ch[depth];  // Each is refilled `depth` chunks ahead once done.
     std::size_t ch_s[depth];    // Stretch of each chunk; chunks don't span stretches.
     std::size_t ch_first[depth];    // Index of each chunk's first k-mer in its stretch.
 
@@ -1738,7 +1769,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_stretches(const Str
             else if(x - A.n < A_next.n)
                 pre_slot([&](){ return desc(A_next, x - A.n); });
 
-            op(desc(A, j), st.q, st.base + ch_first[cur] + j);
+            if constexpr(orient_)
+                op(desc(A, j), st.q, st.base + ch_first[cur] + j, A.o[j]);
+            else
+                op(desc(A, j), st.q, st.base + ch_first[cur] + j);
         }
 
         fill(cur);
@@ -1752,6 +1786,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
 {
     typedef Kmer_Lanes<k, l> lanes_t;
     constexpr auto T_c = lanes_t::T;
+    constexpr bool orient_ = oriented_op<Op_>;
     static_assert(T_c * lane_c <= 256);
     static_assert(slot_dist >= T_c, "The slot prefetches a chunk ahead are to cover the chunk.");
 
@@ -1777,9 +1812,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
     {
         return Kmer_Desc{Kmer<k>(ch[x].key[t][j]), ch[x].h[t][j], static_cast<uint8_t>(ch[x].c[t][j])};
     };
+    [[maybe_unused]] const auto fwd_of = [&](const std::size_t x, const std::size_t j, const std::size_t t) -> bool { return (ch[x].c[t][j] >> 8) & 1; };
     const auto fill_and_prefetch = [&](const std::size_t x) -> bool
     {
-        while(!describe_lanes(kl, ch[x]))   // The group is done; describe the next one, if any.
+        while(!describe_lanes<orient_>(kl, ch[x]))  // The group is done; describe the next one, if any.
         {
             if(g_d + 1 == g_c)
                 return false;
@@ -1840,7 +1876,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
                 done[j] = 0;
 
                 for(std::size_t t = t_b; t < t_e; ++t)
-                    op(desc(cur, j, t), S_g[j].q, base + t);
+                    if constexpr(orient_)
+                        op(desc(cur, j, t), S_g[j].q, base + t, fwd_of(cur, j, t));
+                    else
+                        op(desc(cur, j, t), S_g[j].q, base + t);
 
                 // Continue the lane's last run into its k-mers of the next chunk, if of the same group.
                 if constexpr(cont_)
@@ -1851,7 +1890,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
                         const auto h_last = ch[cur].h[t_e - 1][j];
                         std::size_t u = u_b;
                         for(; u < u_e && ch[cur_next].h[u][j] == h_last; ++u)
-                            op(desc(cur_next, j, u), S_g[j].q, base_next + u);
+                            if constexpr(orient_)
+                                op(desc(cur_next, j, u), S_g[j].q, base_next + u, fwd_of(cur_next, j, u));
+                            else
+                                op(desc(cur_next, j, u), S_g[j].q, base_next + u);
 
                         done[j] = u - u_b;
                     }
@@ -1863,9 +1905,10 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::stream_lanes(const Stretch
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
+template <bool orient_>
 bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::describe_lanes(Kmer_Lanes<k, l>& kl, typename Kmer_Lanes<k, l>::Chunk& out)
 {
-    return kl.next(out);
+    return kl.template next<orient_>(out);
 }
 
 
@@ -2016,9 +2059,11 @@ bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::ov_update(const Kmer<k> key, cons
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-template <typename F, typename V>
+template <bool orient_, typename F, typename V>
 __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::insert_or_update(const char* const* const seqs, const std::size_t* const lens, const std::size_t c, const F& f, const V& val, const Token& token)
 {
+    static_assert(!orient_ || is_map_, "Orientations go into the values.");
+
     // The current minimizer run, its primary bucket `b` and secondary buckets `p` and `q`, and the buckets this
     // thread holds locked for it: none (0), `b` (1), or all three (3). Once `b` is found full, the run's remaining
     // k-mers go through all three.
@@ -2084,120 +2129,226 @@ __attribute__((flatten)) inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_
             resize_now();
     };
 
-    // Places the k-mer `d` into the `i`'th bucket at slot `j`.
-    const auto place = [&](const Kmer_Desc& d, const std::size_t i, const std::size_t j)
+    // An update's lambdas, as the canonical ones but with the k-mer's orientation `fwd` iff `orient_`, which the
+    // values are computed from: each branch has its own, as the canonical ones call `f(v)`.
+    if constexpr(orient_)
     {
-        if constexpr(is_set_)
-            place_at(d.key, d.c, i, j);
-        else
-            place_at(flat_t(d.key, val), d.c, i, j);
-    };
-
-    // Applies the update to the value of the present k-mer at the `i`'th bucket's slot `j`.
-    const auto found = [&](const std::size_t i, const std::size_t j)
-    {
-        if constexpr(is_map_)
-            T.set_val(i, j, f(T.val(i, j)));
-        else
-            (void)i, (void)j;
-    };
-
-    // Applies the overflow table's update with the k-mer `d`, holding no lock. Returns `false` iff it found the
-    // overflow table full, having grown it instead; the update is to be retried then.
-    const auto apply_overflow = [&](const Kmer_Desc& d) -> bool
-    {
-        bool full;
-        const auto absent = ov_update(d.key, f, val, full);
-        if(KACHE_HASH_UNLIKELY(full))
-            return grow_ov_now(true), false;
-
-        if(absent)
+        const auto place_o = [&](const Kmer_Desc& d, const bool fwd, const std::size_t i, const std::size_t j)
         {
-            inserted();
-            if(add_ov_key(token.id))
-                grow_ov_now(false);
-        }
+            place_at(flat_t(d.key, f(val, fwd)), d.c, i, j);
+        };
 
-        return true;
-    };
-
-    // Applies the update with the k-mer `d`. Returns `false` iff it found the overflow table full, having grown it
-    // instead; the update is to be retried then.
-    const auto apply = [&](const Kmer_Desc& d) -> bool
-    {
-        if(!in_run || d.h != run_h)
+        const auto found_o = [&](const bool fwd, const std::size_t i, const std::size_t j)
         {
-            release();
-            if constexpr(mt_)
-                if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize, holding no bucket locks.
-                    table_lock.unlock_shared(token.id), table_lock.lock_shared(token.id);
+            T.set_val(i, j, f(T.val(i, j), fwd));
+        };
 
-            in_run = true, run_h = d.h, spilled = false;
-            b = d.h & (cap_ - 1);
-        }
-
-        if(!spilled)
+        const auto apply_overflow_o = [&](const Kmer_Desc& d, const bool fwd) -> bool
         {
-            if(held == 0)
-                lock(b), held = 1, cs_b = load_cs(md(b));
+            bool full;
+            const auto absent = ov_update(d.key, [&](const mapped_t v){ return f(v, fwd); }, f(val, fwd), full);
+            if(KACHE_HASH_UNLIKELY(full))
+                return grow_ov_now(true), false;
 
-            uint32_t e;
-            if(const auto j = probe(d.key, d.c, b, cs_b, e); j < B)
-                return found(b, j), true;
-
-            if(e < B)
+            if(absent)
             {
-                place(d, b, e);
-                cs_b = set_cs(cs_b, e, d.c);
-
-                // A run's insertions fill its bucket's lines in order, and the slot prefetches predict the run's
-                // first only: placing a key at a line's first slot prefetches the next line.
-                T.prefetch_frontier(b, e);
-
-                return inserted(), true;
+                inserted();
+                if(add_ov_key(token.id))
+                    grow_ov_now(false);
             }
 
-            // The spill is marked before placing beyond, so a lookup finding no mark precedes the placements.
-            mark_spill(md(b), d.h);
-            unlock(b), held = 0;
-            std::tie(p, q) = secondaries(d.h);
-            spilled = true;
-        }
+            return true;
+        };
 
-        if(held == 0)
-            lock_sorted(b, p, q), held = 3;
-
-        uint32_t e_b, e_p, e_q;
-        if(const auto j = probe(d.key, d.c, b, e_b); j < B)
-            return found(b, j), true;
-        if(const auto j = probe(d.key, d.c, p, e_p); j < B)
-            return found(p, j), true;
-        if(const auto j = probe(d.key, d.c, q, e_q); j < B)
-            return found(q, j), true;
-
-        if(e_p < e_q)
-            return place(d, p, e_p), inserted(), true;
-        if(e_q < B)
-            return place(d, q, e_q), inserted(), true;
-
-        release();
-        return apply_overflow(d);
-    };
-
-    if constexpr(mt_)   table_lock.lock_shared(token.id);
-
-    // A call's stretches go through one pipeline of the batch describer; once the slot prefetches cover their
-    // insertions, it gains build performance. In the lanes, a lane's last minimizer run in a chunk continues into the
-    // next chunk's k-mers of the lane, so that chunk boundaries don't split runs, and their locks.
-    Sec_Cache sc_slot;
-    stream<use_lanes, true>(seqs, lens, c,
-        [&](const Kmer_Desc& d){ prefetch_meta<true>(d); },
-        [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
-        [&](const Kmer_Desc& d, std::size_t, std::size_t)
+        const auto apply_o = [&](const Kmer_Desc& d, const bool fwd) -> bool
         {
-            while(!apply(d))
-                ;
-        });
+            if(!in_run || d.h != run_h)
+            {
+                release();
+                if constexpr(mt_)
+                    if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize, holding no bucket locks.
+                        table_lock.unlock_shared(token.id), table_lock.lock_shared(token.id);
+
+                in_run = true, run_h = d.h, spilled = false;
+                b = d.h & (cap_ - 1);
+            }
+
+            if(!spilled)
+            {
+                if(held == 0)
+                    lock(b), held = 1, cs_b = load_cs(md(b));
+
+                uint32_t e;
+                if(const auto j = probe(d.key, d.c, b, cs_b, e); j < B)
+                    return found_o(fwd, b, j), true;
+
+                if(e < B)
+                {
+                    place_o(d, fwd, b, e);
+                    cs_b = set_cs(cs_b, e, d.c);
+                    T.prefetch_frontier(b, e);
+                    return inserted(), true;
+                }
+
+                mark_spill(md(b), d.h);
+                unlock(b), held = 0;
+                std::tie(p, q) = secondaries(d.h);
+                spilled = true;
+            }
+
+            if(held == 0)
+                lock_sorted(b, p, q), held = 3;
+
+            uint32_t e_b, e_p, e_q;
+            if(const auto j = probe(d.key, d.c, b, e_b); j < B)
+                return found_o(fwd, b, j), true;
+            if(const auto j = probe(d.key, d.c, p, e_p); j < B)
+                return found_o(fwd, p, j), true;
+            if(const auto j = probe(d.key, d.c, q, e_q); j < B)
+                return found_o(fwd, q, j), true;
+
+            if(e_p < e_q)
+                return place_o(d, fwd, p, e_p), inserted(), true;
+            if(e_q < B)
+                return place_o(d, fwd, q, e_q), inserted(), true;
+
+            release();
+            return apply_overflow_o(d, fwd);
+        };
+
+        if constexpr(mt_)   table_lock.lock_shared(token.id);
+
+        // A call's stretches go through one pipeline of the batch describer; once the slot prefetches cover their
+        // insertions, it gains build performance. In the lanes, a lane's last minimizer run in a chunk continues into the
+        // next chunk's k-mers of the lane, so that chunk boundaries don't split runs, and their locks.
+        Sec_Cache sc_slot;
+        stream<use_lanes, true>(seqs, lens, c,
+            [&](const Kmer_Desc& d){ prefetch_meta<true>(d); },
+            [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
+            [&](const Kmer_Desc& d, std::size_t, std::size_t, const bool fwd)
+            {
+                while(!apply_o(d, fwd))
+                    ;
+            });
+    }
+    else
+    {
+        // Places the k-mer `d` into the `i`'th bucket at slot `j`.
+        const auto place = [&](const Kmer_Desc& d, const std::size_t i, const std::size_t j)
+        {
+            if constexpr(is_set_)
+                place_at(d.key, d.c, i, j);
+            else
+                place_at(flat_t(d.key, val), d.c, i, j);
+        };
+
+        // Applies the update to the value of the present k-mer at the `i`'th bucket's slot `j`.
+        const auto found = [&](const std::size_t i, const std::size_t j)
+        {
+            if constexpr(is_map_)
+                T.set_val(i, j, f(T.val(i, j)));
+            else
+                (void)i, (void)j;
+        };
+
+        // Applies the overflow table's update with the k-mer `d`, holding no lock. Returns `false` iff it found the
+        // overflow table full, having grown it instead; the update is to be retried then.
+        const auto apply_overflow = [&](const Kmer_Desc& d) -> bool
+        {
+            bool full;
+            const auto absent = ov_update(d.key, f, val, full);
+            if(KACHE_HASH_UNLIKELY(full))
+                return grow_ov_now(true), false;
+
+            if(absent)
+            {
+                inserted();
+                if(add_ov_key(token.id))
+                    grow_ov_now(false);
+            }
+
+            return true;
+        };
+
+        // Applies the update with the k-mer `d`. Returns `false` iff it found the overflow table full, having grown it
+        // instead; the update is to be retried then.
+        const auto apply = [&](const Kmer_Desc& d) -> bool
+        {
+            if(!in_run || d.h != run_h)
+            {
+                release();
+                if constexpr(mt_)
+                    if(KACHE_HASH_UNLIKELY(table_lock.writer_pending()))  // Yield to a resize, holding no bucket locks.
+                        table_lock.unlock_shared(token.id), table_lock.lock_shared(token.id);
+
+                in_run = true, run_h = d.h, spilled = false;
+                b = d.h & (cap_ - 1);
+            }
+
+            if(!spilled)
+            {
+                if(held == 0)
+                    lock(b), held = 1, cs_b = load_cs(md(b));
+
+                uint32_t e;
+                if(const auto j = probe(d.key, d.c, b, cs_b, e); j < B)
+                    return found(b, j), true;
+
+                if(e < B)
+                {
+                    place(d, b, e);
+                    cs_b = set_cs(cs_b, e, d.c);
+
+                    // A run's insertions fill its bucket's lines in order, and the slot prefetches predict the run's
+                    // first only: placing a key at a line's first slot prefetches the next line.
+                    T.prefetch_frontier(b, e);
+
+                    return inserted(), true;
+                }
+
+                // The spill is marked before placing beyond, so a lookup finding no mark precedes the placements.
+                mark_spill(md(b), d.h);
+                unlock(b), held = 0;
+                std::tie(p, q) = secondaries(d.h);
+                spilled = true;
+            }
+
+            if(held == 0)
+                lock_sorted(b, p, q), held = 3;
+
+            uint32_t e_b, e_p, e_q;
+            if(const auto j = probe(d.key, d.c, b, e_b); j < B)
+                return found(b, j), true;
+            if(const auto j = probe(d.key, d.c, p, e_p); j < B)
+                return found(p, j), true;
+            if(const auto j = probe(d.key, d.c, q, e_q); j < B)
+                return found(q, j), true;
+
+            if(e_p < e_q)
+                return place(d, p, e_p), inserted(), true;
+            if(e_q < B)
+                return place(d, q, e_q), inserted(), true;
+
+            release();
+            return apply_overflow(d);
+        };
+
+        if constexpr(mt_)   table_lock.lock_shared(token.id);
+
+        // A call's stretches go through one pipeline of the batch describer; once the slot prefetches cover their
+        // insertions, it gains build performance. In the lanes, a lane's last minimizer run in a chunk continues into the
+        // next chunk's k-mers of the lane, so that chunk boundaries don't split runs, and their locks.
+        Sec_Cache sc_slot;
+        stream<use_lanes, true>(seqs, lens, c,
+            [&](const Kmer_Desc& d){ prefetch_meta<true>(d); },
+            [&](const auto& make){ prefetch_slot<true>(make(), sc_slot); },
+            [&](const Kmer_Desc& d, std::size_t, std::size_t)
+            {
+                while(!apply(d))
+                    ;
+            });
+
+    }
 
     release();
     if constexpr(mt_)   table_lock.unlock_shared(token.id);
@@ -2224,42 +2375,76 @@ __attribute__((flatten)) inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::f
         else                    return true;
     };
 
+    // Whether `g` takes the k-mers' orientations; one that takes either form gets none.
+    constexpr bool orient_ = !std::is_invocable_v<const G&, std::size_t, std::size_t, const find_ret_t&> &&
+                             std::is_invocable_v<const G&, std::size_t, std::size_t, const find_ret_t&, bool>;
+
     // Positive queries gain from prefetching their slots, and negative ones lose the work, so the slots are prefetched
     // while the last query hit; queries tend to come in streaks. A call's stretches go through one pipeline, which a
     // pipeline per stretch, such as per read, would restart. Lane runs don't continue across chunks for queries, which
     // take no locks: that costs them.
     bool hit = true;
     Sec_Cache sc_slot;
-    stream<use_lanes, false>(seqs, lens, c,
-        [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
-        Lookup_Pre_Slot<false>{*this, sc_slot, hit},
-        [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
-        {
-            // NB: Branch-free, as a branch on run starts mispredicts once per run.
-            b = d.h & (cap_ - 1);
-            sec &= (d.h == run_h);
-            run_h = d.h;
+    if constexpr(!orient_)
+        stream<use_lanes, false>(seqs, lens, c,
+            [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
+            Lookup_Pre_Slot<false>{*this, sc_slot, hit},
+            [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i)
+            {
+                // NB: Branch-free, as a branch on run starts mispredicts once per run.
+                b = d.h & (cap_ - 1);
+                sec &= (d.h == run_h);
+                run_h = d.h;
 
-            // Absent past a full primary bucket too, unless its spill filter marks the minimizer.
-            bool full;
-            if(const auto j = probe(d.key, d.c, b, full); j < B)
-                return hit = true, g(seq_i, i, present(b, j));
-            if(!full || !may_spill(md(b), d.h))
-                return hit = false, g(seq_i, i, find_ret_t(null_val));
+                // Absent past a full primary bucket too, unless its spill filter marks the minimizer.
+                bool full;
+                if(const auto j = probe(d.key, d.c, b, full); j < B)
+                    return hit = true, g(seq_i, i, present(b, j));
+                if(!full || !may_spill(md(b), d.h))
+                    return hit = false, g(seq_i, i, find_ret_t(null_val));
 
-            if(!sec)
-                std::tie(p, q) = secondaries(d.h), sec = true;
+                if(!sec)
+                    std::tie(p, q) = secondaries(d.h), sec = true;
 
-            bool full_p, full_q;
-            if(const auto j = probe(d.key, d.c, p, full_p); j < B)
-                return hit = true, g(seq_i, i, present(p, j));
-            if(const auto j = probe(d.key, d.c, q, full_q); j < B)
-                return hit = true, g(seq_i, i, present(q, j));
+                bool full_p, full_q;
+                if(const auto j = probe(d.key, d.c, p, full_p); j < B)
+                    return hit = true, g(seq_i, i, present(p, j));
+                if(const auto j = probe(d.key, d.c, q, full_q); j < B)
+                    return hit = true, g(seq_i, i, present(q, j));
 
-            const auto r = (full_p && full_q) ? find_in_overflow(d.key) : find_ret_t(null_val);
-            hit = static_cast<bool>(r);
-            g(seq_i, i, r);
-        });
+                const auto r = (full_p && full_q) ? find_in_overflow(d.key) : find_ret_t(null_val);
+                hit = static_cast<bool>(r);
+                g(seq_i, i, r);
+            });
+    else    // As above, with the orientations.
+        stream<use_lanes, false>(seqs, lens, c,
+            [&](const Kmer_Desc& d){ prefetch_meta<false>(d); },
+            Lookup_Pre_Slot<false>{*this, sc_slot, hit},
+            [&](const Kmer_Desc& d, const std::size_t seq_i, const std::size_t i, const bool fwd)
+            {
+                b = d.h & (cap_ - 1);
+                sec &= (d.h == run_h);
+                run_h = d.h;
+
+                bool full;
+                if(const auto j = probe(d.key, d.c, b, full); j < B)
+                    return hit = true, g(seq_i, i, present(b, j), fwd);
+                if(!full || !may_spill(md(b), d.h))
+                    return hit = false, g(seq_i, i, find_ret_t(null_val), fwd);
+
+                if(!sec)
+                    std::tie(p, q) = secondaries(d.h), sec = true;
+
+                bool full_p, full_q;
+                if(const auto j = probe(d.key, d.c, p, full_p); j < B)
+                    return hit = true, g(seq_i, i, present(p, j), fwd);
+                if(const auto j = probe(d.key, d.c, q, full_q); j < B)
+                    return hit = true, g(seq_i, i, present(q, j), fwd);
+
+                const auto r = (full_p && full_q) ? find_in_overflow(d.key) : find_ret_t(null_val);
+                hit = static_cast<bool>(r);
+                g(seq_i, i, r, fwd);
+            });
 }
 
 

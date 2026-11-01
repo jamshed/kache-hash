@@ -63,6 +63,12 @@ counts.for_each([&](const Kmer<31>& x, const uint64_t c){ /* Each k-mer of share
 Streaming_Kmer_Hash_Table<31, true> set(100'000'000);
 const auto set_token = set.register_user();
 const auto inserted = set.insert(seq, len, set_token);  // Number of k-mers newly inserted.
+
+// A map from 31-mers to the orientations they occur in: bit 1 as their canonical form, bit 2 as its reverse complement.
+Streaming_Kmer_Hash_Table<31, true, uint8_t> strands(100'000'000);
+const auto strand_token = strands.register_user();
+strands.upsert_oriented(seqs, lens, n, [](const uint8_t o, const bool fwd){ return uint8_t(o | (fwd ? 1 : 2)); }, strand_token);   // `fwd`: whether it occurs as its canonical form.
+strands.find(seqs, lens, n, [&](const std::size_t q, const std::size_t i, const std::optional<uint8_t>& o, const bool fwd){ /* The k-mer at `seqs[q] + i`. */ });
 ```
 
 Queries must not overlap updates that can resize the table, and `for_each` must not overlap any updates.

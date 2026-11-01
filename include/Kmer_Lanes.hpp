@@ -45,7 +45,8 @@ public:
     {
         vec key[T]; // Canonical forms.
         vec h[T];   // Minimizer hashes.
-        vec c[T];   // Checksums, never 0.
+        vec c[T];   // Checksums, never 0, in the low byte; bit 8 is set iff the k-mer, as it occurs, is its canonical
+                    // form, when the orientations are asked for.
         int64_t first;  // Index of the k-mers at the chunk's first base, in their stretches; negative before the first k-mers.
         std::size_t n[L];   // Number of k-mers in the lanes' stretches.
         bool any;   // Whether the chunk has any k-mer.
@@ -102,9 +103,10 @@ public:
     // each of at least `k` bases; the remaining lanes idle.
     void reset(const char* const* t, const std::size_t* len, std::size_t c);
 
-    // Describes the next chunk into `out`. Returns `false` iff all lanes are
-    // exhausted; then `out` holds no k-mer.
-    bool next(Chunk& out);
+    // Describes the next chunk into `out`, with the k-mers' orientations iff
+    // `orient_`. Returns `false` iff all lanes are exhausted; then `out` holds
+    // no k-mer.
+    template <bool orient_ = false> bool next(Chunk& out);
 
     // Puts the minimizer hashes of the `n` canonical k-mers with the encodings
     // `x[0..n)` at `h[0..n)`, as the describers give them, from all their
@@ -160,6 +162,7 @@ inline void Kmer_Lanes<k, l>::load_bases(vec (&codes)[T / 8]) const
 
 
 template <uint16_t k, uint16_t l>
+template <bool orient_>
 inline bool Kmer_Lanes<k, l>::next(Chunk& out)
 {
     out.any = false;
@@ -225,6 +228,8 @@ inline bool Kmer_Lanes<k, l>::next(Chunk& out)
         out.key[i] = key;
         out.h[i] = h;
         out.c[i] = select(c == splat(0), splat(1), c);
+        if constexpr(orient_)
+            out.c[i] |= select(key == f[i], splat(0x100), splat(0));    // A palindrome counts as forward.
     }
 
     // Keep the last `w - 1` positions.

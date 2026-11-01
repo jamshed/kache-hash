@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <bit>
 #include <algorithm>
+#include <type_traits>
 #include <cassert>
 
 
@@ -126,12 +127,19 @@ public:
         std::size_t n;  // Number of k-mers in the chunk.
     };
 
+    // Descriptions of a chunk of k-mers, with their orientations.
+    struct Oriented_Chunk : Chunk
+    {
+        bool o[C];  // `o[i]` is whether the `i`'th k-mer, as it occurs, is its canonical form.
+    };
+
     // Resets the describer to the stretch `t` of `n` k-mers.
     void reset(const char* t, std::size_t n);
 
-    // Describes the next chunk of the stretch into `out`, and returns its
-    // number of k-mers; 0 iff the stretch is exhausted.
-    std::size_t next(Chunk& out);
+    // Describes the next chunk of the stretch into `out`, with the k-mers'
+    // orientations iff it is an `Oriented_Chunk`, and returns its number of
+    // k-mers; 0 iff the stretch is exhausted.
+    template <typename Chunk_> std::size_t next(Chunk_& out);
 };
 
 
@@ -181,8 +189,11 @@ inline void Kmer_Batch<k, l>::window_min(const uint64_t* const top, uint64_t* co
 
 
 template <uint16_t k, uint16_t l>
-inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
+template <typename Chunk_>
+inline std::size_t Kmer_Batch<k, l>::next(Chunk_& out)
 {
+    static_assert(std::is_same_v<Chunk_, Chunk> || std::is_same_v<Chunk_, Oriented_Chunk>);
+
     out.n = 0;
     if(p >= n)
         return 0;
@@ -225,6 +236,8 @@ inline std::size_t Kmer_Batch<k, l>::next(Chunk& out)
         const uint64_t fwd_mask = -uint64_t(fwd < rev); // All ones iff the forward form is canonical.
         out.key[i] = (fwd & fwd_mask) | (rev & ~fwd_mask);
         out.c[i] = kmer_checksum(out.key[i]);
+        if constexpr(std::is_same_v<Chunk_, Oriented_Chunk>)
+            out.o[i] = (out.key[i] == fwd); // A palindrome counts as forward, as in the lanes.
     }
 
     // Keep the last `w - 1` l-mer positions, the first of the next chunk.
