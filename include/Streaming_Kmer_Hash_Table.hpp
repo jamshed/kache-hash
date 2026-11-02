@@ -80,6 +80,8 @@ private:
     const double lf;    // Load factor.
 
     std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
+    static constexpr std::size_t max_cap = (std::size_t(1) << 32) - 1;  // Most buckets of a table: range reduction
+                                                                        // takes 32-bit products.
     std::atomic_uint64_t resize_th; // At what size of the table to trigger the next resize.
 
     // Metadata of the k-mers in a bucket: their checksums, and 256 flag bits.
@@ -253,7 +255,9 @@ private:
     static cs_vec set_cs(cs_vec v, std::size_t j, uint8_t c);
 
     // Returns the primary bucket of the minimizer hash `h` in a table of `cap`
-    // buckets: its low bits.
+    // buckets: the high half of `cap` times the hash's low 32 bits. Doubling
+    // `cap` maps the bucket `b` to `2b` or `2b + 1`.
+    // NB: Not the hash's top bits, which window minima bias.
     static std::size_t bucket_of(uint64_t h, std::size_t cap);
 
     // Returns the primary bucket of the minimizer hash `h`.
@@ -268,12 +272,12 @@ private:
     static typename Kmer_Lanes<k, l>::vec buckets_of(typename Kmer_Lanes<k, l>::vec h, std::size_t cap);
 
     // Returns the bucket that the uniform 64-bit hash `x` picks in a table of
-    // `cap` buckets: its low bits.
+    // `cap` buckets: the high word of their product.
     static std::size_t pick_bucket(uint64_t x, std::size_t cap);
 
     // Returns the index in `[1, 256)` of the flag that marks the minimizer hash
     // `h` in a spill filter.
-    // NB: From bits 32–39 of `h`: the bucket takes its low bits, and window
+    // NB: From bits 32–39 of `h`: the bucket takes its low 32 bits, and window
     // minima bias its top ones.
     static std::size_t filter_pos(uint64_t h);
 
@@ -398,8 +402,8 @@ private:
     __attribute__((noinline, cold)) void try_resize();
 
     // Resizes the hash table to double its capacity in place: the arrays grow,
-    // and a key at the old bucket `b` stays there or moves to `b + old_cap`,
-    // if it is at its primary bucket; else it is set aside and re-inserted.
+    // and a key at its primary bucket `b` moves to `2b` or `2b + 1`; else it is
+    // set aside and re-inserted.
     void resize();
 
     // Descriptor of a k-mer for the streaming operations: what the table
@@ -766,6 +770,12 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     , ov_sz(0)
     , ov_checkpoint(max_user, Padded<uint64_t>(0))
 {
+    if(cap_ > max_cap)
+    {
+        std::cerr << "A table of " << cap_ << " buckets exceeds the most supported, " << max_cap << ". Aborting.\n";
+        std::abort();
+    }
+
     set_ov_th();
 
     // Map the table up front, in parallel, rather than on first touches by the updates. The metadata comes zeroed:
@@ -973,7 +983,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::set_cs(const cs_vec v, con
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_of(const uint64_t h, const std::size_t cap)
 {
-    return h & (cap - 1);
+    assert(cap <= max_cap);
+    return ((h & 0xFFFF'FFFFull) * cap) >> 32;
 }
 
 
@@ -994,22 +1005,26 @@ inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_of(const Kme
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::buckets_of(const uint64_t* const h, const std::size_t n, const std::size_t cap, std::size_t* const b)
 {
+    // NB: As widening 32-bit products, which vectorize.
     for(std::size_t j = 0; j < n; ++j)
-        b[j] = bucket_of(h[j], cap);
+        b[j] = (static_cast<uint64_t>(static_cast<uint32_t>(h[j])) * static_cast<uint32_t>(cap)) >> 32;
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::buckets_of(const typename Kmer_Lanes<k, l>::vec h, const std::size_t cap) -> typename Kmer_Lanes<k, l>::vec
 {
-    return h & static_cast<uint64_t>(cap - 1);
+    typedef typename Kmer_Lanes<k, l>::vec vec;
+    // NB: A single 32-bit multiply per k-mer: denser vector multiplies drop Cascade Lake cores to a lower AVX2 clock.
+    const auto p = _mm256_mul_epu32(reinterpret_cast<__m256i>(h), _mm256_set1_epi64x(static_cast<long long>(cap)));
+    return reinterpret_cast<vec>(_mm256_srli_epi64(p, 32));
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::pick_bucket(const uint64_t x, const std::size_t cap)
 {
-    return x & (cap - 1);
+    return static_cast<std::size_t>((static_cast<unsigned __int128>(x) * cap) >> 64);
 }
 
 
@@ -1411,6 +1426,10 @@ void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::try_resize()
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::bucket_hashes(const std::size_t b, const std::size_t n, uint64_t* const h) const
 {
+    // NB: Returning on empty buckets also keeps GCC from warning that `x` may be read uninitialized.
+    if(n == 0)
+        return;
+
     uint64_t x[B];
     for(std::size_t j = 0; j < n; ++j)
         x[j] = T.key(b, j).as_int();
@@ -1423,6 +1442,12 @@ template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
 {
     const auto old_cap = cap_;
+    if(2 * old_cap > max_cap)
+    {
+        std::cerr << "Growing the table to " << 2 * old_cap << " buckets exceeds the most supported, " << max_cap << ". Aborting.\n";
+        std::abort();
+    }
+
     if(!T.grow(old_cap, 2 * old_cap))   // The new buckets come zeroed: checksum `0` denotes absence of a key.
     {
         std::cerr << "Growing the table to " << 2 * old_cap * B << " slots failed. Aborting.\n";
@@ -1434,9 +1459,11 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
     ov_new = new ov_t(new_ov_size(), resize_worker_c);
     std::atomic<uint64_t> ov_new_c{0};  // Number of keys moved into the new overflow table.
 
-    // In the first phase, a worker owns its range of old buckets `b` and their new halves `b + old_cap`: the keys
-    // at their primary buckets stay, compacted, or move to the new half, without locks. The keys at secondary
-    // buckets are set aside, and with the overflow table's, re-inserted with locks in the second phase.
+    // In the first phase, the keys at their primary buckets `b` move to `2b` or `2b + 1`, without locks; the keys at
+    // secondary buckets are set aside, and with the overflow table's, re-inserted with locks in the second phase.
+    // `2b` and `2b + 1` are to be emptied first, so the old buckets go in rounds from the top, over halving ranges:
+    // a round's `[s, e)`, with `s = ceil(e / 2)`, moves to `[2s, 2e)`, which the earlier rounds emptied, or are new.
+    // The workers split each round's range. Bucket 0 goes last, keeping its keys for `2b = 0` compacted.
     const auto worker_c = resize_worker_c;
     struct Held { flat_t x; uint64_t h; uint8_t c; };   // A key set aside, with its minimizer hash.
     std::vector<std::vector<Held>> held_of(worker_c);   // The keys each worker set aside.
@@ -1448,6 +1475,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             held_pre[w + 1] = held_pre[w] + held_of[w].size();
     };
     std::barrier phase_end(static_cast<std::ptrdiff_t>(worker_c), seal);
+    std::barrier round_end(static_cast<std::ptrdiff_t>(worker_c));  // Ends the first phase's rounds.
     std::vector<std::thread> W;
     W.reserve(worker_c);
     for(uint64_t i = 0; i < worker_c; ++i)
@@ -1456,17 +1484,17 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             std::vector<Held> held; // This worker's keys at secondary buckets: local while filled, as workers pushing
                                     // into vectors whose headers share cache lines would contend for them.
 
-            const auto b_s = old_cap * w_id / worker_c, b_e = old_cap * (w_id + 1) / worker_c;
+            // Room for a quarter of the slots of the worker's share of the old buckets, typically more than its keys
+            // set aside: only what's touched gets backed, and the vector need not copy itself to grow.
+            held.reserve((old_cap / worker_c + 1) * B / 4);
 
-            // Room for a quarter of the range's slots, typically more than its keys set aside: only what's touched
-            // gets backed, and the vector need not copy itself to grow.
-            held.reserve((b_e - b_s) * B / 4);
-
+            // Moves the keys of the old bucket `b` at their primary buckets to `2b` and `2b + 1`, compacting the ones
+            // at `2b` if it is `b` itself; sets the rest aside.
             uint64_t h_b[B];    // Minimizer hashes of a bucket's keys.
-            for(std::size_t b = b_s; b < b_e; ++b)
+            const auto split = [&](const std::size_t b)
             {
-                const auto nb = b + old_cap;
-                std::size_t lo = 0, hi = 0; // Numbers of keys kept at `b`, and moved to `nb`.
+                const auto lb = 2 * b, hb = lb + 1;
+                std::size_t lo = 0, hi = 0; // Numbers of keys moved to `lb`, and to `hb`.
                 const auto n = bucket_size(b);
                 bucket_hashes(b, n, h_b);
                 for(std::size_t j = 0; j < n; ++j)
@@ -1479,21 +1507,35 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
                         continue;
                     }
 
-                    if(bucket_of(h) == nb)
-                        T.put(nb, hi, T.get(b, j)), md(nb).cs[hi] = c, hi++;
+                    if(bucket_of(h) == hb)
+                        T.put(hb, hi, T.get(b, j)), md(hb).cs[hi] = c, hi++;
                     else
                     {
-                        if(lo != j)
-                            T.put(b, lo, T.get(b, j)), md(b).cs[lo] = c;
+                        if(lb != b || lo != j)
+                            T.put(lb, lo, T.get(b, j)), md(lb).cs[lo] = c;
                         lo++;
                     }
                 }
 
-                for(std::size_t j = lo; j < n; ++j)
+                for(std::size_t j = (lb == b ? lo : 0); j < n; ++j)
                     md(b).cs[j] = 0;
 
                 clear_spills(md(b));    // The second phase marks the spills anew.
+            };
+
+            for(std::size_t e = old_cap; e > 1; )
+            {
+                const auto s = (e + 1) / 2;
+                const auto b_s = s + (e - s) * w_id / worker_c, b_e = s + (e - s) * (w_id + 1) / worker_c;
+                for(std::size_t b = b_s; b < b_e; ++b)
+                    split(b);
+
+                round_end.arrive_and_wait();
+                e = s;
             }
+
+            if(w_id == 0)
+                split(0);
 
             held_of[w_id] = std::move(held);
             phase_end.arrive_and_wait();
