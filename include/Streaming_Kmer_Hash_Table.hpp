@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <barrier>
 #include <cassert>
+#include <cmath>
 
 #include <immintrin.h>
 
@@ -56,10 +57,10 @@ public:
     class Token;
 
     static constexpr uint64_t max_user = 128;   // Maximum number of users allowed to use the table: a thread per core of a 2×64-core node, for now.
+    static constexpr double lf_default_ = 0.8;  // Default load factor: 80%.
 
 private:
 
-    static constexpr double lf_default_ = 0.8;  // Default load factor: 80%.
     static constexpr double of_default = 1.0 / 32;  // Initial overflow factor: the overflow table starts with room for
                                                     // this fraction of the main table's capacity, and grows on its own.
     static constexpr double ov_lf = 0.75;   // Load factor at which the overflow table grows.
@@ -79,7 +80,7 @@ private:
 
     const double lf;    // Load factor.
 
-    std::size_t cap_;   // Capacity of the table in terms of buckets; adjusted to be a power of 2.
+    std::size_t cap_;   // Capacity of the table in terms of buckets.
     static constexpr std::size_t max_cap = (std::size_t(1) << 32) - 1;  // Most buckets of a table: range reduction
                                                                         // takes 32-bit products.
     std::atomic_uint64_t resize_th; // At what size of the table to trigger the next resize.
@@ -253,6 +254,11 @@ private:
     // Returns the checksums `v` with the `j`'th one set to `c`, which is empty
     // in `v`.
     static cs_vec set_cs(cs_vec v, std::size_t j, uint8_t c);
+
+    // Returns the number of buckets of a table for `max_sz` keys at load
+    // factor `lf`: the fewest whose resize threshold exceeds `max_sz`, rounded
+    // up to a power of 2 iff `pow2`.
+    static std::size_t cap_for(std::size_t max_sz, double lf, bool pow2);
 
     // Returns the primary bucket of the minimizer hash `h` in a table of `cap`
     // buckets: the high half of `cap` times the hash's low 32 bits. Doubling
@@ -612,9 +618,10 @@ private:
 public:
 
     // Constructs a streaming k-mer hash table to support up-to `max_sz` k-mers,
-    // with a maximum load-factor of `lf`. Resizes use `resize_worker_c`
-    // threads.
-    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_);
+    // with a maximum load-factor of `lf`. Its bucket count is the fewest for
+    // `max_sz` k-mers at that load, rounded up to a power of 2 iff `pow2_cap`.
+    // Resizes use `resize_worker_c` threads.
+    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_, bool pow2_cap = false);
 
     Streaming_Kmer_Hash_Table(const Streaming_Kmer_Hash_Table&) = delete;
     Streaming_Kmer_Hash_Table(Streaming_Kmer_Hash_Table&&) = delete;
@@ -756,9 +763,9 @@ public:
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const uint64_t resize_worker_c, const double lf):
+inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const std::size_t max_sz, const uint64_t resize_worker_c, const double lf, const bool pow2_cap):
       lf(lf)
-    , cap_(ceil_pow_2(std::max<std::size_t>(1, (max_sz / lf) / B)))
+    , cap_(cap_for(max_sz, lf, pow2_cap))
     , resize_th(capacity() * lf)
     , ov(new ov_t(std::max<std::size_t>(ov_min_cap, capacity() * of_default), resize_worker_c))
     , ov_new(nullptr)
@@ -977,6 +984,17 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::set_cs(const cs_vec v, con
 {
     const auto iota = _mm256_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
     return _mm256_or_si256(v, _mm256_and_si256(_mm256_cmpeq_epi8(iota, _mm256_set1_epi8(static_cast<char>(j))), _mm256_set1_epi8(static_cast<char>(c))));
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::cap_for(const std::size_t max_sz, const double lf, const bool pow2)
+{
+    auto cap = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(max_sz / lf / B)));
+    while(static_cast<uint64_t>(cap * B * lf) <= max_sz)    // As `resize_th` takes it; it can round onto `max_sz`.
+        cap++;
+
+    return pow2 ? ceil_pow_2(cap) : cap;
 }
 
 
