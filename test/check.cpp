@@ -2,11 +2,12 @@
 // Correctness checks of the table against an exact reference: sizes, presence, counts, negative hits, single-k-mer
 // lookups, and iteration over workers' shares, for sets and maps, sequential and concurrent tables, presized and
 // resizing; and for maps, the counts after present-only updates.
-// Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>
+// Usage: check <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi> [pow2]
 //   Maps hold 64-bit counts, or 8-, 16- or 32-bit ones per the suffix.
 //   stream: operations over the fragments split at N.
 //   raw:    operations over the raw sequences, N's included, which the table must split itself.
 //   multi:  multi-sequence operations over batches of 13 raw pieces, of ragged lengths.
+//   pow2:   the table's bucket count rounded up to a power of 2.
 
 #include "Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
@@ -90,7 +91,7 @@ struct Reference
 
 
 template <bool mt_, typename T_>
-static int check(const std::string& index, const std::string& neg, const std::size_t T, const std::size_t init_cap, const std::string& mode)
+static int check(const std::string& index, const std::string& neg, const std::size_t T, const std::size_t init_cap, const std::string& mode, const bool pow2)
 {
     typedef Streaming_Kmer_Hash_Table<k, mt_, T_, l> ht_t;
     constexpr bool is_set = std::is_void_v<T_>;
@@ -104,7 +105,7 @@ static int check(const std::string& index, const std::string& neg, const std::si
     const std::size_t batch_sz = (mode == "multi" ? 13 : 1);
     const Reference R(F);
 
-    ht_t M(init_cap > 0 ? init_cap : R.size(), T);
+    ht_t M(init_cap > 0 ? init_cap : R.size(), T, ht_t::lf_default_, pow2);
     const auto cap_0 = M.capacity();
     std::vector<typename ht_t::Token> token(T);
     for(auto& t : token)
@@ -326,8 +327,8 @@ static int check(const std::string& index, const std::string& neg, const std::si
     const bool bad = (M.size() != R.size() || ins_c != R.size() || miss || wrong || calls != kmer_c || neg_wrong || neg_count != neg_expected
                       || single != 2 * kmer_c || single_wrong || single_neg_wrong
                       || !it_diff.empty() || it_wrong || upd_found != upd_exp || upd_wrong || (!is_set && upd_neg_count != neg_expected));
-    std::printf("check %s %s-%s T=%zu cap %zu->%zu %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong), single %zu (ref %zu, %zu wrong, neg %zu wrong), iterate %zu (%zu unmatched, %zu wrong)%s%s\n",
-                index.c_str(), mt_ ? "mt" : "seq", is_set ? "set" : "map", T, static_cast<std::size_t>(cap_0), static_cast<std::size_t>(M.capacity()), mode.c_str(),
+    std::printf("check %s %s-%s T=%zu cap %zu->%zu%s %s: size %zu ins %zu (ref %zu), miss %zu, wrong %zu, calls %zu (ref %zu), neg %zu/%zu (ref %zu, %zu wrong), single %zu (ref %zu, %zu wrong, neg %zu wrong), iterate %zu (%zu unmatched, %zu wrong)%s%s\n",
+                index.c_str(), mt_ ? "mt" : "seq", is_set ? "set" : "map", T, static_cast<std::size_t>(cap_0), static_cast<std::size_t>(M.capacity()), pow2 ? " pow2" : "", mode.c_str(),
                 M.size(), ins_c, R.size(), miss, wrong, calls, kmer_c, neg_hits, neg_count, neg_expected, neg_wrong, single, 2 * kmer_c, single_wrong, single_neg_wrong,
                 it_kmer.size(), it_diff.size(), it_wrong, upd, bad ? "  <-- WRONG" : "  ok");
     return bad ? 1 : 0;
@@ -336,25 +337,26 @@ static int check(const std::string& index, const std::string& neg, const std::si
 
 int main(int argc, char* argv[])
 {
-    if(argc != 7)
+    if((argc != 7 && argc != 8) || (argc == 8 && std::string(argv[7]) != "pow2"))
     {
-        std::fprintf(stderr, "Usage: %s <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi>\n", argv[0]);
+        std::fprintf(stderr, "Usage: %s <index> <negative> <seq-set|seq-map|mt-set|mt-map>[8|16|32] <threads> <init-cap> <stream|raw|multi> [pow2]\n", argv[0]);
         return 2;
     }
 
     const std::string index(argv[1]), neg(argv[2]), kind(argv[3]), mode(argv[6]);
     const std::size_t T = std::strtoull(argv[4], nullptr, 10), cap = std::strtoull(argv[5], nullptr, 10);
+    const bool pow2 = (argc == 8);
     if(mode != "stream" && mode != "raw" && mode != "multi")
         return 2;
-    if(kind == "seq-set")   return check<false, void>(index, neg, 1, cap, mode);
-    if(kind == "seq-map")   return check<false, uint64_t>(index, neg, 1, cap, mode);
-    if(kind == "seq-map32") return check<false, uint32_t>(index, neg, 1, cap, mode);
-    if(kind == "seq-map16") return check<false, uint16_t>(index, neg, 1, cap, mode);
-    if(kind == "seq-map8")  return check<false, uint8_t>(index, neg, 1, cap, mode);
-    if(kind == "mt-set")    return check<true, void>(index, neg, T, cap, mode);
-    if(kind == "mt-map")    return check<true, uint64_t>(index, neg, T, cap, mode);
-    if(kind == "mt-map32")  return check<true, uint32_t>(index, neg, T, cap, mode);
-    if(kind == "mt-map16")  return check<true, uint16_t>(index, neg, T, cap, mode);
-    if(kind == "mt-map8")   return check<true, uint8_t>(index, neg, T, cap, mode);
+    if(kind == "seq-set")   return check<false, void>(index, neg, 1, cap, mode, pow2);
+    if(kind == "seq-map")   return check<false, uint64_t>(index, neg, 1, cap, mode, pow2);
+    if(kind == "seq-map32") return check<false, uint32_t>(index, neg, 1, cap, mode, pow2);
+    if(kind == "seq-map16") return check<false, uint16_t>(index, neg, 1, cap, mode, pow2);
+    if(kind == "seq-map8")  return check<false, uint8_t>(index, neg, 1, cap, mode, pow2);
+    if(kind == "mt-set")    return check<true, void>(index, neg, T, cap, mode, pow2);
+    if(kind == "mt-map")    return check<true, uint64_t>(index, neg, T, cap, mode, pow2);
+    if(kind == "mt-map32")  return check<true, uint32_t>(index, neg, T, cap, mode, pow2);
+    if(kind == "mt-map16")  return check<true, uint16_t>(index, neg, T, cap, mode, pow2);
+    if(kind == "mt-map8")   return check<true, uint8_t>(index, neg, T, cap, mode, pow2);
     return 2;
 }
