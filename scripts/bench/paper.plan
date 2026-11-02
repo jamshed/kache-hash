@@ -37,6 +37,17 @@ EXPERIMENT=scaling-build PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=pr
     THREADS="1 2 4 8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" \
     short-reads long-reads pangenome metagenome
 
+# Scaling of builds grown from half the distinct k-mers, in the matrices of scaling-build.
+EXPERIMENT=scaling-build-half PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish" KINDS=set \
+    SIZINGS=half VARIANTS=mt THREADS="8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build-half PLACEMENT=spread TABLES="boost libcuckoo iceberg jellyfish" KINDS=set SIZINGS=half \
+    VARIANTS=mt THREADS="1 2 4" REPS=1 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build-half PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=half VARIANTS=mt THREADS="1 2 4" \
+    REPS=3 QUERIES= COUNTERS="demand noise tlb" reference
+EXPERIMENT=scaling-build-half PLACEMENT=spread TABLES=kache-hash KINDS=set SIZINGS=half VARIANTS=mt \
+    THREADS="1 2 4 8 16 24 32 40 48 56" REPS=3 QUERIES= COUNTERS="demand noise tlb" \
+    short-reads long-reads pangenome metagenome
+
 # Scaling of queries: each count's queries of one 56-thread build, for every concurrent table and SSHash on the
 # reference, and for kache-hash alone on the other indexes.
 EXPERIMENT=scaling-query PLACEMENT=spread TABLES="kache-hash boost libcuckoo iceberg jellyfish sshash" KINDS=set \
