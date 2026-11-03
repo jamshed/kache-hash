@@ -1055,7 +1055,8 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::buckets_of(const typename 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline std::size_t Streaming_Kmer_Hash_Table<k, mt_, T_, l>::pick_bucket(const uint64_t x, const std::size_t cap)
 {
-    return static_cast<std::size_t>((static_cast<unsigned __int128>(x) * cap) >> 64);
+    // NB: `__extension__` keeps GCC's `-Wpedantic` from warning on `__int128`, which ISO C++ lacks.
+    return __extension__ static_cast<std::size_t>((static_cast<unsigned __int128>(x) * cap) >> 64);
 }
 
 
