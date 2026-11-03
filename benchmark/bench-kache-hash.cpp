@@ -12,6 +12,14 @@
 using namespace kache_hash;
 
 
+// The kache-hash tables are sized exactly for their k-mers, unless a build sets
+// `POW2_CAP`, as `bench_kache_hash_pow2` does, to round their bucket counts up
+// to powers of 2.
+#ifndef POW2_CAP
+#define POW2_CAP 0
+#endif
+
+
 // Adapter of the kache-hash table, that is concurrent iff `mt_`, and that maps
 // k-mers to `T_` counts—a set if `T_` is `void`.
 template <bool mt_, typename T_>
@@ -32,7 +40,7 @@ public:
     static constexpr bool is_static = false;    // Whether loaded from an index file rather than built.
 
     // Prints the parameters of the table.
-    static void report_params() { print("l", l); }
+    static void report_params() { print("l", l); print("pow2_cap", POW2_CAP); }
 
     // Constructs a table sized for `init_cap` k-mers, for `thread_c` user
     // threads.
@@ -66,7 +74,7 @@ public:
 
 template <bool mt_, typename T_>
 inline Kache_Hash<mt_, T_>::Kache_Hash(const std::size_t init_cap, const std::size_t thread_c):
-      M(init_cap, thread_c)
+      M(init_cap, thread_c, ht_t::lf_default_, POW2_CAP)
     , token(thread_c)
 {
     std::for_each(token.begin(), token.end(), [&](auto& t){ t = M.register_user(); });

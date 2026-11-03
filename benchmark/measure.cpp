@@ -30,6 +30,7 @@ struct Config
     std::size_t value_sz = 8;   // Width of a map's counts, in bytes: 1, 2, 4 or 8.
     bool sum = false;   // Whether map queries sum the counts found, rather than only count the hits.
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
+    bool pow2_cap = false;  // Whether to round the table's bucket count up to a power of 2.
     std::optional<std::string> perf;    // Raw hardware events to count per phase, as `name=rCODE` items, if any.
     std::size_t reps = 1;   // Number of repetitions of the build and the queries, each on a fresh table.
 };
@@ -76,9 +77,10 @@ void measure(const Config& cfg, Perf_Group* const perf)
 
         const auto init_cap = (cfg.init_cap > 0 ? cfg.init_cap : index.kmer_count());
         const auto t_init_s = now();
-        ht_t M(init_cap, cfg.thread_c);
+        ht_t M(init_cap, cfg.thread_c, ht_t::lf_default_, cfg.pow2_cap);
         const auto t_init_e = now();
         print("table.init_cap", init_cap);
+        print("table.pow2_cap", cfg.pow2_cap);
         print("table.init_capacity", M.capacity());
         print("init.seconds", duration(t_init_e - t_init_s));
 
@@ -151,7 +153,7 @@ Config parse_config(const int argc, char* argv[])
 {
     const auto usage = [&]()
     {
-        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--value <1|2|4|8>] [--sum] [--init-cap <count>] [--perf <events>] [--reps <count>]\n";
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--value <1|2|4|8>] [--sum] [--init-cap <count>] [--pow2-cap] [--perf <events>] [--reps <count>]\n";
         std::exit(EXIT_FAILURE);
     };
 
@@ -176,6 +178,8 @@ Config parse_config(const int argc, char* argv[])
             cfg.sum = true;
         else if(arg == "--init-cap" && has_val)
             cfg.init_cap = std::strtoull(argv[++i], nullptr, 10);
+        else if(arg == "--pow2-cap")
+            cfg.pow2_cap = true;
         else if(arg == "--perf" && has_val)
             cfg.perf = argv[++i];
         else if(arg == "--reps" && has_val)

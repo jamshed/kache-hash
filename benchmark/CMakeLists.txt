@@ -77,6 +77,7 @@ add_executable(measure measure.cpp)
 
 # Benchmark executables, one per table.
 add_executable(bench_kache_hash bench-kache-hash.cpp)
+add_executable(bench_kache_hash_pow2 bench-kache-hash.cpp)  # kache-hash with its bucket counts rounded up to powers of 2.
 add_executable(bench_boost bench-boost.cpp)
 add_executable(bench_libcuckoo bench-libcuckoo.cpp)
 add_executable(bench_jellyfish bench-jellyfish.cpp)
@@ -92,6 +93,7 @@ add_dependencies(bench_libcuckoo prj_libcuckoo)
 
 target_include_directories(measure PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_kache_hash PRIVATE ${INCLUDE_DIR})
+target_include_directories(bench_kache_hash_pow2 PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_boost PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_libcuckoo PRIVATE ${INCLUDE_DIR})
 target_include_directories(bench_jellyfish PRIVATE ${INCLUDE_DIR})
@@ -99,16 +101,19 @@ target_include_directories(bench_boost SYSTEM PRIVATE ${EXT_INCLUDE})   # Third-
 target_include_directories(bench_libcuckoo SYSTEM PRIVATE ${EXT_INCLUDE})
 target_include_directories(bench_jellyfish SYSTEM PRIVATE ${JELLYFISH_DIR}/include ${JELLYFISH_BUILD_DIR})
 
+target_compile_definitions(bench_kache_hash_pow2 PRIVATE POW2_CAP=1)
 target_compile_definitions(bench_jellyfish PRIVATE HAVE_CONFIG_H)  # Jellyfish's headers then include its `config.h`.
 
 target_compile_options(measure PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_kache_hash PRIVATE ${COMPILE_FLAGS})
+target_compile_options(bench_kache_hash_pow2 PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_boost PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_libcuckoo PRIVATE ${COMPILE_FLAGS})
 target_compile_options(bench_jellyfish PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(measure PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_kache_hash PRIVATE ${LINK_FLAGS})
+target_link_libraries(bench_kache_hash_pow2 PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_boost PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_libcuckoo PRIVATE ${LINK_FLAGS})
 target_link_libraries(bench_jellyfish PRIVATE ${LINK_FLAGS})
@@ -118,13 +123,14 @@ target_link_libraries(bench_jellyfish PRIVATE ${LINK_FLAGS})
 
 target_link_libraries(measure PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_kache_hash PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
+target_link_libraries(bench_kache_hash_pow2 PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_boost PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_libcuckoo PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 target_link_libraries(bench_jellyfish PRIVATE jellyfish jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads)
 
 
 # Installation path.
-install(TARGETS measure bench_kache_hash bench_boost bench_libcuckoo bench_jellyfish
+install(TARGETS measure bench_kache_hash bench_kache_hash_pow2 bench_boost bench_libcuckoo bench_jellyfish
         DESTINATION bin
 )
 

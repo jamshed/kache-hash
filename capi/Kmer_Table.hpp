@@ -102,7 +102,7 @@ public:
 
     explicit Kmer_Table(const kache_options& o):
           kache_table(o.value_bytes)
-        , M(o.expected_keys, o.resize_workers, o.load_factor)
+        , M(o.expected_keys, o.resize_workers, o.load_factor, o.pow2_capacity != 0)
     {}
 
     void register_user(const uint32_t user) override { token[user] = M.register_user(); }

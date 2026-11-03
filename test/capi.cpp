@@ -1,7 +1,7 @@
 
 // Checks of the C interface, through it alone, against an exact reference. First argument validation and the bound on
-// users; then a set, and maps of each width built by each operation, plain and oriented, presized and from a tiny table
-// that resizes, and updated by each operation. The inserts and updates whose results don't depend on their order run
+// users, and sizing; then a set, and maps of each width built by each operation, plain and oriented, presized, exactly
+// or to a power of 2, and from a tiny table that resizes, and updated by each operation. The inserts and updates whose results don't depend on their order run
 // from `threads` threads, the others from one. Each table is checked through iterations over its shares, its size,
 // reductions and statistics, and per-sequence counts, masked counts and sums, per-position lookups and single lookups
 // of queries: pieces of the index, their reverse complements, the negatives, and empty, short and all-N sequences.
@@ -402,7 +402,7 @@ int main(const int argc, const char* const argv[])
     expect(kache_supports(31, 0) && kache_supports(31, 1) && kache_supports(31, 2) && kache_supports(31, 4) && kache_supports(31, 8), "supports");
     expect(!kache_supports(25, 0) && !kache_supports(31, 3) && !kache_supports(31, 16), "doesn't support");
     auto o = kache_default_options(31, 4);
-    expect(o.k == 31 && o.value_bytes == 4 && o.expected_keys == (1 << 22) && o.load_factor == 0.8 && o.resize_workers == 16, "default options");
+    expect(o.k == 31 && o.value_bytes == 4 && o.expected_keys == (1 << 22) && o.load_factor == 0.8 && o.resize_workers == 16 && o.pow2_capacity == 0, "default options");
     expect(kache_new(&o, nullptr) == KACHE_EINVAL && kache_new(nullptr, &t) == KACHE_EINVAL && t == nullptr, "new rejects null arguments");
     for(const auto& [k_, w_] : {std::pair<uint32_t, uint32_t>{25, 4}, {31, 3}})
     {
@@ -418,6 +418,22 @@ int main(const int argc, const char* const argv[])
     }
     o.resize_workers = 0;
     expect(kache_new(&o, &t) == KACHE_EINVAL && t == nullptr, "new rejects 0 workers");
+    o = kache_default_options(31, 4), o.pow2_capacity = 2;
+    expect(kache_new(&o, &t) == KACHE_EINVAL && t == nullptr, "new rejects the sizing");
+    for(const auto& [n, p] : {std::pair<uint64_t, uint32_t>{uint64_t(1) << 37, 0}, {uint64_t(55) << 30, 1}, {~uint64_t(0), 0}})
+    {
+        auto x = kache_default_options(31, 4);
+        x.expected_keys = n, x.pow2_capacity = p;
+        expect(kache_new(&x, &t) == KACHE_EINVAL && t == nullptr, "new rejects tables beyond the most buckets");
+    }
+    for(const uint32_t p : {0u, 1u})
+    {
+        auto x = kache_default_options(31, 0);
+        x.expected_keys = 1000, x.resize_workers = 2, x.pow2_capacity = p;
+        kache_stats st;
+        expect(kache_new(&x, &t) == KACHE_OK && kache_get_stats(t, &st) == KACHE_OK && st.capacity == (p ? 2048 : 1280), "new sizes the table");
+        kache_free(t), t = nullptr;
+    }
     kache_free(nullptr);
 
     // The bound on users, and arguments of the operations.
@@ -511,7 +527,7 @@ int main(const int argc, const char* const argv[])
         const auto& x = X[s];
         const uint32_t bits = 8 * x.width;
         const uint64_t max = (x.width == 8 ? ~uint64_t(0) : (uint64_t(1) << bits) - 1);
-        const bool tiny = (s % 2 == 1);
+        const bool tiny = (s % 2 == 1), pow2 = (s % 4 == 2);    // Presized tables alternate exact and power-of-2 sizes.
         const std::size_t threads = (commutes(x.op) || x.width == 0 ? T : 0);
         std::size_t errors = 0;
 
@@ -549,7 +565,7 @@ int main(const int argc, const char* const argv[])
 
         // The table, presized or tiny, by the same inserts.
         auto opt = kache_default_options(31, x.width);
-        opt.expected_keys = (tiny ? 10 : R.val.size()), opt.resize_workers = std::max<std::size_t>(T, 1);
+        opt.expected_keys = (tiny ? 10 : R.val.size()), opt.resize_workers = std::max<std::size_t>(T, 1), opt.pow2_capacity = pow2;
         expect(kache_new(&opt, &t) == KACHE_OK, "new");
         std::vector<uint32_t> user(std::max<std::size_t>(threads, 1));
         for(auto& y : user)
@@ -614,7 +630,7 @@ int main(const int argc, const char* const argv[])
         std::snprintf(name, sizeof(name), "%s%s %s", x.width == 0 ? "set" : "map", x.width == 0 ? "" : std::to_string(bits).c_str(), x.width == 0 ? "insert" : op_name[x.op]);
         std::printf("capi %s %s%s%s %s %s: keys %zu, ins %llu, placed %.2f/%.2f/%.2f%%, contents %zu wrong, queries %zu of %zu wrong",
                     argv[1], name, x.oriented ? " oriented" : "", x.update_op <= KACHE_MAX ? (std::string(", then ") + op_name[x.update_op]).c_str() : "",
-                    threads > 0 ? ("T=" + std::to_string(threads)).c_str() : "in order", tiny ? "tiny" : "presized", R.val.size(), (unsigned long long)inserted,
+                    threads > 0 ? ("T=" + std::to_string(threads)).c_str() : "in order", tiny ? "tiny" : pow2 ? "presized pow2" : "presized", R.val.size(), (unsigned long long)inserted,
                     st.primary_pct, st.secondary_pct, st.overflow_pct, wrong_kv, wrong_q, Q.size());
         if(x.update_op <= KACHE_MAX)
             std::printf(", updates %zu presence and %zu contents wrong", wrong_present, wrong_up);

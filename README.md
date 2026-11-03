@@ -74,6 +74,10 @@ strands.find(seqs, lens, n, [&](const std::size_t q, const std::size_t i, const 
 Queries must not overlap updates that can resize the table, and `for_each` must not overlap any updates.
 `update`s, which insert nothing, must not overlap other operations but `update`s.
 
+A table sized for `n` *k*-mers takes the fewest buckets of 32 that hold them at its load factor, 0.8 by default, and doubles as more come.
+After `n`, the constructor takes the number of threads for resizes, the load factor, and whether to round the bucket count up to a power of 2: that lowers the load, which speeds the operations, at up to twice the memory.
+A table has at most `2^32 - 1` buckets, or `2^31` rounded to powers of 2.
+
 ### Counting k-mers within a set
 
 The library `kache_counter`, in `counter`, counts the k-mers of reads that belong to a set fixed beforehand, as PanGenie counts them with Jellyfish, on a table of 32-bit counts; its `Fastx_Reader` reads FASTA and FASTQ files in parallel, from files or pipes.
@@ -95,6 +99,7 @@ const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters 
 The library `kache_capi`, in `capi`, puts concurrent sets of 31-mers, and maps from 31-mers to unsigned values of 8, 16, 32 or 64 bits, behind a C interface, for callers in other languages, such as Rust.
 Inserts and updates combine a k-mer's value with an operand: keep, assign, add (saturating), or, min, or max; oriented inserts choose the operand by whether a k-mer occurs as is or as its reverse complement, so that a map of orientation masks gives forward-strand membership.
 Queries count, sum, or look up the k-mers of batches of sequences, reduce the whole table, or iterate over its keys in shares.
+A table's options size it as the C++ constructor does: for `expected_keys` at `load_factor`, rounded up to a power of 2 with `pow2_capacity`.
 A project links it as `kache_hash::kache_capi`; CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DKACHE_HASH_CAPI=ON`.
 
 ```c

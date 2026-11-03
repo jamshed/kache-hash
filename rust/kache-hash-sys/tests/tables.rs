@@ -1,5 +1,6 @@
 // Checks the bindings against exact references: forward-strand membership, each operation's semantics, concurrent
-// counting from a tiny table that resizes, a set's queries across a thaw, concurrent updates, and errors and panics.
+// counting from a tiny table that resizes, a set's queries across a thaw, concurrent updates, sizing, and errors and
+// panics.
 // The sequences are random, with an `N` every 997th base, some reverse-complemented.
 
 use kache_hash_sys::{supports, Builder, Error, Op, Options, Reduction, ABSENT, NOT_KMER, PRESENT};
@@ -288,6 +289,19 @@ fn concurrent_updates() {
         true
     })
     .unwrap();
+}
+
+#[test]
+fn sizing() {
+    // Exactly for the expected k-mers at the load factor, or rounded up to a power of 2.
+    for (pow2_capacity, capacity) in [(false, 1280), (true, 2048)] {
+        let b = Builder::<()>::new(&Options { pow2_capacity, ..options(1000, 1) }).unwrap();
+        assert_eq!(b.freeze().stats().unwrap().capacity, capacity);
+    }
+
+    // Beyond the most buckets.
+    assert_eq!(Builder::<()>::new(&Options { expected_keys: 1 << 37, ..Options::new(K) }).err(), Some(Error::INVALID));
+    assert_eq!(Builder::<()>::new(&Options { expected_keys: 55 << 30, pow2_capacity: true, ..Options::new(K) }).err(), Some(Error::INVALID));
 }
 
 #[test]

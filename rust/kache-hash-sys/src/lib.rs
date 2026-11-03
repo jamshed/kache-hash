@@ -46,6 +46,7 @@ struct RawOptions {
     expected_keys: u64,
     load_factor: f64,
     resize_workers: u32,
+    pow2_capacity: u32,
 }
 
 #[repr(C)]
@@ -199,15 +200,24 @@ pub struct Options {
     pub load_factor: f64,
     /// Number of threads for the table's resizes and statistics, at least 1.
     pub resize_workers: usize,
+    /// Whether to round the table's number of buckets up to a power of 2, for a lower load; else it is sized exactly
+    /// for `expected_keys` at `load_factor`.
+    pub pow2_capacity: bool,
 }
 
 impl Options {
-    /// Returns the default options of a table of `k`-mers: room for 4M k-mers at load factor 0.8, and 16 threads for
-    /// resizes.
+    /// Returns the default options of a table of `k`-mers: room for 4M k-mers at load factor 0.8, sized exactly, and
+    /// 16 threads for resizes.
     pub fn new(k: usize) -> Self {
         // SAFETY: a pure function of its arguments.
         let o = unsafe { kache_default_options(u32::try_from(k).unwrap_or(0), 0) };
-        Self { k, expected_keys: o.expected_keys, load_factor: o.load_factor, resize_workers: o.resize_workers as usize }
+        Self {
+            k,
+            expected_keys: o.expected_keys,
+            load_factor: o.load_factor,
+            resize_workers: o.resize_workers as usize,
+            pow2_capacity: o.pow2_capacity != 0,
+        }
     }
 }
 
@@ -269,6 +279,7 @@ impl<V: Value> Builder<V> {
             expected_keys: options.expected_keys,
             load_factor: options.load_factor,
             resize_workers: u32::try_from(options.resize_workers).map_err(|_| Error::INVALID)?,
+            pow2_capacity: u32::from(options.pow2_capacity),
         };
         let mut t = std::ptr::null_mut();
         // SAFETY: `o` and `t` are valid for the call.

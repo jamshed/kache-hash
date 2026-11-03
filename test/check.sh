@@ -5,7 +5,8 @@
 # SRR5833294 reads, the counting library's checks, the oriented operations' and the C interface's checks on E. coli
 # and chr21 at all threads, then the tables' correctness matrix: E. coli and chr21, each against the other as
 # negatives; sets, and maps of 64-, 32- and 8-bit counts; sequential, and concurrent at 1 and all threads; presized,
-# and resizing from 100,000 and from 10 k-mers; whole fragments, raw sequences, and ragged batches.
+# and resizing from 100,000 and from 10 k-mers; whole fragments, raw sequences, and ragged batches; and concurrent at
+# all threads with bucket counts rounded up to powers of 2, presized and from 10 k-mers, over whole fragments.
 # Usage: test/check.sh [quick] [extra compile flags...]; quick skips chr21 and the reads.
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,6 +46,11 @@ for g in ecoli chr21; do
                     run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" mt-${kind} ${t} ${cap} ${mode}
                 done
             done
+        done
+    done
+    for cap in 0 10; do
+        for kind in set map map32 map8; do
+            run "${root}/data/${g}.fa.gz" "${root}/data/${neg}.fa.gz" mt-${kind} ${T} ${cap} stream pow2
         done
     done
 done

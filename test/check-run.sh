@@ -3,7 +3,8 @@
 # test/capi.cpp with the C interface library, natively from a source tree pushed to explorer (scripts/ab/push.sh),
 # with extra compile flags, and runs the describers' check on E. coli, chr21 and 1M SRR5833294 reads, the oriented
 # operations' and the C interface's checks on E. coli at `T` threads, then check.sh's matrix for E. coli on the node,
-# with chr21 as negatives, at 1 and `T` threads, for sets and maps of 64-, 32- and 8-bit counts.
+# with chr21 as negatives, at 1 and `T` threads, for sets and maps of 64-, 32- and 8-bit counts, with its cases of
+# bucket counts rounded up to powers of 2 at `T` threads.
 # Usage: check-run.sh <source> <T> [extra compile flags...], e.g. as an A/B job's KH_PRE. KH_DATA overrides the data
 # directory, e.g. for copies staged in node-local /tmp; KH_NO_DESC=1 skips the describers' check.
 set -u
@@ -34,6 +35,11 @@ for cap in 0 100000 10; do
                 run ${data}/ecoli.fa.gz ${data}/chr21.fa.gz mt-${kind} ${t} ${cap} ${mode}
             done
         done
+    done
+done
+for cap in 0 10; do
+    for kind in set map map32 map8; do
+        run ${data}/ecoli.fa.gz ${data}/chr21.fa.gz mt-${kind} ${T} ${cap} stream pow2
     done
 done
 echo "check [${src} $*] T=${T}: ${c} cases, failures: ${fail}"
