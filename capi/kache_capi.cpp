@@ -73,7 +73,7 @@ int kache_supports(const uint32_t k, const uint32_t value_bytes) noexcept
 
 kache_options kache_default_options(const uint32_t k, const uint32_t value_bytes) noexcept
 {
-    return kache_options{k, value_bytes, uint64_t(1) << 22, 0.8, 16, 0};
+    return kache_options{k, value_bytes, uint64_t(1) << 22, 0.8, 16, 1};
 }
 
 

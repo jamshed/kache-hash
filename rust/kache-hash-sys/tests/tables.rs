@@ -300,7 +300,7 @@ fn sizing() {
     }
 
     // Beyond the most buckets.
-    assert_eq!(Builder::<()>::new(&Options { expected_keys: 1 << 37, ..Options::new(K) }).err(), Some(Error::INVALID));
+    assert_eq!(Builder::<()>::new(&Options { expected_keys: 1 << 37, pow2_capacity: false, ..Options::new(K) }).err(), Some(Error::INVALID));
     assert_eq!(Builder::<()>::new(&Options { expected_keys: 55 << 30, pow2_capacity: true, ..Options::new(K) }).err(), Some(Error::INVALID));
 }
 

@@ -82,8 +82,8 @@ typedef struct kache_options
     uint64_t expected_keys;     // Number of k-mers to make room for; the table grows beyond, as needed.
     double load_factor;         // Load factor, in `(0, 1)`, beyond which the table grows.
     uint32_t resize_workers;    // Number of threads for the table's resizes and statistics, at least 1.
-    uint32_t pow2_capacity;     // 1 to round the table's number of buckets up to a power of 2, for a lower load; 0 to
-                                // size it exactly for `expected_keys` at `load_factor`.
+    uint32_t pow2_capacity;     // 1, the default, to round the table's number of buckets up to a power of 2, for a
+                                // lower load; 0 to size it exactly for `expected_keys` at `load_factor`.
 } kache_options;
 
 // Statistics of a table.
@@ -111,8 +111,8 @@ typedef int (*kache_keys_fn)(void* ctx, const uint64_t* keys, const void* values
 int kache_supports(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
 
 // Returns the default options of a table of `k`-mers with values of
-// `value_bytes` bytes: room for 4M k-mers at load factor 0.8, sized exactly,
-// and 16 threads for resizes.
+// `value_bytes` bytes: room for 4M k-mers at load factor 0.8, its number of
+// buckets rounded up to a power of 2, and 16 threads for resizes.
 kache_options kache_default_options(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
 
 // Creates a table with the options `*options` at `*out`. A table takes at most

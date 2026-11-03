@@ -30,7 +30,7 @@ struct Config
     std::size_t value_sz = 8;   // Width of a map's counts, in bytes: 1, 2, 4 or 8.
     bool sum = false;   // Whether map queries sum the counts found, rather than only count the hits.
     std::size_t init_cap = 0;   // Number of k-mers to initially size the table for; the index k-mer count if 0.
-    bool pow2_cap = false;  // Whether to round the table's bucket count up to a power of 2.
+    bool pow2_cap = true;   // Whether to round the table's bucket count up to a power of 2, rather than size it exactly.
     std::optional<std::string> perf;    // Raw hardware events to count per phase, as `name=rCODE` items, if any.
     std::size_t reps = 1;   // Number of repetitions of the build and the queries, each on a fresh table.
 };
@@ -153,7 +153,7 @@ Config parse_config(const int argc, char* argv[])
 {
     const auto usage = [&]()
     {
-        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--value <1|2|4|8>] [--sum] [--init-cap <count>] [--pow2-cap] [--perf <events>] [--reps <count>]\n";
+        std::cerr << "Usage: " << argv[0] << " --index <path> [--query <path>]... [--threads <count>] [--seq] [--set] [--value <1|2|4|8>] [--sum] [--init-cap <count>] [--exact-cap] [--perf <events>] [--reps <count>]\n";
         std::exit(EXIT_FAILURE);
     };
 
@@ -178,8 +178,8 @@ Config parse_config(const int argc, char* argv[])
             cfg.sum = true;
         else if(arg == "--init-cap" && has_val)
             cfg.init_cap = std::strtoull(argv[++i], nullptr, 10);
-        else if(arg == "--pow2-cap")
-            cfg.pow2_cap = true;
+        else if(arg == "--exact-cap")
+            cfg.pow2_cap = false;
         else if(arg == "--perf" && has_val)
             cfg.perf = argv[++i];
         else if(arg == "--reps" && has_val)

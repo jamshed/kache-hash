@@ -621,7 +621,7 @@ public:
     // with a maximum load-factor of `lf`. Its bucket count is the fewest for
     // `max_sz` k-mers at that load, rounded up to a power of 2 iff `pow2_cap`.
     // Resizes use `resize_worker_c` threads.
-    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_, bool pow2_cap = false);
+    Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_, bool pow2_cap = true);
 
     // Returns whether a table constructed for `max_sz` k-mers at load factor
     // `lf`, rounded up to a power of 2 iff `pow2_cap`, is within the most

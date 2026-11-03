@@ -12,11 +12,11 @@
 using namespace kache_hash;
 
 
-// The kache-hash tables are sized exactly for their k-mers, unless a build sets
-// `POW2_CAP`, as `bench_kache_hash_pow2` does, to round their bucket counts up
-// to powers of 2.
+// The kache-hash tables round their bucket counts up to powers of 2, as by
+// default, unless a build sets `POW2_CAP` to 0, as `bench_kache_hash_exact`
+// does, to size them exactly for their k-mers.
 #ifndef POW2_CAP
-#define POW2_CAP 0
+#define POW2_CAP 1
 #endif
 
 

@@ -206,8 +206,8 @@ pub struct Options {
 }
 
 impl Options {
-    /// Returns the default options of a table of `k`-mers: room for 4M k-mers at load factor 0.8, sized exactly, and
-    /// 16 threads for resizes.
+    /// Returns the default options of a table of `k`-mers: room for 4M k-mers at load factor 0.8, its number of buckets
+    /// rounded up to a power of 2, and 16 threads for resizes.
     pub fn new(k: usize) -> Self {
         // SAFETY: a pure function of its arguments.
         let o = unsafe { kache_default_options(u32::try_from(k).unwrap_or(0), 0) };

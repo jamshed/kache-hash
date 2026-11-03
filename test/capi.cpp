@@ -402,7 +402,7 @@ int main(const int argc, const char* const argv[])
     expect(kache_supports(31, 0) && kache_supports(31, 1) && kache_supports(31, 2) && kache_supports(31, 4) && kache_supports(31, 8), "supports");
     expect(!kache_supports(25, 0) && !kache_supports(31, 3) && !kache_supports(31, 16), "doesn't support");
     auto o = kache_default_options(31, 4);
-    expect(o.k == 31 && o.value_bytes == 4 && o.expected_keys == (1 << 22) && o.load_factor == 0.8 && o.resize_workers == 16 && o.pow2_capacity == 0, "default options");
+    expect(o.k == 31 && o.value_bytes == 4 && o.expected_keys == (1 << 22) && o.load_factor == 0.8 && o.resize_workers == 16 && o.pow2_capacity == 1, "default options");
     expect(kache_new(&o, nullptr) == KACHE_EINVAL && kache_new(nullptr, &t) == KACHE_EINVAL && t == nullptr, "new rejects null arguments");
     for(const auto& [k_, w_] : {std::pair<uint32_t, uint32_t>{25, 4}, {31, 3}})
     {
