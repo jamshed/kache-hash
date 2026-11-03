@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Places runs of the benchmarks on a roofline, from the outputs of `scripts/bench/collate.py`: for each build and query
-phase of the selected run configurations, its intensity, the operations per cache line that it fetches from beyond the
-last-level cache (`longest_lat_cache.miss`); its rate; and the two roofs over it. The memory roof is the intensity
-times `memory-roof`'s rate of random cache lines at the run's thread count: of updates for builds, as their lines are
-written back too, and of reads for queries. The compute roof is the rate at which the run's threads, a core each, could
-execute its instructions per operation, at its measured clock and the cores' issue width. Writes a row per phase, with
-the roof that bounds it, the share of that roof that it reaches, and the shares of its cycles stalled, from runs that
-counted the `stalls` group, if given; and prints them. Exits non-zero if a phase lacks its counters, or runs above a
-roof by more than the tolerance, as the roof would then not bound it."""
+"""Places runs of the benchmarks on an instruction roofline, from the outputs of `scripts/bench/collate.py`: for each
+build and query phase of the selected run configurations, its performance, the instructions that its threads retire
+per second; its intensity, the instructions that it executes per byte that it fetches from beyond the last-level cache
+(`longest_lat_cache.miss`); and the roofs over it, the same for every table. The compute roof is the rate at which the
+run's threads, a core each, could issue instructions, at the cores' issue width and the clock that `memory-roof`
+measured at the run's thread count. The memory roofs are `memory-roof`'s rates at that thread count, in bytes: of
+sequential reads, the hardware's limit; and of random cache lines, the limit of random access, updated for builds, as
+their lines are written back too, and read for queries. The lower of the compute roof and the random-access roof bounds
+a phase. Writes a row per phase, with the roof that bounds it, the share of that roof that it reaches, and the
+shares of its cycles stalled, from runs that counted the `stalls` group, if given; and prints them. Exits non-zero if a
+phase lacks its counters, or runs above a roof by more than the tolerance, as the roof would then not bound it."""
 
 import argparse
 import csv
@@ -22,9 +24,10 @@ ROOF_PHASES = ["random_read", "random_update", "stream", "chase"]  # The phases 
 STALLS = {"stall_share": "cycle_activity.stalls_total.per_op",   # Shares of the cycles, by the stalls of the group.
           "mem_stall_share": "cycle_activity.stalls_mem_any.per_op",
           "l3_stall_share": "cycle_activity.stalls_l3_miss.per_op"}
-FIELDS = CONFIG + ["phase", "roof", "mops", "lines_per_op", "ops_per_line", "line_mops", "roof_mops", "roof_share",
-                   "memory_mops", "instructions_per_op", "ghz", "ipc", "cpu_utilization", "compute_mops", "ridge",
-                   "bound", "efficiency"] + list(STALLS)
+FIELDS = CONFIG + ["phase", "roof", "mops", "instructions_per_op", "lines_per_op", "ops_per_line", "gips",
+                   "instructions_per_byte", "gb_per_s", "roof_gb_per_s", "roof_share", "sequential_gb_per_s",
+                   "sequential_share", "memory_gips", "compute_gips", "ridge", "bound", "efficiency", "ghz", "ipc",
+                   "cpu_utilization"] + list(STALLS)
 
 
 def read_tsv(path):
@@ -57,19 +60,23 @@ def load_runs(dirs):
 
 def load_roofs(d):
     """Returns the rates of `memory-roof`'s phases in the collated directory `d`, in millions of cache lines per second,
-    per thread count; and the cache lines that each phase fetched per line that it accessed, per thread count and phase,
-    where counted."""
+    per thread count; the cache lines that each phase fetched per line that it accessed, per thread count and phase,
+    where counted; and the highest clock of its phases, in cycles per reference cycle, per thread count, where
+    counted."""
     roofs = {}
     for row in read_tsv(os.path.join(d, "summary.tsv")):
         if row.get("random_read.mops") and row.get("random_update.mops"):
             roofs[int(row["threads"])] = {p: float(row[f"{p}.mops"]) for p in ROOF_PHASES if row.get(f"{p}.mops")}
 
-    lines = {}
+    lines, clocks = {}, {}
     for row in read_tsv(os.path.join(d, "counters.tsv")):
+        t = int(row["threads"])
         if row["metric"] == LINES:
-            lines[(int(row["threads"]), row["phase"])] = float(row["value"])
+            lines[(t, row["phase"])] = float(row["value"])
+        elif row["metric"] == "cycles_per_ref_cycle" and row["phase"] in ROOF_PHASES:
+            clocks[t] = max(clocks.get(t, 0), float(row["value"]))
 
-    return roofs, lines
+    return roofs, lines, clocks
 
 
 def phases(summary):
@@ -98,18 +105,26 @@ def main():
     parser.add_argument("--base-ghz", type=float, default=2.2,
                         help="reference clock, at which `ref_cycles` counts, in GHz (default: 2.2)")
     parser.add_argument("--width", type=int, default=4,
-                        help="instructions that a core can issue per cycle (default: 4)")
+                        help="instructions that a core can issue per cycle, for the compute roof (default: 4)")
+    parser.add_argument("--line-bytes", type=int, default=64, help="bytes in a cache line (default: 64)")
     parser.add_argument("--tolerance", type=float, default=0.05,
                         help="share by which a phase may run above a roof, as noise (default: 0.05)")
     parser.add_argument("-o", "--out", default="roofline.tsv", help="output file (default: roofline.tsv)")
     args = parser.parse_args()
 
     summaries, metrics = load_runs(args.dirs)
-    roofs, roof_lines = load_roofs(args.roofs)
+    roofs, roof_lines, clocks = load_roofs(args.roofs)
     stall_metrics = load_runs([args.stalls])[1] if args.stalls else {}
     t = args.threads
-    if t not in roofs:
+    if t not in roofs or "stream" not in roofs[t]:
         sys.exit(f"No roofs at {t} threads in {args.roofs}")
+    if t not in clocks:
+        sys.exit(f"No clock of `memory-roof` at {t} threads in {args.roofs}, for the compute roof")
+
+    gb = lambda line_mops: line_mops * args.line_bytes / 1e3    # M cache lines/s, in GB/s.
+    roof_ghz = clocks[t] * args.base_ghz
+    compute = args.width * t * roof_ghz     # The compute roof, in G instructions/s.
+    sequential = gb(roofs[t]["stream"])
 
     errors, warnings, rows = [], [], []
     for p in ("random_read", "random_update"):
@@ -133,21 +148,24 @@ def main():
                 continue
 
             roof = "random_update" if phase == "build" else "random_read"
-            roof_mops = roofs[t][roof]
-            lines = m[LINES]
-            ghz = m["cycles_per_ref_cycle"] * args.base_ghz
-            memory = roof_mops / lines
-            compute = args.width * t * ghz * 1e3 / m["instructions.per_op"]
-            row = dict(zip(CONFIG, cfg), phase=phase, roof=roof, mops=mops, lines_per_op=lines, ops_per_line=1 / lines,
-                       line_mops=mops * lines, roof_mops=roof_mops, roof_share=mops * lines / roof_mops,
-                       memory_mops=memory, instructions_per_op=m["instructions.per_op"], ghz=ghz, ipc=m.get("ipc"),
-                       cpu_utilization=m.get("cpu_utilization"), compute_mops=compute, ridge=compute / roof_mops,
-                       bound="memory" if memory <= compute else "compute", efficiency=mops / min(memory, compute))
+            roof_gb = gb(roofs[t][roof])
+            lines, instructions = m[LINES], m["instructions.per_op"]
+            gips, gb_per_s = mops * instructions / 1e3, gb(mops * lines)
+            per_byte = instructions / (lines * args.line_bytes)
+            memory = roof_gb * per_byte
+            row = dict(zip(CONFIG, cfg), phase=phase, roof=roof, mops=mops, instructions_per_op=instructions,
+                       lines_per_op=lines, ops_per_line=1 / lines, gips=gips, instructions_per_byte=per_byte,
+                       gb_per_s=gb_per_s, roof_gb_per_s=roof_gb, roof_share=gb_per_s / roof_gb,
+                       sequential_gb_per_s=sequential, sequential_share=gb_per_s / sequential, memory_gips=memory,
+                       compute_gips=compute, ridge=compute / roof_gb,
+                       bound="memory" if memory <= compute else "compute",
+                       efficiency=gips / min(memory, compute), ghz=m["cycles_per_ref_cycle"] * args.base_ghz,
+                       ipc=m.get("ipc"), cpu_utilization=m.get("cpu_utilization"))
 
-            if mops > memory * (1 + args.tolerance):
-                errors.append(f"{name} fetches {mops * lines:.6g} M lines/s, above its memory roof of {roof_mops:.6g}")
-            if mops > compute * (1 + args.tolerance):
-                errors.append(f"{name} runs at {mops:.6g} Mops, above its compute roof of {compute:.6g}")
+            if gb_per_s > roof_gb * (1 + args.tolerance):
+                errors.append(f"{name} fetches {gb_per_s:.6g} GB/s, above its memory roof of {roof_gb:.6g}")
+            if gips > compute * (1 + args.tolerance):
+                errors.append(f"{name} runs {gips:.6g} G instructions/s, above the compute roof of {compute:.6g}")
 
             if args.stalls:
                 s = stall_metrics.get((cfg, phase), {})
@@ -166,17 +184,19 @@ def main():
             print("\t".join("" if v is None else f"{v:.6g}" if isinstance(v, float) else str(v) for v in cells), file=f)
 
     r = roofs[t]
-    print(f"Roofs at {t} threads, in M lines/s: random reads {r['random_read']:.6g}, random updates "
-          f"{r['random_update']:.6g}" + (f"; stream {r['stream']:.6g}" if "stream" in r else "") +
-          (f", chase {r['chase']:.6g}" if "chase" in r else ""))
-    head = f"{'table':<11} {'phase':<22} {'Mops':>7} {'ops/line':>8} {'roof':>5} {'memory':>7} {'compute':>7} " \
-           f"{'bound':<7} {'effic.':>6} {'IPC':>5} {'busy':>5}" + (f" {'mem.stall':>9}" if args.stalls else "")
+    print(f"Roofs at {t} threads: compute {compute:.6g} G instructions/s ({args.width} per cycle at {roof_ghz:.2f}"
+          f" GHz); memory, in GB/s: sequential reads {sequential:.6g}, random reads {gb(r['random_read']):.6g}, random"
+          f" updates {gb(r['random_update']):.6g}" + (f", chase {gb(r['chase']):.6g}" if "chase" in r else ""))
+    head = f"{'table':<16} {'phase':<22} {'Mops':>7} {'GIPS':>7} {'instr/B':>7} {'GB/s':>6} {'roof':>5} " \
+           f"{'memory':>7} {'bound':<7} {'effic.':>6} {'IPC':>5} {'busy':>5}" + \
+           (f" {'mem.stall':>9}" if args.stalls else "")
     print(head)
     pct = lambda v: f"{100 * v:.0f}%" if v is not None else "-"
     for row in rows:
-        line = f"{row['table']:<11} {row['phase']:<22} {row['mops']:>7.0f} {row['ops_per_line']:>8.3f} " \
-               f"{pct(row['roof_share']):>5} {row['memory_mops']:>7.0f} {row['compute_mops']:>7.0f} " \
-               f"{row['bound']:<7} {pct(row['efficiency']):>6} {row['ipc'] or 0:>5.2f} {pct(row['cpu_utilization']):>5}"
+        line = f"{row['table']:<16} {row['phase']:<22} {row['mops']:>7.0f} {row['gips']:>7.1f} " \
+               f"{row['instructions_per_byte']:>7.2f} {row['gb_per_s']:>6.1f} {pct(row['roof_share']):>5} " \
+               f"{row['memory_gips']:>7.0f} {row['bound']:<7} {pct(row['efficiency']):>6} {row['ipc'] or 0:>5.2f} " \
+               f"{pct(row['cpu_utilization']):>5}"
         if args.stalls:
             line += f" {pct(row.get('mem_stall_share')):>9}"
         print(line)
