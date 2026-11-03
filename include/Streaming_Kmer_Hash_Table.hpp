@@ -184,13 +184,13 @@ private:
     // Directly places the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket at index `j`.
     void place_at(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
-    { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = m; }
+    { T[i * B + j] = e, M[i].cs[j] = c, M[i].min_coord[j] = (mt_ && j == 0) ? uint8_t(m | Metadata::lock_mask) : m; }
 
     // Directly places the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket at index `j` of the new resized
     // table.
     void place_at_resize(const flat_t& e, const uint8_t c, const uint8_t m, const std::size_t i, const std::size_t j)
-    { T_new[i * B + j] = e, M_new[i].cs[j] = c, M_new[i].min_coord[j] = m; }
+    { T_new[i * B + j] = e, M_new[i].cs[j] = c, M_new[i].min_coord[j] = (mt_ && j == 0) ? uint8_t(m | Metadata::lock_mask) : m; }
 
     // Tries to insert the element `e` with checksum `c` and minimizer-
     // coordinate `m` into the `i`'th bucket. It succeeds iff the key was absent
@@ -564,12 +564,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b
         if constexpr(!resize_)
         {
             assert(M[b].min_coord[0] & Metadata::lock_mask);
-            M[b].min_coord[0] &= ~Metadata::lock_mask;
+            __atomic_store_n(&M[b].min_coord[0], uint8_t(M[b].min_coord[0] & ~Metadata::lock_mask), __ATOMIC_RELEASE);
         }
         else
         {
             assert(M_new[b].min_coord[0] & Metadata::lock_mask);
-            M_new[b].min_coord[0] &= ~Metadata::lock_mask;
+            __atomic_store_n(&M_new[b].min_coord[0], uint8_t(M_new[b].min_coord[0] & ~Metadata::lock_mask), __ATOMIC_RELEASE);
         }
     }
 }

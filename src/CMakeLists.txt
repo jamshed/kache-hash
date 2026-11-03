@@ -29,6 +29,9 @@ add_executable(key_distribution experiments/key-distribution.cpp)
 add_executable(minimizer_effect experiments/minimizer-effect.cpp)
 add_executable(lf_v_key_dist experiments/lf-vs-key-dist.cpp)
 
+# Test executables.
+add_executable(concurrent_insert_test tests/concurrent-insert.cpp)
+
 
 # Dependencies
 
@@ -46,6 +49,7 @@ target_include_directories(query PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(key_distribution PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(minimizer_effect PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 target_include_directories(lf_v_key_dist PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(concurrent_insert_test PRIVATE ${INCLUDE_DIR})
 
 target_compile_options(example PRIVATE ${COMPILE_FLAGS})
 target_compile_options(iceberg_ht PRIVATE ${COMPILE_FLAGS})
@@ -58,6 +62,7 @@ target_compile_options(query PRIVATE ${COMPILE_FLAGS})
 target_compile_options(key_distribution PRIVATE ${COMPILE_FLAGS})
 target_compile_options(minimizer_effect PRIVATE ${COMPILE_FLAGS})
 target_compile_options(lf_v_key_dist PRIVATE ${COMPILE_FLAGS})
+target_compile_options(concurrent_insert_test PRIVATE ${COMPILE_FLAGS})
 
 target_link_libraries(example PRIVATE ${LINK_FLAGS})
 target_link_libraries(iceberg_ht PRIVATE ${LINK_FLAGS})
@@ -87,6 +92,7 @@ target_link_libraries(query PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads
 target_link_libraries(key_distribution PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(minimizer_effect PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
 target_link_libraries(lf_v_key_dist PRIVATE jemalloc ${CMAKE_DL_LIBS} ZLIB::ZLIB Threads::Threads iceberg_ht)
+target_link_libraries(concurrent_insert_test PRIVATE ${LINK_FLAGS} ZLIB::ZLIB Threads::Threads)
 
 
 # Installation path.
