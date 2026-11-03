@@ -623,6 +623,11 @@ public:
     // Resizes use `resize_worker_c` threads.
     Streaming_Kmer_Hash_Table(std::size_t max_sz = 1 << 22, uint64_t resize_worker_c = 16, double lf = lf_default_, bool pow2_cap = false);
 
+    // Returns whether a table constructed for `max_sz` k-mers at load factor
+    // `lf`, rounded up to a power of 2 iff `pow2_cap`, is within the most
+    // buckets supported.
+    static bool fits(std::size_t max_sz, double lf, bool pow2_cap);
+
     Streaming_Kmer_Hash_Table(const Streaming_Kmer_Hash_Table&) = delete;
     Streaming_Kmer_Hash_Table(Streaming_Kmer_Hash_Table&&) = delete;
     Streaming_Kmer_Hash_Table& operator=(const Streaming_Kmer_Hash_Table&) = delete;
@@ -788,6 +793,14 @@ inline Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Streaming_Kmer_Hash_Table(const
     // Map the table up front, in parallel, rather than on first touches by the updates. The metadata comes zeroed:
     // checksum `0` denotes absence of a key.
     T.allocate(cap_, resize_worker_c);
+}
+
+
+template <uint16_t k, bool mt_, typename T_, uint16_t l>
+inline bool Streaming_Kmer_Hash_Table<k, mt_, T_, l>::fits(const std::size_t max_sz, const double lf, const bool pow2_cap)
+{
+    // NB: The first test keeps the bucket count in range of `cap_for`'s conversion.
+    return max_sz / lf / B <= max_cap && cap_for(max_sz, lf, pow2_cap) <= max_cap;
 }
 
 

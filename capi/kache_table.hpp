@@ -70,6 +70,10 @@ kache_table* new_map_16(const kache_options& o);
 kache_table* new_map_32(const kache_options& o);
 kache_table* new_map_64(const kache_options& o);
 
+// Returns whether a table with the options `o` is within the most buckets
+// supported: the same for every type of values.
+bool size_fits(const kache_options& o);
+
 }
 
 }

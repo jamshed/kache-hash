@@ -2,7 +2,6 @@
 #include "kache_capi.h"
 #include "kache_table.hpp"
 
-#include <cmath>
 #include <exception>
 #include <mutex>
 #include <new>
@@ -74,7 +73,7 @@ int kache_supports(const uint32_t k, const uint32_t value_bytes) noexcept
 
 kache_options kache_default_options(const uint32_t k, const uint32_t value_bytes) noexcept
 {
-    return kache_options{k, value_bytes, uint64_t(1) << 22, 0.8, 16};
+    return kache_options{k, value_bytes, uint64_t(1) << 22, 0.8, 16, 0};
 }
 
 
@@ -89,7 +88,7 @@ int kache_new(const kache_options* const options, kache_table** const out) noexc
 
     const auto& o = *options;
     if(!kache_supports(o.k, o.value_bytes) || !(o.load_factor > 0 && o.load_factor < 1) || o.resize_workers < 1 ||
-       o.expected_keys / o.load_factor > std::ldexp(1.0, 40))
+       o.pow2_capacity > 1 || !kache_hash::capi::size_fits(o))
         return KACHE_EINVAL;
 
     return guard([&]()
