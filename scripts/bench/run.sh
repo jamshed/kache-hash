@@ -3,7 +3,8 @@
 # Runs the benchmark drivers built in a directory over workloads, a process per run, and writes each run's output to
 # `<out-dir>/<workload>/<table>.<set|map|na>.<mt|seq|na>.<sizing>.T<threads>.r<rep>.tsv`. Runs with an output are
 # skipped, so a rerun continues where an earlier one stopped. The environment sets the matrix:
-#   TABLES:  the tables to run, of those built (default: kache-hash boost libcuckoo iceberg jellyfish cbl sshash); a
+#   TABLES:  the tables to run, of those built (default: kache-hash kache-hash-exact boost libcuckoo iceberg jellyfish
+#            cbl sshash), where `kache-hash-exact` is kache-hash sized exactly, not rounded up to powers of 2; a
 #            build with `LSWEEP` adds `kache-hash-l<l>`, kache-hash at minimizer size l, for l in 15–31;
 #   TOOLS:   if set, the only tables of TABLES to run, to select tables across a plan's matrices;
 #   KINDS:   `set` and `map` (default: both);
@@ -48,7 +49,7 @@ fi
 
 shift 3
 
-TABLES="${TABLES:-kache-hash boost libcuckoo iceberg jellyfish cbl sshash}"
+TABLES="${TABLES:-kache-hash kache-hash-exact boost libcuckoo iceberg jellyfish cbl sshash}"
 KINDS="${KINDS:-set map}"
 VARIANTS="${VARIANTS:-mt seq}"
 SIZINGS="${SIZINGS:-presized half}"
