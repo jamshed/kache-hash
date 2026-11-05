@@ -32,9 +32,17 @@
 *.app
 
 # Build and binaries
-build/
+build*/
 bin/
 external/
+target/
 
 # clangd
 .cache/
+
+# agent, editor state, and local content
+local/
+settings.json
+
+# datasets
+data/

@@ -6,6 +6,8 @@
 
 #include <atomic>
 
+#include <immintrin.h>
+
 
 // A lightweight lock-free mutex class.
 // It is based on `std::atomic_flag`, which is guaranteed to be a lock-free atomic construct .
@@ -33,8 +35,11 @@ inline void Spin_Lock::lock()
     // reordered before this load of the variable `lock_` (enforced by the compiler and the processor) —
     // ensuring that memory-access instructions after a `lock` invokation stays after it.
 
+    // A waiter spins on loads, pausing, and retries the store only once the lock looks free: spinning stores would
+    // take the line from the holder.
     while(lock_.test_and_set(std::memory_order_acquire))
-        ;// while(lock_.test(std::memory_order_relaxed));   // C++20 optimization to avoid the redundant stores from the spinning `test_and_set`.
+        while(lock_.test(std::memory_order_relaxed))
+            _mm_pause();
 }
 
 
@@ -43,7 +48,7 @@ inline void Spin_Lock::unlock()
     // Due to the memory access order `memory_order_release`, no reads or writes in the current thread can be
     // reordered after this store of the variable `lock_` (enforced by the compiler and the processor) —
     // ensuring that memory-access instructions before an `unlock` invokation stays before it.
-    
+
     lock_.clear(std::memory_order_release);
 }
 

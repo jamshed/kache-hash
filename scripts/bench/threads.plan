@@ -1,0 +1,8 @@
+# Query throughput against the thread count: kache-hash's and Boost's sets, presized, each built once with every core of
+# the node and then also queried with fewer threads (`QUERY_THREADS`). The threads run unpinned over all sockets, with
+# memory interleaved over them. A `run.sh` matrix per line: its variables, then its workloads; `EXPERIMENTS` selects the
+# line for the node's core count.
+EXPERIMENT=threads-56 LAUNCH="numactl --interleave=all" TABLES="kache-hash boost" KINDS=set SIZINGS=presized \
+    THREADS=56 QUERY_THREADS="16 28 42" grch38 srr5833294
+EXPERIMENT=threads-128 LAUNCH="numactl --interleave=all" TABLES="kache-hash boost" KINDS=set SIZINGS=presized \
+    THREADS=128 QUERY_THREADS="16 32 64 96" grch38 srr5833294

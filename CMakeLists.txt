@@ -5,9 +5,13 @@ cmake_minimum_required(VERSION 3.14)
 # Project name, its version, and languages used.
 set(PROJECT_NAME kache-hash)
 project(${PROJECT_NAME}
-            VERSION 0.1.0
+            VERSION 0.7.0
             LANGUAGES CXX C
         )
+
+# Whether this is the top-level project, and not a subproject of one that links the `kache_hash` target, e.g. through
+# `FetchContent`: only top-level builds set the build type, export compile commands, and build the benchmarks.
+string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}" KACHE_HASH_TOP_LEVEL)
 
 # Language standards.
 set(CMAKE_CXX_STANDARD 20)
@@ -81,8 +85,30 @@ set(UBSAN_FLAGS -fsanitize=undefined
                 -fsanitize=implicit-conversion -fsanitize=local-bounds -fsanitize=nullability)
 # set(UBSAN_LINK_FLAGS -fuse-ld=lld)
 
-# Optimization flags: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html.
-set(OPTIMIZE_FLAGS -funroll-loops -march=native)
+# Optimization flags: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html. An x86-64 build on Apple silicon, to run
+# under Rosetta, can't target the native CPU, and targets Haswell's AVX2 instead.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(OPTIMIZE_FLAGS -funroll-loops -march=haswell)
+else()
+    set(OPTIMIZE_FLAGS -funroll-loops -march=native)
+endif()
+
+# Keep branches from crossing or ending on 32-byte boundaries: Skylake-derived cores (such as Cascade Lake) can't serve
+# those from the decoded-uop cache under their JCC-erratum microcode. Other cores pay only for the padding. On Cascade
+# Lake it gains 1-4% in builds and up to 9% in negative queries.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(JCC_PAD_FLAG -mbranches-within-32B-boundaries)
+    else()
+        set(JCC_PAD_FLAG -Wa,-mbranches-within-32B-boundaries)
+    endif()
+
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(${JCC_PAD_FLAG} HAS_JCC_PAD)
+    if(HAS_JCC_PAD)
+        list(APPEND OPTIMIZE_FLAGS ${JCC_PAD_FLAG})
+    endif()
+endif()
 
 
 # Compile- and link-flags.
@@ -105,40 +131,69 @@ if(UBSAN)
     list(APPEND LINK_FLAGS ${UBSAN_LINK_FLAGS} ${UBSAN_FLAGS})
 endif()
 
-if(QUIET)
-    add_compile_definitions(QUIET)
-endif()
-
 if(AVX_512)
     add_compile_definitions(AVX_512)
 endif()
 
 
-if(MIN_SIZE_EXP)
-    add_compile_definitions(MIN_SIZE_EXP=${MIN_SIZE_EXP})
-endif()
-
 # Required preprocessor definitions.
-set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY)
+set(XXHASH_DEFS XXH_INLINE_ALL XXH_STATIC_LINKING_ONLY XXH_FORCE_MEMORY_ACCESS=0)   # `memcpy` reads: xxHash's default for GCC breaks strict aliasing.
 add_compile_definitions(${XXHASH_DEFS})
 add_compile_definitions(DEVELOP)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
+if(KACHE_HASH_TOP_LEVEL)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # Better `clangd` scan.
+endif()
 
 execute_process(
     COMMAND getconf LEVEL1_DCACHE_LINESIZE
     COMMAND tr -d '\n'
     OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+    ERROR_QUIET
 )
+
+if(NOT L1_CACHE_LINE_SIZE MATCHES "^[1-9][0-9]*$")  # E.g. on macOS, whose `getconf` lacks the parameter.
+    message("Cache-line size unknown; assuming 64 bytes.")
+    set(L1_CACHE_LINE_SIZE 64)
+endif()
 
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
 # Required packages / libraries from the system.
+find_package(Threads REQUIRED)
+
+
+# The table as a header-only library, for other projects to link. It carries what its headers need: C++20, threads, the
+# include path, and the xxHash and cache-line definitions. Optimization and ISA flags (AVX2 at least) are the linking
+# project's own.
+add_library(kache_hash INTERFACE)
+add_library(kache_hash::kache_hash ALIAS kache_hash)
+target_include_directories(kache_hash INTERFACE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(kache_hash INTERFACE ${XXHASH_DEFS} L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
+target_compile_features(kache_hash INTERFACE cxx_std_20)
+target_link_libraries(kache_hash INTERFACE Threads::Threads)
+
+# The k-mer counting library, in `counter/`: for the projects that link it, and in top-level builds if `COUNTER` is set.
+if(COUNTER OR NOT KACHE_HASH_TOP_LEVEL)
+    add_subdirectory(counter)
+endif()
+
+# The C interface library, in `capi/`: for the projects that link it, and in top-level builds if `KACHE_HASH_CAPI` is
+# set.
+if(KACHE_HASH_CAPI OR NOT KACHE_HASH_TOP_LEVEL)
+    add_subdirectory(capi)
+endif()
+
+
+# The rest is for the benchmarks, in top-level builds only: in a subproject, it would set the parent's build type, write
+# into the parent's source tree, and fetch the baselines.
+if(NOT KACHE_HASH_TOP_LEVEL)
+    return()
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
-find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-# find_package(PFM REQUIRED)
 
 # Required external projects.
 include(ExternalProject)
@@ -147,34 +202,6 @@ set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
 set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 
 file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
-
-#[[
-set(BENCHMARK_MIN_VERSION "v1.9.4")
-message("Build system will fetch and install Google Benchmark.")
-ExternalProject_Add(prj_benchmark
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/google/benchmark/archive/refs/tags/${BENCHMARK_MIN_VERSION}.tar.gz -o benchmark-${BENCHMARK_MIN_VERSION}.tar.gz &&
-                        tar -xzf benchmark-${BENCHMARK_MIN_VERSION}.tar.gz -C benchmark-${BENCHMARK_MIN_VERSION} --strip-components 1 &&
-                        rm benchmark-${BENCHMARK_MIN_VERSION}.tar.gz
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/benchmark-${BENCHMARK_MIN_VERSION}
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   cmake -E make_directory "build" &&
-                        cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-                        -D BENCHMARK_DOWNLOAD_DEPENDENCIES=on -D CMAKE_BUILD_TYPE=Release -D BENCHMARK_ENABLE_LIBPFM=ON
-                        -S . -B "build"
-    BUILD_COMMAND       cmake --build "build" --config Release
-    INSTALL_COMMAND     cp build/src/libbenchmark.a ${EXT_LIB} &&
-                        cp -rf include/benchmark ${EXT_INCLUDE}
-)
-
-set(BENCHMARK_LIB ${EXT_LIB}/libbenchmark.a)
-
-add_library(benchmark STATIC IMPORTED)
-set_target_properties(benchmark PROPERTIES IMPORTED_LOCATION ${BENCHMARK_LIB})
-add_dependencies(benchmark prj_benchmark)
-#]]
 
 
 set(MALLOC_LIB "")
@@ -208,92 +235,11 @@ if(NOT JEMALLOC_FOUND)
 endif()
 
 
-# Prepare the `boost` library. It provides a scalable concurrent hashmap.
-set(BOOST_MIN_VERSION "1.89.0")
-find_package(Boost ${BOOST_MIN_VERSION} CONFIG)
-if(BOOST_FOUND)
-    message("Found boost (v${BOOST_VERSION}) in the system at ${BOOST_LIBRARIES}")
-else()
-    message("Build system will fetch and install required Boost libraries")
-    ExternalProject_Add(prj_boost
-        DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-        DOWNLOAD_COMMAND    curl -k -L https://github.com/boostorg/boost/releases/download/boost-${BOOST_MIN_VERSION}/boost-${BOOST_MIN_VERSION}-cmake.tar.gz -o boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
-                            tar -xzf boost-${BOOST_MIN_VERSION}-cmake.tar.gz &&
-                            rm boost-${BOOST_MIN_VERSION}-cmake.tar.gz
-
-        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}
-        BUILD_IN_SOURCE     TRUE
-        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-        CONFIGURE_COMMAND   mkdir -p build && cd build &&
-                            cmake -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER} -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-                            -D BOOST_INCLUDE_LIBRARIES=unordered
-                            -D CMAKE_BUILD_TYPE=Release
-                            -D CMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/external/boost-${BOOST_MIN_VERSION}/build/ ..
-        BUILD_COMMAND       cd build && cmake --build . --target install --config Release
-        INSTALL_COMMAND     cp -rf build/include/boost ${EXT_INCLUDE}/
-    )
-endif()
-
-
-# Prepare the `libcuckoo` library.
-set(LIBCUCKOO_MIN_VERSION "0.3.1")
-message("Build system will fetch and install the `libcuckoo` library")
-ExternalProject_Add(prj_libcuckoo
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/efficient/libcuckoo/archive/refs/tags/v${LIBCUCKOO_MIN_VERSION}.tar.gz -o libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
-                        tar -xzf libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz &&
-                        rm libcuckoo-${LIBCUCKOO_MIN_VERSION}.tar.gz
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/libcuckoo-${LIBCUCKOO_MIN_VERSION}
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       ""
-    INSTALL_COMMAND     cp -rf libcuckoo/ ${EXT_INCLUDE}/
-)
-
-
-# Prepare the `parlay` library—a parallel algorithms programming toolkit.
-message("Build system will fetch and install parlaylib")
-ExternalProject_Add(prj_parlaylib
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    git clone https://github.com/cmuparlay/parlaylib.git
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/parlaylib
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       ""
-    INSTALL_COMMAND     cp -rf include/parlay ${EXT_INCLUDE}
-)
-
-
-#[[
-set(NTHASH_LIB "")
-set(NTHASH_MIN_VERSION "v2.3.0")
-message("Build system will fetch and install ntHash for benchmarking.")
-ExternalProject_Add(prj_nthash
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    git clone git@github.com:bcgsc/ntHash.git
-
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/ntHash
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   meson setup --buildtype=release --prefix=${CMAKE_SOURCE_DIR}/external/ build
-    BUILD_COMMAND       meson install -C build
-    INSTALL_COMMAND     ""
-)
-
-set(NTHASH_LIB ${EXT_LIB}/libnthash.a)
-add_library(nthash STATIC IMPORTED)
-set_target_properties(nthash PROPERTIES IMPORTED_LOCATION ${NTHASH_LIB})
-add_dependencies(nthash prj_nthash)
-#]]
-
-
 # Build type.
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build Type" FORCE)
 endif()
 
 
-add_subdirectory(src)
+add_subdirectory(benchmark)
+add_subdirectory(tools)

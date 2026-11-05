@@ -8,6 +8,12 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+
+#ifdef __AVX2__
+#include <bit>
+#include <immintrin.h>
+#endif
 
 
 namespace kache_hash
@@ -145,6 +151,10 @@ public:
         return IS_PLACEHOLDER[uint8_t(base)];
     }
 
+    // Returns the number of leading characters of the `n` characters at `s`
+    // that are not placeholders, i.e. are ACGT in either case.
+    static std::size_t acgt_prefix(const char* s, std::size_t n);
+
     // Returns `true` iff the character `base` is a DNA character.
     static bool is_DNA_base(const char base)
     {
@@ -184,6 +194,35 @@ public:
         return DNA::Base(base);
     }
 };
+
+
+inline std::size_t DNA_Utility::acgt_prefix(const char* const s, const std::size_t n)
+{
+    std::size_t i = 0;
+#ifdef __AVX2__
+    // 32 characters at a time: a character is ACGT iff its lower-case form is one of acgt.
+    const auto lower = _mm256_set1_epi8(0x20);
+    const auto a = _mm256_set1_epi8('a'), c = _mm256_set1_epi8('c'), g = _mm256_set1_epi8('g'), t = _mm256_set1_epi8('t');
+    for(; i + 32 <= n; i += 32)
+    {
+        const auto x = _mm256_or_si256(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(s + i)), lower);
+        const auto is_base = _mm256_or_si256(_mm256_or_si256(_mm256_cmpeq_epi8(x, a), _mm256_cmpeq_epi8(x, c)), _mm256_or_si256(_mm256_cmpeq_epi8(x, g), _mm256_cmpeq_epi8(x, t)));
+        const auto not_base = ~static_cast<uint32_t>(_mm256_movemask_epi8(is_base));
+        if(not_base)
+            return i + std::countr_zero(not_base);
+    }
+#endif
+
+    for(; i < n; ++i)
+    {
+        const auto x = static_cast<char>(s[i] | 0x20);
+        if(x != 'a' && x != 'c' && x != 'g' && x != 't')
+            break;
+    }
+
+    return i;
+}
+
 
 
 }

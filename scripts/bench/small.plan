@@ -1,0 +1,3 @@
+# The small workloads, to check a build end to end: every table at 1 and 16 threads. A `run.sh` matrix per line: its
+# variables, then its workloads.
+EXPERIMENT=small THREADS="1 16" REPS=2 chr21 srr5833294-1m ecoli-32
