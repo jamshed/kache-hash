@@ -157,6 +157,18 @@ scripts/bench/collate.py out
 `collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree; given several output directories, it collates them as campaigns, e.g. new *k*ache-hash runs against an earlier campaign's baselines.
 On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`; `EXPERIMENTS`, `TOOLS`, and `WORKLOADS` select a part of the plan, e.g. `TOOLS=kache-hash` for *k*ache-hash alone.
 
-<!-- ## Citation
+## Citation
 
-If you use this library in academic work, please cite the associated research paper (pending publication). -->
+If you use *k*ache-hash, please cite its paper, which evaluates its v0.7.0 release:
+
+> J. Khan, R. Patro, and P. Pandey. *k*ache-hash: A Dynamic, Concurrent, and Cache-Efficient Hash Table for Streaming *k*-mer Operations. bioRxiv, 2026. [doi:10.64898/2026.02.13.705625](https://doi.org/10.64898/2026.02.13.705625)
+
+```bibtex
+@article{khan2026kachehash,
+  title   = {{\textit{k}ache-hash}: A Dynamic, Concurrent, and Cache-Efficient Hash Table for Streaming \textit{k}-mer Operations},
+  author  = {Khan, Jamshed and Patro, Rob and Pandey, Prashant},
+  journal = {bioRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.02.13.705625}
+}
+```
