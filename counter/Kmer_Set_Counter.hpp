@@ -43,8 +43,9 @@ public:
     static bool supports(uint16_t k);
 
     // Constructs a counter of `k`-mers with room for `n` k-mers at load factor
-    // `lf`, beyond which it grows, with `thread_c` threads in `[1, 128]` for
-    // its operations.
+    // `lf`, beyond which it grows, with its table's bucket count rounded up to
+    // a power of 2, and with `thread_c` threads in `[1, 128]` for its
+    // operations.
     Kmer_Set_Counter(uint16_t k, std::size_t n, std::size_t thread_c, double lf = 0.9);
 
     ~Kmer_Set_Counter();

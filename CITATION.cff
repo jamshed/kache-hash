@@ -8,8 +8,8 @@ authors:
     family-names: Khan
     affiliation: "Khoury College of Computer Sciences, Northeastern University"
     orcid: "https://orcid.org/0000-0002-5129-9749"
-version: 0.7.0
-date-released: 2026-11-03
+version: 0.7.1
+date-released: 2026-11-06
 repository-code: "https://github.com/jamshed/kache-hash"
 license: GPL-3.0-only
 keywords:

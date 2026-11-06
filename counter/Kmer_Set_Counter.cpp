@@ -26,9 +26,12 @@ struct Kmer_Set_Counter::Impl
     std::vector<table_t::Token> token;  // The workers'.
     Timings timings;
 
+    // NB: The table rounds its bucket count up to a power of 2, rather than
+    // sizing it exactly as by default: the headroom takes in a set larger than
+    // `n`, such as PanGenie's from its default estimate, without a resize.
     Impl(const std::size_t n, const std::size_t thread_c, const double lf):
           thread_c(thread_c)
-        , M(n, thread_c, lf)
+        , M(n, thread_c, lf, true)
     {
         for(std::size_t t = 0; t < thread_c; ++t)
             token.push_back(M.register_user());
