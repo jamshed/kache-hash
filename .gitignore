@@ -37,12 +37,16 @@ bin/
 external/
 target/
 
+# datasets
+data/
+
 # clangd
 .cache/
 
-# agent, editor state, and local content
+# agent, editor state
 local/
 settings.json
+.DS_Store
 
-# datasets
-data/
+# local content
+notes/
