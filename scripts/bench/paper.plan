@@ -2,8 +2,8 @@
 # workloads, under the experiment's name. Every run takes a core per thread, spread over the sockets, with its memory
 # interleaved over them. The main runs' thread count is the pilot's pick (prior: 56); counted runs count a
 # hardware-event group per repetition. Each experiment runs into a directory of its own, as `feed.sh` keeps them, since
-# the names of their runs do not tell the experiments apart. kache-hash runs as sized by default, with its bucket
-# counts rounded up to powers of 2, and as `kache-hash-exact`, sized exactly, in the experiments that compare them.
+# the names of their runs do not tell the experiments apart. kache-hash runs with its bucket counts rounded up to
+# powers of 2, and as `kache-hash-exact`, sized exactly, in the experiments that compare them.
 
 # Dataset calibration: each index's distinct k-mers, each query's hits, and SSHash's index, whose k-mers are GGCAT's.
 EXPERIMENT=calibrate PLACEMENT=spread TABLES="kache-hash sshash" KINDS=set SIZINGS=presized THREADS=56 REPS=1 \

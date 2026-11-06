@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use kache-hash, please cite its paper, below."
+title: kache-hash
+abstract: "A dynamic, concurrent, and cache-efficient hash table for streaming k-mer operations."
+type: software
+authors:
+  - given-names: Jamshed
+    family-names: Khan
+    affiliation: "Khoury College of Computer Sciences, Northeastern University"
+    orcid: "https://orcid.org/0000-0002-5129-9749"
+version: 0.7.1
+date-released: 2026-11-06
+repository-code: "https://github.com/jamshed/kache-hash"
+license: GPL-3.0-only
+keywords:
+  - k-mers
+  - hash table
+  - concurrent data structures
+  - genomics
+  - bioinformatics
+preferred-citation:
+  type: article
+  title: "kache-hash: A Dynamic, Concurrent, and Cache-Efficient Hash Table for Streaming k-mer Operations"
+  authors:
+    - given-names: Jamshed
+      family-names: Khan
+      orcid: "https://orcid.org/0000-0002-5129-9749"
+    - given-names: Rob
+      family-names: Patro
+      orcid: "https://orcid.org/0000-0001-8463-1675"
+    - given-names: Prashant
+      family-names: Pandey
+      orcid: "https://orcid.org/0000-0001-5576-0320"
+  journal: bioRxiv
+  year: 2026
+  month: 2
+  doi: "10.64898/2026.02.13.705625"
+  url: "https://doi.org/10.64898/2026.02.13.705625"

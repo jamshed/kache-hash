@@ -74,9 +74,9 @@ strands.find(seqs, lens, n, [&](const std::size_t q, const std::size_t i, const 
 Queries must not overlap updates that can resize the table, and `for_each` must not overlap any updates.
 `update`s, which insert nothing, must not overlap other operations but `update`s.
 
-A table sized for `n` *k*-mers takes the fewest buckets of 32 that hold them at its load factor, 0.8 by default, with that count rounded up to a power of 2, and doubles as more come.
-After `n`, the constructor takes the number of threads for resizes, the load factor, and whether to round the bucket count up to a power of 2, true by default: that lowers the load, which speeds the operations, at up to twice the memory of an exact count.
-A table has at most `2^31` buckets, or `2^32 - 1` when not rounded.
+A table sized for `n` *k*-mers takes the fewest buckets of 32 that hold them at its load factor, 0.8 by default, and doubles as more come.
+After `n`, the constructor takes the number of threads for resizes, the load factor, and whether to round the bucket count up to a power of 2, false by default: that lowers the load, which speeds the operations, at up to twice the memory of an exact count.
+A table has at most `2^32 - 1` buckets, or `2^31` when rounded.
 
 ### Counting k-mers within a set
 
@@ -99,7 +99,7 @@ const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters 
 The library `kache_capi`, in `capi`, puts concurrent sets of 31-mers, and maps from 31-mers to unsigned values of 8, 16, 32 or 64 bits, behind a C interface, for callers in other languages, such as Rust.
 Inserts and updates combine a k-mer's value with an operand: keep, assign, add (saturating), or, min, or max; oriented inserts choose the operand by whether a k-mer occurs as is or as its reverse complement, so that a map of orientation masks gives forward-strand membership.
 Queries count, sum, or look up the k-mers of batches of sequences, reduce the whole table, or iterate over its keys in shares.
-A table's options size it as the C++ constructor does: for `expected_keys` at `load_factor`, rounded up to a power of 2 unless `pow2_capacity` is 0.
+A table's options size it as the C++ constructor does: for `expected_keys` at `load_factor`, exactly, or rounded up to a power of 2 if `pow2_capacity` is 1.
 A project links it as `kache_hash::kache_capi`; CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DKACHE_HASH_CAPI=ON`.
 
 ```c
@@ -141,7 +141,7 @@ counts.count(&reads, &mut present)?;
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.
-A second driver of *k*ache-hash, `bench_kache_hash_exact` (the table `kache-hash-exact` to `run.sh`), sizes its tables exactly, without rounding their bucket counts up to powers of 2.
+*k*ache-hash's driver rounds its tables' bucket counts up to powers of 2, and a second one, `bench_kache_hash_exact` (the table `kache-hash-exact` to `run.sh`), sizes them exactly, as the tables do by default.
 Each builds its table over the *k*-mers of an input and queries it with other inputs, and prints its measurements as TSV.
 CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's maximal unitigs of the input by `scripts/bench/sshash-index.sh`.
 
@@ -157,6 +157,18 @@ scripts/bench/collate.py out
 `collate.py` writes the medians over repetitions to `out/summary.tsv` and the build costs to `out/build-cost.tsv`, and fails if the tables disagree; given several output directories, it collates them as campaigns, e.g. new *k*ache-hash runs against an earlier campaign's baselines.
 On explorer, `sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>` builds them on a whole node and runs a plan of matrices, such as `scripts/bench/small.plan` or `scripts/bench/full.plan`; `EXPERIMENTS`, `TOOLS`, and `WORKLOADS` select a part of the plan, e.g. `TOOLS=kache-hash` for *k*ache-hash alone.
 
-<!-- ## Citation
+## Citation
 
-If you use this library in academic work, please cite the associated research paper (pending publication). -->
+If you use *k*ache-hash, please cite its paper, which evaluates its v0.7.0 release:
+
+> J. Khan, R. Patro, and P. Pandey. *k*ache-hash: A Dynamic, Concurrent, and Cache-Efficient Hash Table for Streaming *k*-mer Operations. bioRxiv, 2026. [doi:10.64898/2026.02.13.705625](https://doi.org/10.64898/2026.02.13.705625)
+
+```bibtex
+@article{khan2026kachehash,
+  title   = {{\textit{k}ache-hash}: A Dynamic, Concurrent, and Cache-Efficient Hash Table for Streaming \textit{k}-mer Operations},
+  author  = {Khan, Jamshed and Patro, Rob and Pandey, Prashant},
+  journal = {bioRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.02.13.705625}
+}
+```
