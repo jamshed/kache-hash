@@ -6,7 +6,7 @@ add_executable(memory_roof memory-roof.cpp)
 
 target_compile_options(memory_roof PRIVATE ${COMPILE_FLAGS})
 
-target_link_libraries(memory_roof PRIVATE ${LINK_FLAGS} Threads::Threads)
+target_link_libraries(memory_roof PRIVATE ${LINK_FLAGS} kache_hash Threads::Threads)    # The cache-line size.
 
 
 # Installation path.

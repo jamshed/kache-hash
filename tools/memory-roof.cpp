@@ -1,4 +1,5 @@
 #include "Perf_Group.hpp"
+#include "kache_hash/config.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -29,7 +30,7 @@
 // given. It prints a line per measurement, a key and its value.
 
 
-constexpr std::size_t line_words = L1_CACHE_LINE_SIZE / sizeof(uint64_t);  // Number of 64-bit words in a cache line.
+constexpr std::size_t line_words = KACHE_HASH_CACHE_LINE_SIZE / sizeof(uint64_t);  // Number of 64-bit words in a line.
 
 
 // Configuration of the roofs' measurement.
@@ -44,7 +45,7 @@ struct Config
 
 
 // A count of one thread, on a cache line of its own.
-struct alignas(L1_CACHE_LINE_SIZE) Count
+struct alignas(KACHE_HASH_CACHE_LINE_SIZE) Count
 {
     std::size_t val = 0;
 };
@@ -102,7 +103,7 @@ void report_phase(const std::string& name, const std::size_t line_c, const doubl
     print(name + ".ops", line_c);
     print(name + ".seconds", t);
     print(name + ".mops", line_c / (t * 1'000'000.0));
-    print(name + ".gb_per_s", line_c * L1_CACHE_LINE_SIZE / (t * 1e9));
+    print(name + ".gb_per_s", line_c * KACHE_HASH_CACHE_LINE_SIZE / (t * 1e9));
 }
 
 
@@ -226,7 +227,7 @@ int main(int argc, char* argv[])
     // The counters only follow the threads spawned after they are opened.
     const auto perf = (cfg.perf ? std::make_unique<Perf_Group>(*cfg.perf) : nullptr);
 
-    const std::size_t line_c = cfg.bytes / L1_CACHE_LINE_SIZE;
+    const std::size_t line_c = cfg.bytes / KACHE_HASH_CACHE_LINE_SIZE;
     const int shift = 64 - __builtin_ctzll(line_c);    // Shift of a random number to a line index.
     const std::size_t thread_c = cfg.thread_c;
     const std::size_t depth = cfg.depth;

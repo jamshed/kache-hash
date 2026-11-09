@@ -35,9 +35,10 @@ cpu=\$(taskset -pc \$\$ | awk -F': ' '{ print \$2 }' | cut -d, -f1 | cut -d- -f1
 EOS
 for v in "$@"; do
     name="${v%%:*}"; rest="${v#*:}"; src="${rest%%:*}"; flags=""; [ "${rest}" != "${src}" ] && flags="$(echo "${rest#*:}" | tr ',' ' ' | tr '@' ',')"
+    # The definitions are older trees': the headers set their own since v0.8.0.
     cat <<EOS
 rsync -a --exclude "build*/" --exclude external/ ~/kh-perf/src/${src}/ src-${name}/
-g++ -std=c++20 -O3 -DNDEBUG -funroll-loops -march=native -Wa,-mbranches-within-32B-boundaries -g -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY -DXXH_FORCE_MEMORY_ACCESS=0 -DDEVELOP -DL1_CACHE_LINE_SIZE=64 ${flags} -I src-${name}/include -I src-${name}/benchmark src-${name}/benchmark/measure.cpp -o ${name}.bin ~/kh-perf/jemalloc/libjemalloc.a -ldl -lz -pthread || echo "BUILD FAILED: ${name}"
+g++ -std=c++20 -O3 -DNDEBUG -funroll-loops -march=native -Wa,-mbranches-within-32B-boundaries -g -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY -DXXH_FORCE_MEMORY_ACCESS=0 -DDEVELOP -DL1_CACHE_LINE_SIZE=64 ${flags} -I src-${name}/include -I src-${name}/support -I src-${name}/benchmark src-${name}/benchmark/measure.cpp -o ${name}.bin ~/kh-perf/jemalloc/libjemalloc.a -ldl -lz -pthread || echo "BUILD FAILED: ${name}"
 EOS
 done
 for v in "$@"; do

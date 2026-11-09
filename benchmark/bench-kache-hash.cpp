@@ -1,6 +1,6 @@
 
 #include "bench.hpp"
-#include "Streaming_Kmer_Hash_Table.hpp"
+#include "kache_hash/Streaming_Kmer_Hash_Table.hpp"
 
 #include <cstdint>
 #include <cstddef>

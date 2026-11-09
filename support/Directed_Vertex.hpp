@@ -4,8 +4,8 @@
 
 
 
-#include "DNA.hpp"
-#include "Kmer.hpp"
+#include "kache_hash/DNA.hpp"
+#include "kache_hash/Kmer.hpp"
 
 #include <cstdint>
 

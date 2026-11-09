@@ -17,8 +17,10 @@ for t in check describers oriented oriented-batch capi; do
     srcs="${b}/src/test/${t%-batch}.cpp" defs=""
     [ ${t} = oriented-batch ] && defs="-DKACHE_HASH_LANES=0"
     [ ${t} = capi ] && srcs+=" ${b}/src/capi/*.cpp"
+    # The definitions are older trees': the headers set their own since v0.8.0.
     g++ -std=c++20 -O2 -march=native -DDEVELOP -DL1_CACHE_LINE_SIZE=64 -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY \
-        -DXXH_FORCE_MEMORY_ACCESS=0 -Wall -Wextra ${defs} "$@" -I ${b}/src/include -I ${b}/src/capi -pthread ${srcs} -o ${b}/${t} -lz \
+        -DXXH_FORCE_MEMORY_ACCESS=0 -Wall -Wextra ${defs} "$@" -I ${b}/src/include -I ${b}/src/support -I ${b}/src/capi \
+        -pthread ${srcs} -o ${b}/${t} -lz \
         || { echo "check [${src} $*]: BUILD FAILED"; exit 1; }
 done
 fail=0; c=0

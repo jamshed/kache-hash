@@ -1,9 +1,10 @@
 
-#ifndef STREAMING_KMER_HASHSET_HPP
-#define STREAMING_KMER_HASHSET_HPP
+#ifndef KACHE_HASH_STREAMING_KMER_HASH_TABLE_HPP
+#define KACHE_HASH_STREAMING_KMER_HASH_TABLE_HPP
 
 
 
+#include "config.hpp"
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Batch.hpp"
@@ -113,14 +114,14 @@ private:
     // supported.
     class Store
     {
-        static constexpr std::size_t line = L1_CACHE_LINE_SIZE;
+        static constexpr std::size_t line = KACHE_HASH_CACHE_LINE_SIZE;
         static constexpr std::size_t key_sz = sizeof(Kmer<k>);  // Bytes of a key.
         static constexpr std::size_t val_sz = (is_map_ ? sizeof(mapped_t) : 0);    // Bytes of a value.
         static constexpr std::size_t slot_sz = key_sz + val_sz; // Bytes of a slot.
         static constexpr bool packed = (sizeof(flat_t) > slot_sz);  // Whether the slots are packed bytewise.
 
         // A bucket: the metadata of its keys, then their slots.
-        struct alignas(L1_CACHE_LINE_SIZE) Bucket
+        struct alignas(KACHE_HASH_CACHE_LINE_SIZE) Bucket
         {
             Metadata md;    // Metadata of the keys.
             std::conditional_t<packed, unsigned char[B * slot_sz], flat_t[B]> slot; // The keys, with their values in a map.
@@ -746,9 +747,18 @@ public:
 };
 
 
+// A concurrent set of `k`-mers, with `l`-minimizers.
+template <uint16_t k, uint16_t l = 22>
+using Kmer_Set = Streaming_Kmer_Hash_Table<k, true, void, l>;
+
+// A concurrent map from `k`-mers to values of type `T_`, with `l`-minimizers.
+template <uint16_t k, typename T_, uint16_t l = 22>
+using Kmer_Map = Streaming_Kmer_Hash_Table<k, true, T_, l>;
+
+
 // Token required to use the hash table.
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
-class alignas(L1_CACHE_LINE_SIZE)
+class alignas(KACHE_HASH_CACHE_LINE_SIZE)
     Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Token
 {
     friend class Streaming_Kmer_Hash_Table;
@@ -1598,7 +1608,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::resize()
             {
                 const auto& meta = md(bucket_of(h));
                 __builtin_prefetch(meta.cs, 1, 3);
-                if constexpr(sizeof(Metadata) > L1_CACHE_LINE_SIZE)
+                if constexpr(sizeof(Metadata) > KACHE_HASH_CACHE_LINE_SIZE)
                     __builtin_prefetch(meta.flags, 1, 3);
 
                 if(pipe_c >= stage_d)
@@ -2121,7 +2131,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::prefetch_meta(const Kmer_D
 {
     const auto& meta = md(write_ ? bucket_of(d.h) : bucket_of(d));
     __builtin_prefetch(meta.cs, write_, 3);
-    if constexpr(write_ && sizeof(Metadata) > L1_CACHE_LINE_SIZE)  // Updates lock through the flags too.
+    if constexpr(write_ && sizeof(Metadata) > KACHE_HASH_CACHE_LINE_SIZE)  // Updates lock through the flags too.
         __builtin_prefetch(meta.flags, write_, 3);
 }
 

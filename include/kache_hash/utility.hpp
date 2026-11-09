@@ -1,8 +1,10 @@
 
-#ifndef UTILITY_HPP
-#define UTILITY_HPP
+#ifndef KACHE_HASH_UTILITY_HPP
+#define KACHE_HASH_UTILITY_HPP
 
 
+
+#include "config.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -190,7 +192,7 @@ constexpr static auto duration = [](const std::chrono::nanoseconds& d) { return 
 // Wrapper class for a data element of type `T_` to ensure that in a linear
 // collection of `T_`'s, each element is aligned to a cache-line boundary.
 template <typename T_>
-class alignas(L1_CACHE_LINE_SIZE)
+class alignas(KACHE_HASH_CACHE_LINE_SIZE)
     Padded
 {
 private:

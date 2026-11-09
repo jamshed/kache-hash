@@ -6,11 +6,11 @@
 // of every size up to a bucket's.
 // Usage: describers <path>...
 
-#include "Kmer_Batch.hpp"
-#include "Kmer_Lanes.hpp"
-#include "Kmer.hpp"
+#include "kache_hash/Kmer_Batch.hpp"
+#include "kache_hash/Kmer_Lanes.hpp"
+#include "kache_hash/Kmer.hpp"
 #include "Parser.hpp"
-#include "DNA_Utility.hpp"
+#include "kache_hash/DNA_Utility.hpp"
 
 #include <cstdint>
 #include <cstdio>

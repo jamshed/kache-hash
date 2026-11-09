@@ -9,9 +9,9 @@
 //   multi:  multi-sequence operations over batches of 13 raw pieces, of ragged lengths.
 //   pow2:   the table's bucket count rounded up to a power of 2.
 
-#include "Streaming_Kmer_Hash_Table.hpp"
+#include "kache_hash/Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
-#include "utility.hpp"
+#include "kache_hash/utility.hpp"
 
 #include <algorithm>
 #include <cstdint>

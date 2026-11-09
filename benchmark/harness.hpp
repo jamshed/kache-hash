@@ -6,8 +6,8 @@
 
 #include "Perf_Group.hpp"
 #include "Parser.hpp"
-#include "DNA_Utility.hpp"
-#include "utility.hpp"
+#include "kache_hash/DNA_Utility.hpp"
+#include "kache_hash/utility.hpp"
 
 #include <cstdint>
 #include <cstddef>

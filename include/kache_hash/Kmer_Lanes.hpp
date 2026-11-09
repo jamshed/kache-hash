@@ -4,6 +4,7 @@
 
 
 
+#include "config.hpp"
 #include "Kmer_Batch.hpp"
 
 #include <cstdint>

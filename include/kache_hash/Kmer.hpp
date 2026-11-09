@@ -7,7 +7,7 @@
 #include "DNA.hpp"
 #include "DNA_Utility.hpp"
 #include "Kmer_Utility.hpp"
-#include "xxHash/xxhash.h"
+#include "xxHash.hpp"
 
 #include <cstdint>
 #include <cstddef>

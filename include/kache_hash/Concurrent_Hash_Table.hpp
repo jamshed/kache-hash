@@ -6,7 +6,7 @@
 
 #include "Spin_Lock.hpp"
 #include "utility.hpp"
-#include "xxHash/xxhash.h"
+#include "xxHash.hpp"
 
 #include <cstddef>
 #include <cstring>

@@ -6,7 +6,7 @@
 // their buckets into the overflow table; the queries add the negatives, and empty, short and all-N sequences.
 // Usage: oriented <index> <negative> <threads>
 
-#include "Streaming_Kmer_Hash_Table.hpp"
+#include "kache_hash/Streaming_Kmer_Hash_Table.hpp"
 #include "Parser.hpp"
 
 #include <algorithm>

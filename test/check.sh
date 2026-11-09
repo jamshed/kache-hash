@@ -17,9 +17,8 @@ for t in check describers counter oriented oriented-lanes capi; do
     [ ${t} = counter ] && srcs+=" ${root}/counter/Fastx_Reader.cpp ${root}/counter/Kmer_Set_Counter.cpp"
     [ ${t} = oriented-lanes ] && defs="-DKACHE_HASH_LANES=1"
     [ ${t} = capi ] && srcs+=" ${root}/capi/*.cpp"
-    clang++ -arch x86_64 -std=c++20 -O2 -march=haswell -DDEVELOP -DL1_CACHE_LINE_SIZE=64 -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY \
-        -DXXH_FORCE_MEMORY_ACCESS=0 -Wall -Wextra -Wno-unknown-attributes -I "${root}/include" -I "${root}/counter" -I "${root}/capi" \
-        -pthread ${defs} "$@" ${srcs} -o "${out}/${t}" -lz || exit 1
+    clang++ -arch x86_64 -std=c++20 -O2 -march=haswell -Wall -Wextra -Wno-unknown-attributes -I "${root}/include" \
+        -I "${root}/support" -I "${root}/counter" -I "${root}/capi" -pthread ${defs} "$@" ${srcs} -o "${out}/${t}" -lz || exit 1
 done
 clang -arch x86_64 -std=c11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -x c "${root}/capi/kache_capi.h" || exit 1
 T=$(sysctl -n hw.ncpu)

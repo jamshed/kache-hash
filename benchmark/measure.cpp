@@ -1,7 +1,7 @@
 
 #include "harness.hpp"
-#include "Streaming_Kmer_Hash_Table.hpp"
-#include "utility.hpp"
+#include "kache_hash/Streaming_Kmer_Hash_Table.hpp"
+#include "kache_hash/utility.hpp"
 
 #include <cstdint>
 #include <cstddef>

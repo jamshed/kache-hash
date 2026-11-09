@@ -6,7 +6,7 @@
 
 #include "harness.hpp"
 #include "Directed_Vertex.hpp"
-#include "utility.hpp"
+#include "kache_hash/utility.hpp"
 
 #include <cstddef>
 #include <string>

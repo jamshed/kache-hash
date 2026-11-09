@@ -22,8 +22,9 @@ It:
 
 ## Usage
 
-To use *k*ache-hash, copy over the content from its `include` directory to your project, and include the header file `Streaming_Kmer_Hash_Table.hpp` in your code.
-Or, with CMake, link its header-only target `kache_hash::kache_hash`, e.g. after `FetchContent_MakeAvailable(kache_hash)`: it carries the include path, the definitions, and C++20, while the optimization and ISA flags (AVX2 at least) stay your project's own.
+To use *k*ache-hash, copy its `include/kache_hash` directory into a directory on your project's include path, and include `<kache_hash/Streaming_Kmer_Hash_Table.hpp>`, or `<kache_hash/kache_hash.hpp>` for the whole library.
+The headers need only C++20 and AVX2, e.g. `-std=c++20 -mavx2`, and no definitions; they assume 64-byte cache lines, which `KACHE_HASH_CACHE_LINE_SIZE` changes.
+Or, with CMake, link its header-only target `kache_hash::kache_hash`, e.g. after `FetchContent_MakeAvailable(kache_hash)`: it carries the include path and C++20, while the optimization and ISA flags (AVX2 at least) stay your project's own.
 
 The hash table class has the following template signature:
 
@@ -38,11 +39,13 @@ class Streaming_Kmer_Hash_Table
 - The `T` parameter defines the type of the associated value, if a *hash map* is used; it is set to `void` otherwise, i.e. a *hash set* is used.
 - The `l` parameter defines the minimizer size used in internal hash table operations, with `16 ≤ l < k`.
 
+`Kmer_Set<k>` and `Kmer_Map<k, T>` name its concurrent sets and maps, with `l = 22` unless a last parameter gives it.
+
 The table operates on whole sequences: an operation goes through all the *k*-mers of a sequence, or of a batch of sequences such as reads, and characters other than `ACGT` (in either case) split the sequences.
 Each user thread registers once for a token, which its updates take:
 
 ```cpp
-#include "Streaming_Kmer_Hash_Table.hpp"
+#include <kache_hash/Streaming_Kmer_Hash_Table.hpp>
 
 using namespace kache_hash;
 
@@ -177,4 +180,4 @@ If you use *k*ache-hash, please cite its paper, which evaluates its v0.7.0 relea
 
 *k*ache-hash is distributed under the [BSD 3-Clause License](LICENSE).
 Its releases up to v0.7.1 are under the GNU General Public License v3.0.
-The files it includes from other projects keep their licenses: [xxHash](include/xxHash/LICENSE) is under the BSD 2-Clause License, [kseq](include/kseq/kseq.h) under the MIT License, and the benchmarks' [`FindJemalloc.cmake`](cmake/Modules/FindJemalloc.cmake) under the Boost Software License 1.0.
+The files it includes from other projects keep their licenses: [xxHash](include/kache_hash/xxHash/LICENSE) is under the BSD 2-Clause License, [kseq](support/kseq/kseq.h) under the MIT License, and the benchmarks' [`FindJemalloc.cmake`](cmake/Modules/FindJemalloc.cmake) under the Boost Software License 1.0.

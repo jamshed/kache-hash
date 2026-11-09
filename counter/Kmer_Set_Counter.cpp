@@ -1,8 +1,8 @@
 
 #include "Kmer_Set_Counter.hpp"
 #include "Fastx_Reader.hpp"
-#include "Streaming_Kmer_Hash_Table.hpp"
-#include "utility.hpp"
+#include "kache_hash/Streaming_Kmer_Hash_Table.hpp"
+#include "kache_hash/utility.hpp"
 
 #include <stdexcept>
 #include <thread>

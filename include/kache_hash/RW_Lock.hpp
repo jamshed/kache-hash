@@ -4,6 +4,7 @@
 
 
 
+#include "config.hpp"
 #include "utility.hpp"
 
 #include <cstddef>
@@ -24,8 +25,8 @@ class RW_Lock
 private:
 
     Padded<std::atomic_bool> reader[N]; // `reader[w]` denotes whether the `w`'th worker is making a read-access or not.
-    alignas(2 * L1_CACHE_LINE_SIZE) std::atomic_flag writer;    // Whether a write access in ongoing or not. Kept off the
-                                                                // readers' 128-byte blocks.
+    alignas(2 * KACHE_HASH_CACHE_LINE_SIZE) std::atomic_flag writer;    // Whether a write access in ongoing or not.
+                                                                        // Kept off the readers' 128-byte blocks.
 
 public:
 

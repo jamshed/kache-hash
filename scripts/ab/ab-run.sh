@@ -31,9 +31,10 @@ b=/tmp/kh-${SLURM_JOB_ID:-$$}; mkdir -p ${b}
 while read -r name src flags; do
     [ -z "${name}" ] && continue
     rsync -a --exclude "build*/" --exclude external/ ~/kh-perf/src/${src}/ ${b}/${name}/
+    # The definitions are older trees': the headers set their own since v0.8.0.
     ( g++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -funroll-loops -march=native -Wa,-mbranches-within-32B-boundaries \
         -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY -DXXH_FORCE_MEMORY_ACCESS=0 -DDEVELOP -DL1_CACHE_LINE_SIZE=64 \
-        ${flags} -I ${b}/${name}/include -I ${b}/${name}/benchmark -I ${b}/${name}/tools ${b}/${name}/benchmark/${DRIVER}.cpp -o ${b}/${name}.bin \
+        ${flags} -I ${b}/${name}/include -I ${b}/${name}/support -I ${b}/${name}/benchmark -I ${b}/${name}/tools ${b}/${name}/benchmark/${DRIVER}.cpp -o ${b}/${name}.bin \
         ~/kh-perf/jemalloc/libjemalloc.a -ldl -lz -pthread > ${b}/${name}.build.log 2>&1 \
         || { echo "BUILD FAILED: ${name}"; tail -30 ${b}/${name}.build.log; } ) &
 done < "${jd}/variants"

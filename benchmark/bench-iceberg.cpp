@@ -1,6 +1,6 @@
 
 #include "bench.hpp"
-#include "Kmer.hpp"
+#include "kache_hash/Kmer.hpp"
 
 #include <cstdint>
 #include <cstddef>
