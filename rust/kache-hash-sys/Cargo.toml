@@ -3,7 +3,7 @@ name = "kache-hash-sys"
 version = "0.7.1"
 edition = "2021"
 description = "Rust bindings to kache-hash's C interface: concurrent sets of k-mers, and maps from k-mers to values"
-license = "GPL-3.0-only"
+license = "BSD-3-Clause"
 links = "kache_capi"
 build = "build.rs"
 

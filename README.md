@@ -172,3 +172,9 @@ If you use *k*ache-hash, please cite its paper, which evaluates its v0.7.0 relea
   doi     = {10.64898/2026.02.13.705625}
 }
 ```
+
+## License
+
+*k*ache-hash is distributed under the [BSD 3-Clause License](LICENSE).
+Its releases up to v0.7.1 are under the GNU General Public License v3.0.
+The files it includes from other projects keep their licenses: [xxHash](include/xxHash/LICENSE) is under the BSD 2-Clause License, [kseq](include/kseq/kseq.h) under the MIT License, and the benchmarks' [`FindJemalloc.cmake`](cmake/Modules/FindJemalloc.cmake) under the Boost Software License 1.0.
