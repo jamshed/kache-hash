@@ -12,6 +12,7 @@
 # alone. The feeding is logged to `<out-root>/feed-<node>.log`, and the experiments done listed in
 # `<out-root>/feed-<node>.done`, which a rerun skips. Run it on a login node, e.g. under `nohup`, one per node, each
 # with an out-root of its own.
+# The partitions are explorer's, `sharing` and `reservation`: on another cluster, `where` below takes its own.
 # Usage, from the repository's root: scripts/bench/feed.sh <node> <data-dir> <out-root> <plan> <experiment>...
 
 node="${1}"

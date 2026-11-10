@@ -22,6 +22,10 @@
 # `<out-dir>/node-<job-id>`, e.g. its turbo state, memory, free blocks, busiest processes over 5 seconds, and the
 # data's files; and stops, with status 4, if another user's process takes over `STRAY_CPU` percent of a CPU
 # (default: 20). Each run records the code's version (see `run.sh`), so the copy submitted from must keep its `.git`.
+# The `#SBATCH` lines, the environment set below (the cmake module, and a libclang for CBL's bindings) and
+# `CPU_MODEL`'s default are explorer's, as the paper's runs took them. On another cluster, `sbatch`'s options override
+# the `#SBATCH` lines, e.g. `--partition`, `--constraint` and `--exclude`, and the environment takes its modules and
+# paths.
 # Usage, from the repository's root: sbatch scripts/bench/explorer.sbatch <data-dir> <out-dir> <plan>
 
 data_dir="${1}"
@@ -61,6 +65,7 @@ node_state()
 }
 
 
+# explorer's environment: another cluster's modules and paths go here.
 module load cmake/3.30.2
 export LIBCLANG_PATH=/shared/EL9/explorer/anaconda3/2024.06/lib # CBL's bindings need a libclang; the system has none.
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include)"  # That one lacks its builtin headers.

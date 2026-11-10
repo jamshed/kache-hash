@@ -34,3 +34,4 @@ Notable changes to *k*ache-hash, by release.
 ### Removed
 
 - The CMake options `AVX_512`, which did nothing, and `CLANG`, which couldn't switch compilers: set `CMAKE_CXX_COMPILER`.
+- `scripts/ab/` and `test/check-run.sh`, the A/B and check tooling of the cluster that the paper's runs used.
