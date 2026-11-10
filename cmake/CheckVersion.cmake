@@ -1,5 +1,5 @@
-# Checks that the version of the headers (`include/kache_hash/version.hpp`), which the CMake project takes, is the
-# crate's (`rust/kache-hash-sys/Cargo.toml`) and the citation's (`CITATION.cff`): a release bumps them together.
+# Checks that the version of the headers (`include/kache_hash/version.hpp`), which the CMake project takes, is the Rust
+# crates' and their dependency's (`rust/Cargo.toml`) and the citation's (`CITATION.cff`): a release bumps them together.
 # Usage: cmake -DROOT=<source-dir> -P cmake/CheckVersion.cmake
 
 file(STRINGS "${ROOT}/include/kache_hash/version.hpp" defs REGEX "^#define KACHE_HASH_VERSION_(MAJOR|MINOR|PATCH) [0-9]+$")
@@ -12,13 +12,16 @@ foreach(part MAJOR MINOR PATCH)
 endforeach()
 list(JOIN headers "." headers)
 
-file(STRINGS "${ROOT}/rust/kache-hash-sys/Cargo.toml" crate REGEX "^version = \"[^\"]+\"$" LIMIT_COUNT 1)
+file(STRINGS "${ROOT}/rust/Cargo.toml" crate REGEX "^version = \"[^\"]+\"$" LIMIT_COUNT 1)
 string(REGEX REPLACE "^version = \"([^\"]+)\"$" "\\1" crate "${crate}")
+file(STRINGS "${ROOT}/rust/Cargo.toml" dependency REGEX "^kache-hash-sys = { version = \"[^\"]+\"" LIMIT_COUNT 1)
+string(REGEX REPLACE "^kache-hash-sys = { version = \"([^\"]+)\".*$" "\\1" dependency "${dependency}")
 
 file(STRINGS "${ROOT}/CITATION.cff" citation REGEX "^version: .+$" LIMIT_COUNT 1)
 string(REGEX REPLACE "^version: (.+)$" "\\1" citation "${citation}")
 
-if(NOT crate STREQUAL headers OR NOT citation STREQUAL headers)
-    message(FATAL_ERROR "The versions disagree: the headers' ${headers}, the crate's ${crate}, and CITATION.cff's ${citation}.")
+if(NOT crate STREQUAL headers OR NOT dependency STREQUAL headers OR NOT citation STREQUAL headers)
+    message(FATAL_ERROR "The versions disagree: the headers' ${headers}, the crates' ${crate}, their dependency's "
+                        "${dependency}, and CITATION.cff's ${citation}.")
 endif()
-message(STATUS "The headers, the crate and CITATION.cff are all at ${headers}.")
+message(STATUS "The headers, the crates, their dependency and CITATION.cff are all at ${headers}.")

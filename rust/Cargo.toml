@@ -1,0 +1,17 @@
+# kache-hash's Rust crates: `kache-hash-sys`, the raw bindings to its C interface and the interface's build, and
+# `kache-hash`, their safe interface. A release bumps the version here, the crates' and their dependency's, with the
+# headers' and CITATION.cff's.
+
+[workspace]
+members = ["kache-hash-sys", "kache-hash"]
+resolver = "3"
+
+[workspace.package]
+version = "0.7.1"
+edition = "2021"
+rust-version = "1.85"
+license = "BSD-3-Clause"
+repository = "https://github.com/jamshed/kache-hash"
+
+[workspace.dependencies]
+kache-hash-sys = { version = "0.7.1", path = "kache-hash-sys" }

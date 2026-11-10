@@ -1,6 +1,6 @@
 # Continuous integration: the quick tests with each supported compiler, on Linux, in Release and Debug, for the x86-64-v3
 # level and for the runner's CPU; on an Intel Mac; under ASan and UBSan; and for AVX-512, under Intel's SDE. Then the
-# consumers of installs and sources, and the Rust crate. ThreadSanitizer joins once the buckets' locks and the table's
+# consumers of installs and sources, and the Rust crates. ThreadSanitizer joins once the buckets' locks and the table's
 # other publications use release and acquire atomics throughout, which it needs to follow them.
 
 name: CI
@@ -132,16 +132,41 @@ jobs:
         run: ctest --test-dir build -L consumer
 
   rust:
-    name: Rust crate
+    name: Rust crates
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: rust/kache-hash-sys
+        working-directory: rust
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust's stable toolchain, with clippy
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
       - name: Test
-        run: cargo test
+        run: cargo test --workspace --locked
+      - name: Test, for the runner's CPU
+        run: cargo test --workspace --locked
+        env:
+          RUSTFLAGS: -C target-cpu=native
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Document
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # The packages as crates.io takes them, with the sources that vendor.sh copies in; each builds from its package.
+      # Cargo counts the copies, which git ignores, as uncommitted changes.
+      - name: Package
+        run: ./vendor.sh && cargo package --workspace --locked --allow-dirty
+
+  rust-msrv:
+    name: Rust crates, Rust 1.85
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.85, the crates' rust-version
+        run: rustup toolchain install 1.85 --profile minimal && rustup default 1.85
+      - name: Test
+        run: cargo test --workspace --locked

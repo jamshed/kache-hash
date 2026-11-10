@@ -1,0 +1,4 @@
+# The copies that vendor.sh makes for the packages.
+/kache-hash-sys/vendor/
+/kache-hash-sys/LICENSE
+/kache-hash/LICENSE

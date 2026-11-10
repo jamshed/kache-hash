@@ -25,6 +25,7 @@ It:
 - A C++20 compiler: GCC 11 or later, or Clang 12 or later
 - An x86-64 CPU with AVX2
 - CMake 3.14 or later, for the libraries
+- Rust 1.85 or later, for the Rust crates, which take no CMake
 
 ## Installation
 
@@ -151,11 +152,13 @@ kache_count_masked(strands, reads, read_lens, m, 1, 2, members);    // `members[
 The functions that can fail return a status code, `KACHE_OK` on success, which `kache_strerror` describes.
 Inserts may overlap one another, each user on its own thread, and updates may overlap one another; queries may overlap one another, but neither inserts nor updates.
 
-The crate `kache-hash-sys`, in `rust/kache-hash-sys`, builds the library with *k*ache-hash's CMake and wraps it for Rust, as typed sets and maps of `u8` to `u64` values.
+The crate `kache-hash`, in `rust/kache-hash`, wraps the library for Rust, as typed sets and maps of `u8` to `u64` values, over the raw bindings of the crate `kache-hash-sys`, in `rust/kache-hash-sys`.
 A table is built through a `Builder`, with an `Inserter` per thread, then frozen into a `Table` for queries from any number of threads; a map's `Updater` borrows it to update it, so that the borrow checker keeps the operations from overlapping.
+`kache-hash-sys` compiles the library with the `cc` crate, without CMake: for x86-64-v3 by default, for the native CPU if rustc targets it (`RUSTFLAGS="-C target-cpu=native"`), for x86-64-v4 if rustc's target features include AVX-512's, or for the ISA that `KACHE_HASH_ARCH` names.
+The crates' examples count the k-mers of a FASTA or FASTQ file, and tell the k-mers of reads in a reference's strands, e.g. `cargo run --release --example kmer_counts -- seqs.fa` in `rust/`.
 
 ```rust
-use kache_hash_sys::{Builder, Op, Options};
+use kache_hash::{Builder, Op, Options};
 
 let b = Builder::<u32>::new(&Options::new(31))?;    // A map from 31-mers to 32-bit counts.
 b.inserter()?.insert(&seqs, Op::Add, 1)?;   // An inserter per thread.

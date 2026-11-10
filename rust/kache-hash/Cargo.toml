@@ -1,0 +1,18 @@
+[package]
+name = "kache-hash"
+description = "Concurrent sets of k-mers, and maps from k-mers to values, for building and querying them from many threads"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["k-mer", "hash-table", "bioinformatics", "genomics", "concurrent"]
+categories = ["data-structures", "concurrency", "science::bioinformatics::genomics", "science::bioinformatics::sequence-analysis"]
+include = ["/src", "/tests", "/examples", "/README.md", "/LICENSE"]
+
+[dependencies]
+kache-hash-sys.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

@@ -1,9 +1,9 @@
-// Checks the bindings against exact references: forward-strand membership, each operation's semantics, concurrent
+// Checks the crate against exact references: forward-strand membership, each operation's semantics, concurrent
 // counting from a tiny table that resizes, a set's queries across a thaw, concurrent updates, sizing, and errors and
 // panics.
 // The sequences are random, with an `N` every 997th base, some reverse-complemented.
 
-use kache_hash_sys::{supports, Builder, Error, Op, Options, Reduction, ABSENT, NOT_KMER, PRESENT};
+use kache_hash::{supports, Builder, Error, Op, Options, Reduction, ABSENT, NOT_KMER, PRESENT};
 use std::collections::{HashMap, HashSet};
 
 const K: usize = 31;
@@ -333,5 +333,5 @@ fn errors_and_panics() {
 #[test]
 fn version() {
     // The crate and its C library release together.
-    assert_eq!(kache_hash_sys::version(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(kache_hash::version(), env!("CARGO_PKG_VERSION"));
 }

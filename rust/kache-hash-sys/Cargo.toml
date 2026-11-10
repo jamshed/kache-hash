@@ -1,11 +1,21 @@
 [package]
 name = "kache-hash-sys"
-version = "0.7.1"
-edition = "2021"
-description = "Rust bindings to kache-hash's C interface: concurrent sets of k-mers, and maps from k-mers to values"
-license = "BSD-3-Clause"
+description = "Raw bindings to kache-hash's C interface, and its build: concurrent sets of k-mers, and maps from k-mers to values"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["k-mer", "hash-table", "bioinformatics", "genomics", "ffi"]
+categories = ["external-ffi-bindings", "science::bioinformatics::genomics"]
 links = "kache_capi"
 build = "build.rs"
+# The C++ sources are in `vendor/`, from `rust/vendor.sh`; within kache-hash's tree, the build takes the tree's own.
+include = ["/src", "/tests", "/build.rs", "/vendor", "/README.md", "/LICENSE"]
 
 [build-dependencies]
-cmake = "0.1"
+cc = { version = "1.2", features = ["parallel"] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
