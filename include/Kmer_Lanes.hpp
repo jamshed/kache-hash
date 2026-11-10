@@ -4,6 +4,7 @@
 
 
 
+#include "Arch.hpp"
 #include "Kmer_Batch.hpp"
 
 #include <cstdint>
@@ -13,8 +14,6 @@
 #include <algorithm>
 #include <utility>
 #include <cassert>
-
-#include <immintrin.h>
 
 
 namespace kache_hash
@@ -259,8 +258,16 @@ inline void Kmer_Lanes<k, l>::minimizer_hashes(const uint64_t* const x, const st
         vec r = ~f;
         r = ((r >> 2) & splat(0x3333333333333333)) | ((r & splat(0x3333333333333333)) << 2);
         r = ((r >> 4) & splat(0x0F0F0F0F0F0F0F0F)) | ((r & splat(0x0F0F0F0F0F0F0F0F)) << 4);
+#if defined(KACHE_HASH_X86_64)
         const auto byte_rev = _mm256_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
         r = reinterpret_cast<vec>(_mm256_shuffle_epi8(reinterpret_cast<__m256i>(r), byte_rev)) >> (64 - 2 * k);
+#else
+        uint8x16_t r_h[2];  // The lanes, two per 128-bit vector.
+        std::memcpy(r_h, &r, sizeof(r));
+        r_h[0] = vrev64q_u8(r_h[0]), r_h[1] = vrev64q_u8(r_h[1]);
+        std::memcpy(&r, r_h, sizeof(r));
+        r >>= (64 - 2 * k);
+#endif
 
         // The l-mer at offset `p` of a k-mer has its reverse complement at offset `k - l - p` of the k-mer's reverse
         // complement.

@@ -4,9 +4,9 @@
 
 
 
-#include <atomic>
+#include "Arch.hpp"
 
-#include <immintrin.h>
+#include <atomic>
 
 
 // A lightweight lock-free mutex class.
@@ -39,7 +39,7 @@ inline void Spin_Lock::lock()
     // take the line from the holder.
     while(lock_.test_and_set(std::memory_order_acquire))
         while(lock_.test(std::memory_order_relaxed))
-            _mm_pause();
+            kache_hash::cpu_relax();
 }
 
 
