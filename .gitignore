@@ -37,8 +37,8 @@ bin/
 external/
 target/
 
-# datasets
-data/
+# datasets, of scripts/fetch-data.sh
+/data/
 
 # clangd
 .cache/

@@ -158,6 +158,18 @@ let counts = b.freeze();    // Queries from any number of threads.
 counts.count(&reads, &mut present)?;
 ```
 
+## Testing
+
+CTest runs the tests of a top-level build: `quick` ones, on the small inputs in `test/data/`; `full` ones, on the datasets of `scripts/fetch-data.sh small` in `data/`, or in `KACHE_HASH_TEST_DATA`; and `consumer` ones, which build projects against static and shared installs of *k*ache-hash, and against its sources.
+
+```bash
+cmake -S . -B build && cmake --build build -j
+ctest --test-dir build -L quick -j 8
+```
+
+`test/check.sh [quick|full|consumer]` does the same in `build-local/check`, under Rosetta on Apple silicon.
+The concurrent tests take `KACHE_HASH_TEST_THREADS` threads, all the CPUs by default; `-DKACHE_HASH_BUILD_TESTS=OFF` leaves the tests out, and with them their need of zlib.
+
 ## Benchmarks
 
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.

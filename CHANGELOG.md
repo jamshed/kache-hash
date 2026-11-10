@@ -14,6 +14,7 @@ Notable changes to *k*ache-hash, by release.
 - Shared libraries, with `BUILD_SHARED_LIBS`, which export the symbols of their interfaces only.
 - `KACHE_HASH_ARCH`, the ISA that the libraries compile for: `native`, the default, `x86-64-v3`, `x86-64-v4`, or `none`.
 - `kache_version()` in the C interface, and `version()` in the crate.
+- Tests for CTest, which `KACHE_HASH_BUILD_TESTS` builds, in top-level builds by default: `quick` ones on small inputs in `test/data/` (248 KB, from `test/data/make-fixtures.py`), `full` ones on the datasets of `scripts/fetch-data.sh small`, and `consumer` ones on installs and sources.
 
 ### Changed
 
@@ -24,6 +25,7 @@ Notable changes to *k*ache-hash, by release.
 - CMake's options take the prefix `KACHE_HASH_`. The libraries build unless `KACHE_HASH_BUILD_CAPI` or `KACHE_HASH_BUILD_COUNTER` is off, and the benchmarks only with `KACHE_HASH_BUILD_BENCHMARKS`.
 - CMake requires GCC 11 or Clang 12 at least, as the headers already did.
 - Clang compiles the headers without warnings of GCC's `optimize` attribute.
+- `test/check.sh` builds and runs the tests through CMake and CTest.
 - *k*ache-hash is now under the BSD 3-Clause License, relicensed from the GNU General Public License v3.0 with the agreement of everyone who has contributed to it.
   Its releases up to v0.7.1 stay under the GPL.
 

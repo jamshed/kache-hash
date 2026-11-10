@@ -11,8 +11,9 @@ here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "${here}/../.." && pwd)"
 w="$1"; shift
 rm -rf "${w}"; mkdir -p "${w}"
 src="${w}/src"
-rsync -a --exclude 'build*/' --exclude external/ --exclude data/ --exclude local/ --exclude .git --exclude target/ \
+rsync -a --exclude '/build*/' --exclude /external/ --exclude /data/ --exclude /local/ --exclude /.git --exclude target/ \
     "${root}/" "${src}/"
+j="$(getconf _NPROCESSORS_ONLN)"
 
 # No network for kache-hash's own builds: a new network namespace on Linux, a sandbox profile on macOS.
 offline=()
@@ -44,7 +45,7 @@ run() # Runs the consumers `$3...` built in the directory `$2`, as the case `$1`
 build() # Configures the consumers into `$1` with the CMake arguments `$2...`, and builds them.
 {
     local dir="$1"; shift
-    cmake -S "${here}" -B "${dir}" "$@" > "${dir}.log" 2>&1 && cmake --build "${dir}" -j 8 >> "${dir}.log" 2>&1 \
+    cmake -S "${here}" -B "${dir}" "$@" > "${dir}.log" 2>&1 && cmake --build "${dir}" -j "${j}" >> "${dir}.log" 2>&1 \
         || { echo "FAIL  consumers in ${dir}; see ${dir}.log"; tail -20 "${dir}.log"; fail=$((fail + 1)); return 1; }
 }
 
@@ -52,7 +53,7 @@ for type in static shared; do
     shared=OFF; [ "${type}" = shared ] && shared=ON
     p="${w}/prefix-${type}"
     if ! { "${offline[@]}" cmake -S "${src}" -B "${w}/build-${type}" -DBUILD_SHARED_LIBS=${shared} \
-                -DCMAKE_INSTALL_PREFIX="${p}" "$@" && "${offline[@]}" cmake --build "${w}/build-${type}" -j 8 &&
+                -DCMAKE_INSTALL_PREFIX="${p}" -DKACHE_HASH_BUILD_TESTS=OFF "$@" && "${offline[@]}" cmake --build "${w}/build-${type}" -j "${j}" &&
            "${offline[@]}" cmake --install "${w}/build-${type}"; } > "${w}/build-${type}.log" 2>&1; then
         echo "FAIL  kache-hash ${type} build; see ${w}/build-${type}.log"; tail -20 "${w}/build-${type}.log"; exit 1
     fi

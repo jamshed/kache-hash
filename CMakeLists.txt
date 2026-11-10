@@ -26,7 +26,7 @@ project(${PROJECT_NAME}
 
 # Whether this is the top-level project, and not a subproject of one that links its targets, e.g. through
 # `FetchContent`: only top-level builds set the build type, export compile commands, install by default, and build the
-# benchmarks.
+# tests and the benchmarks.
 string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}" KACHE_HASH_TOP_LEVEL)
 
 
@@ -35,6 +35,7 @@ option(KACHE_HASH_BUILD_CAPI "Build the C interface library, kache_capi." ON)
 option(KACHE_HASH_BUILD_COUNTER "Build the k-mer counting library, kache_counter." ON)
 option(KACHE_HASH_BUILD_BENCHMARKS "Build the benchmarks and the tools, fetching the baselines; top-level builds only." OFF)
 option(KACHE_HASH_INSTALL "Generate the install rules." ${KACHE_HASH_TOP_LEVEL})
+option(KACHE_HASH_BUILD_TESTS "Build the tests, for CTest; top-level builds only." ${KACHE_HASH_TOP_LEVEL})
 
 # The ISA of the compiled targets, i.e. the libraries, the benchmarks and the tools: `native`, the building CPU's, by
 # default; `x86-64-v3` (AVX2) or `x86-64-v4` (AVX-512), for binaries that run on other CPUs, with `x86-64-v3` the default
@@ -222,6 +223,14 @@ endif()
 # The C interface library, in `capi/`.
 if(KACHE_HASH_BUILD_CAPI)
     add_subdirectory(capi)
+endif()
+
+# The tests, in `test/`, for CTest: in top-level builds only.
+if(KACHE_HASH_BUILD_TESTS AND KACHE_HASH_TOP_LEVEL)
+    enable_testing()
+    add_subdirectory(test)
+elseif(KACHE_HASH_BUILD_TESTS)
+    message(WARNING "KACHE_HASH_BUILD_TESTS takes effect in top-level builds only.")
 endif()
 
 
