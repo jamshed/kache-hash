@@ -1,0 +1,147 @@
+# Continuous integration: the quick tests with each supported compiler, on Linux, in Release and Debug, for the x86-64-v3
+# level and for the runner's CPU; on an Intel Mac; under ASan and UBSan; and for AVX-512, under Intel's SDE. Then the
+# consumers of installs and sources, and the Rust crate. ThreadSanitizer joins once the buckets' locks and the table's
+# other publications use release and acquire atomics throughout, which it needs to follow them.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  linux:
+    name: Linux, ${{ matrix.cxx }}, ${{ matrix.build }}, ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, package: g++-11, cc: gcc-11, cxx: g++-11, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: g++-12, cc: gcc-12, cxx: g++-12, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: g++-13, cc: gcc-13, cxx: g++-13, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: g++-14, cc: gcc-14, cxx: g++-14, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: g++-14, cc: gcc-14, cxx: g++-14, build: Release, arch: native }
+          - { os: ubuntu-24.04, package: g++-14, cc: gcc-14, cxx: g++-14, build: Debug, arch: x86-64-v3 }
+          - { os: ubuntu-22.04, package: clang-12, cc: clang-12, cxx: clang++-12, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-22.04, package: clang-15, cc: clang-15, cxx: clang++-15, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: clang-18, cc: clang-18, cxx: clang++-18, build: Release, arch: x86-64-v3 }
+          - { os: ubuntu-24.04, package: clang-18, cc: clang-18, cxx: clang++-18, build: Release, arch: native }
+          - { os: ubuntu-24.04, package: clang-18, cc: clang-18, cxx: clang++-18, build: Debug, arch: x86-64-v3 }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the compiler and zlib
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.package }} zlib1g-dev
+      - name: Show the CPU
+        run: |
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
+          grep -q -w avx512f /proc/cpuinfo && echo "AVX-512: yes" || echo "AVX-512: no"
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DKACHE_HASH_ARCH=${{ matrix.arch }} -DKACHE_HASH_TEST_THREADS=4
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build -L quick -j 4
+
+  macos:
+    name: macOS (Intel), Apple Clang, Release, native
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show the CPU
+        run: sysctl -n machdep.cpu.brand_string
+      - name: Configure
+        run: cmake -S . -B build -DKACHE_HASH_TEST_THREADS=4
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build -L quick -j 4
+
+  sanitizers:
+    name: Linux, clang++-18, ASan and UBSan
+    runs-on: ubuntu-24.04
+    env:
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the compiler and zlib
+        run: sudo apt-get update && sudo apt-get install -y clang-18 zlib1g-dev
+      - name: Lower the entropy of mmap's addresses, which the sanitizers' memory layouts need
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+          -DKACHE_HASH_ARCH=x86-64-v3 -DKACHE_HASH_TEST_THREADS=4 -DASAN=ON -DUBSAN=ON
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build -L quick -j 4
+
+  avx512:
+    name: Linux, g++-14, Release, x86-64-v4 under Intel SDE
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the compiler and zlib
+        run: sudo apt-get update && sudo apt-get install -y g++-14 zlib1g-dev
+      # Intel's kit, by the SHA256 that Intel publishes, from the copy that the setup-sde action serves. Using it is
+      # agreeing to Intel's license of SDE, which the kit includes.
+      - name: Install Intel SDE
+        run: |
+          kit=sde-external-10.13.1-2026-07-28-lin
+          curl -sSfL -o "${RUNNER_TEMP}/sde.tar.xz" "https://github.com/petarpetrovt/setup-sde/releases/download/binaries/${kit}.tar.xz"
+          echo "94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50  ${RUNNER_TEMP}/sde.tar.xz" | sha256sum -c
+          tar -xf "${RUNNER_TEMP}/sde.tar.xz" -C "${RUNNER_TEMP}"
+          echo "SDE=${RUNNER_TEMP}/${kit}/sde64" >> "${GITHUB_ENV}"
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14 -DKACHE_HASH_ARCH=x86-64-v4
+          -DKACHE_HASH_TEST_THREADS=2 "-DCMAKE_CROSSCOMPILING_EMULATOR=${SDE};-clx;--"
+      - name: Build
+        run: cmake --build build -j 4
+      # The tests of the AVX-512 paths: the lane describer, and the table's concurrent operations, which use it.
+      - name: Test under SDE, as Cascade Lake
+        run: >
+          ctest --test-dir build -L quick -j 4
+          -R '^(describers|counter)$|^(oriented|oriented-lanes|capi)\.|^check\.(ecoli|edge-cases)\.mt-[a-z0-9]+\.T\.'
+
+  consumer:
+    name: Linux, g++-14, consumers of installs and sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the compiler, zlib, pkg-config and rsync
+        run: sudo apt-get update && sudo apt-get install -y g++-14 zlib1g-dev pkg-config rsync
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14 -DKACHE_HASH_ARCH=x86-64-v3
+      - name: Test
+        run: ctest --test-dir build -L consumer
+
+  rust:
+    name: Rust crate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: rust/kache-hash-sys
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust's stable toolchain, with clippy
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Test
+        run: cargo test
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings

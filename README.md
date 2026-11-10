@@ -1,4 +1,9 @@
 # *k*ache-hash
+
+[![CI](https://github.com/jamshed/kache-hash/actions/workflows/ci.yml/badge.svg)](https://github.com/jamshed/kache-hash/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.02.13.705625-b31b1b.svg)](https://doi.org/10.64898/2026.02.13.705625)
+
 *k*ache-hash is a dynamic, concurrent, and cache-efficient hash table for streaming k-mer operations, where sequences of consecutive k-mers are processed in order.
 It is highly scalable in throughput with the number of user threads.
 

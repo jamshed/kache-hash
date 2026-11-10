@@ -1,7 +1,7 @@
 
 # The tests, for CTest, under three labels:
-# - `quick`: the test programs on the small inputs in `data/` (see `data/make-fixtures.py`), and a C11 check of the C
-#   interface's header;
+# - `quick`: the test programs on the small inputs in `data/` (see `data/make-fixtures.py`), a C11 check of the C
+#   interface's header, and a check that the headers', the crate's and CITATION.cff's versions agree;
 # - `full`: the programs on the datasets of `scripts/fetch-data.sh small` in `KACHE_HASH_TEST_DATA`, if they are there;
 # - `consumer`: the consumers of installed and fetched builds of kache-hash, in `consumer/`.
 # The programs build with kache-hash's flags, and with their assertions and the library's, whatever the build type.
@@ -98,6 +98,7 @@ if(TARGET kache_capi)
     kache_hash_test(capi.header-c11 quick 1 ${CMAKE_C_COMPILER} -std=c11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only
                     -x c ${PROJECT_SOURCE_DIR}/include/kache_hash/kache_capi.h)
 endif()
+kache_hash_test(version quick 1 ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/CheckVersion.cmake)
 
 
 # Full tests, on the datasets, if they are there.
