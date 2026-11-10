@@ -186,7 +186,7 @@ inline T_key_ Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::stored(const T_k
     auto* const b = reinterpret_cast<unsigned char*>(&x);
     std::memcpy(b, &key, sizeof(key));
     for(std::size_t i = 0; i < sizeof(key); ++i)
-        b[i] = ~b[i];
+        b[i] = static_cast<unsigned char>(~b[i]);
     return x;
 }
 
