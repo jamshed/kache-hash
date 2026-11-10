@@ -49,8 +49,8 @@ endif()
 set(KACHE_HASH_ARCH ${KACHE_HASH_ARCH_DEFAULT} CACHE STRING "ISA of the compiled targets: native, x86-64-v3, x86-64-v4 or none.")
 set_property(CACHE KACHE_HASH_ARCH PROPERTY STRINGS native x86-64-v3 x86-64-v4 none)
 
-# Development options, for the compiled targets: `DEBUG_INFO`, and the address and undefined-behavior sanitizers, `ASAN`
-# and `UBSAN`, the latter with Clang.
+# Development options, for the compiled targets: `DEBUG_INFO`; and the sanitizers of addresses, undefined behavior and
+# threads, `ASAN`, `UBSAN` (with Clang) and `TSAN`, of which TSAN goes alone.
 
 # The options of earlier releases, deprecated.
 if(DEFINED KACHE_HASH_CAPI)
@@ -151,7 +151,15 @@ set(ASAN_FLAGS -fsanitize=address -fno-omit-frame-pointer)
 # only.
 set(UBSAN_FLAGS -fsanitize=undefined
                 -fsanitize=float-divide-by-zero #-fsanitize=unsigned-integer-overflow
-                -fsanitize=implicit-conversion -fsanitize=local-bounds -fsanitize=nullability)
+                -fsanitize=implicit-conversion -fsanitize=local-bounds -fsanitize=nullability
+                -fno-sanitize-recover=undefined,float-divide-by-zero)   # Undefined behavior fails; the rest reports.
+
+# Thread sanitizer flags: https://clang.llvm.org/docs/ThreadSanitizer.html.
+set(TSAN_FLAGS -fsanitize=thread)
+if(TSAN AND (ASAN OR UBSAN))
+    message(FATAL_ERROR "TSAN goes alone, without ASAN and UBSAN.")
+endif()
+
 if(UBSAN AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "UBSAN takes Clang: configure with -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++.")
 endif()
@@ -172,6 +180,11 @@ endif()
 if(UBSAN)
     list(APPEND COMPILE_FLAGS ${UBSAN_FLAGS} ${DEBUG_FLAGS})
     list(APPEND LINK_FLAGS ${UBSAN_FLAGS})
+endif()
+
+if(TSAN)
+    list(APPEND COMPILE_FLAGS ${TSAN_FLAGS} ${DEBUG_FLAGS})
+    list(APPEND LINK_FLAGS ${TSAN_FLAGS})
 endif()
 
 
