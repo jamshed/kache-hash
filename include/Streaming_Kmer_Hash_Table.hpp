@@ -1200,16 +1200,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b
     if constexpr(mt_ || resize_)
         if(mt_ || resize_worker_c > 1)
         {
-            if constexpr(!resize_)
-            {
-                assert(md(b).flags[0] & Metadata::lock_mask);
-                md(b).flags[0] &= ~Metadata::lock_mask;
-            }
-            else
-            {
-                assert(md_new(b).flags[0] & Metadata::lock_mask);
-                md_new(b).flags[0] &= ~Metadata::lock_mask;
-            }
+            // NB: A release store, so that the bucket's next holder finds this one's writes to it. It is the plain
+            // store on x86-64, whose stores stay in order; cores with weak memory ordering, such as AArch64's, may
+            // otherwise show the flag unlocked before those writes.
+            auto& w = (resize_ ? md_new(b) : md(b)).flags[0];
+            assert(w & Metadata::lock_mask);
+            __atomic_store_n(&w, static_cast<uint8_t>(w & ~Metadata::lock_mask), __ATOMIC_RELEASE);
         }
 }
 
