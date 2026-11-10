@@ -329,3 +329,9 @@ fn errors_and_panics() {
     assert_eq!(m.for_each_chunk(2, 2, |_, _| true), Err(Error::INVALID));
     assert_eq!(m.reduce(Reduction::Keys, u64::MAX, 0), Err(Error::INVALID));
 }
+
+#[test]
+fn version() {
+    // The crate and its C library release together.
+    assert_eq!(kache_hash_sys::version(), env!("CARGO_PKG_VERSION"));
+}

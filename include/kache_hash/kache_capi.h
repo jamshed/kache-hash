@@ -20,6 +20,8 @@
 // functions that can fail return a status code, `KACHE_OK` on success, and
 // catch every exception of the table.
 
+#include "version.hpp"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +30,14 @@ extern "C" {
 #define KACHE_NOEXCEPT noexcept
 #else
 #define KACHE_NOEXCEPT
+#endif
+
+// Marks the interface's functions to export from a shared library, which
+// hides its other symbols.
+#if defined(__GNUC__)
+#define KACHE_CAPI_EXPORT __attribute__((visibility("default")))
+#else
+#define KACHE_CAPI_EXPORT
 #endif
 
 
@@ -106,62 +116,66 @@ typedef struct kache_stats
 typedef int (*kache_keys_fn)(void* ctx, const uint64_t* keys, const void* values, size_t n);
 
 
+// Returns the version of the library that the program runs with, such as
+// "0.8.0"; `KACHE_HASH_VERSION_STRING` is that of the header it compiled with.
+KACHE_CAPI_EXPORT const char* kache_version(void) KACHE_NOEXCEPT;
+
 // Returns whether tables of `k`-mers with values of `value_bytes` bytes are
 // supported: of 31-mers only, for now, with each width.
-int kache_supports(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_supports(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
 
 // Returns the default options of a table of `k`-mers with values of
 // `value_bytes` bytes: room for 4M k-mers at load factor 0.8, sized exactly,
 // and 16 threads for resizes.
-kache_options kache_default_options(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT kache_options kache_default_options(uint32_t k, uint32_t value_bytes) KACHE_NOEXCEPT;
 
 // Creates a table with the options `*options` at `*out`. A table takes at most
 // 2^32 - 1 buckets of 32 k-mers, or 2^31 with `pow2_capacity`.
-int kache_new(const kache_options* options, kache_table** out) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_new(const kache_options* options, kache_table** out) KACHE_NOEXCEPT;
 
 // Frees the table `t`; nothing if `t` is NULL.
-void kache_free(kache_table* t) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT void kache_free(kache_table* t) KACHE_NOEXCEPT;
 
 // Registers a new user of the table `t` for inserts at `*user`: at most
 // `KACHE_MAX_USERS` per table. A user inserts from one thread at a time, and
 // may pass to another thread between its inserts.
-int kache_register(kache_table* t, uint32_t* user) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_register(kache_table* t, uint32_t* user) KACHE_NOEXCEPT;
 
 // Inserts the k-mers of the sequences `seqs[0..n)` of lengths `lens[0..n)` into
 // the table `t`, by the registered user `user`. In a map, an absent k-mer gets
 // the value `x`, and a present one's value `v` becomes `op(v, x)`, by the
 // operation `op`, one of `KACHE_KEEP` to `KACHE_MAX`; a set ignores both. Puts
 // the number of k-mers inserted at `*inserted`, unless it is NULL.
-int kache_insert(kache_table* t, uint32_t user, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x, uint64_t* inserted) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_insert(kache_table* t, uint32_t user, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x, uint64_t* inserted) KACHE_NOEXCEPT;
 
 // Inserts the k-mers of the sequences into the map `t` as `kache_insert` does,
 // with the operand `x_fwd` for each occurrence of a k-mer as is, and `x_rev`
 // for each as its reverse complement. The operation `op` is one of
 // `KACHE_ASSIGN`, `KACHE_ADD`, `KACHE_OR` and `KACHE_MAX`.
-int kache_insert_oriented(kache_table* t, uint32_t user, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x_fwd, uint64_t x_rev, uint64_t* inserted) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_insert_oriented(kache_table* t, uint32_t user, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x_fwd, uint64_t x_rev, uint64_t* inserted) KACHE_NOEXCEPT;
 
 // Updates the value `v` of each k-mer of the sequences `seqs[0..n)` of lengths
 // `lens[0..n)` present in the map `t` to `op(v, x)`, and skips the absent ones:
 // it inserts none. Puts the number of k-mers present, with repeats counted, at
 // `*present`, unless it is NULL. It takes no user, nor locks.
-int kache_update(kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x, uint64_t* present) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_update(kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint32_t op, uint64_t x, uint64_t* present) KACHE_NOEXCEPT;
 
 // Puts the number of k-mers of the sequence `seqs[i]`, of length `lens[i]`,
 // present in the table `t` at `counts[i]`, for each `i` in `[0, n)`: k-mer
 // positions, with repeats counted.
-int kache_count(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t* counts) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_count(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t* counts) KACHE_NOEXCEPT;
 
 // Puts the number of k-mers of each sequence present in the map `t` whose
 // values match their orientation's mask at `counts[i]`, as `kache_count`
 // does: of the k-mers with values `v`, the occurrences as is with
 // `v & mask_fwd` nonzero, and those as reverse complements with
 // `v & mask_rev` nonzero.
-int kache_count_masked(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t mask_fwd, uint64_t mask_rev, uint64_t* counts) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_count_masked(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t mask_fwd, uint64_t mask_rev, uint64_t* counts) KACHE_NOEXCEPT;
 
 // Puts the sum of the values of the k-mers of the sequence `seqs[i]`, of
 // length `lens[i]`, present in the map `t` at `sums[i]`, for each `i` in
 // `[0, n)`, with repeats counted, modulo 2^64.
-int kache_sum(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t* sums) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_sum(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint64_t* sums) KACHE_NOEXCEPT;
 
 // Looks up each k-mer position of the sequences `seqs[0..n)` of lengths
 // `lens[0..n)` in the table `t`. The position `j` of `seqs[i]` is at index
@@ -171,35 +185,35 @@ int kache_sum(const kache_table* t, const char* const* seqs, const size_t* lens,
 // `KACHE_NOT_KMER` at `found[o_i + j]`; in a map, the k-mer's value, or 0, at
 // `values[o_i + j]`, of the table's width, unless `values` is NULL; and
 // whether the k-mer occurs as is at `fwd[o_i + j]`, unless `fwd` is NULL.
-int kache_lookup(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint8_t* found, void* values, uint8_t* fwd) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_lookup(const kache_table* t, const char* const* seqs, const size_t* lens, size_t n, uint8_t* found, void* values, uint8_t* fwd) KACHE_NOEXCEPT;
 
 // Looks up the k-mer of the `k` characters at `kmer` in the table `t`, in
 // either orientation: puts whether it is present at `*found`, and in a map,
 // its value, or 0, at `*value`, unless it is NULL. A k-mer with a non-ACGT
 // character is absent.
-int kache_get(const kache_table* t, const char* kmer, uint8_t* found, uint64_t* value) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_get(const kache_table* t, const char* kmer, uint8_t* found, uint64_t* value) KACHE_NOEXCEPT;
 
 // Puts the number of keys of the table `t`, i.e. of distinct canonical k-mers,
 // at `*keys`.
-int kache_size(const kache_table* t, uint64_t* keys) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_size(const kache_table* t, uint64_t* keys) KACHE_NOEXCEPT;
 
 // Puts the reduction `what` of the keys of the table `t`, one of
 // `KACHE_REDUCE_KEYS` to `KACHE_REDUCE_SUM`, with the mask `mask` of their
 // values, at `*out`, computed by `workers` threads, at least 1. A set supports
 // `KACHE_REDUCE_KEYS` only, and ignores the mask.
-int kache_reduce(const kache_table* t, uint32_t what, uint64_t mask, uint32_t workers, uint64_t* out) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_reduce(const kache_table* t, uint32_t what, uint64_t mask, uint32_t workers, uint64_t* out) KACHE_NOEXCEPT;
 
 // Calls `f(ctx, keys, values, n)` with the keys of the table `t` in the share
 // `shard` of `shards` shares, in chunks, in an unspecified order, until it
 // returns nonzero. The shares partition the table, so that iterations over
 // all of them, concurrent or not, visit each key once.
-int kache_for_each(const kache_table* t, uint32_t shards, uint32_t shard, kache_keys_fn f, void* ctx) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_for_each(const kache_table* t, uint32_t shards, uint32_t shard, kache_keys_fn f, void* ctx) KACHE_NOEXCEPT;
 
 // Puts the statistics of the table `t` at `*out`.
-int kache_get_stats(const kache_table* t, kache_stats* out) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT int kache_get_stats(const kache_table* t, kache_stats* out) KACHE_NOEXCEPT;
 
 // Returns a description of the status code `code`.
-const char* kache_strerror(int code) KACHE_NOEXCEPT;
+KACHE_CAPI_EXPORT const char* kache_strerror(int code) KACHE_NOEXCEPT;
 
 
 #ifdef __cplusplus

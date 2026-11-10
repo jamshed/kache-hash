@@ -89,7 +89,8 @@ if ! rsync -a --exclude "build*/" --exclude external/ --exclude data/ --exclude 
     exit 1
 fi
 
-if ! { cmake -S "${build}/src" -B "${build}/build" -DCMAKE_BUILD_TYPE=Release -DCBL=ON -DSSHASH=ON -DLSWEEP=ON &&
+if ! { cmake -S "${build}/src" -B "${build}/build" -DCMAKE_BUILD_TYPE=Release -DKACHE_HASH_BUILD_BENCHMARKS=ON \
+            -DCBL=ON -DSSHASH=ON -DLSWEEP=ON &&
         cmake --build "${build}/build" -j "$(nproc)"; } > "${out_dir}/build-${SLURM_JOB_ID}.log" 2>&1; then
     echo "Failed building; see ${out_dir}/build-${SLURM_JOB_ID}.log" >&2
     exit 1

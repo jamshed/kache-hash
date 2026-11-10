@@ -11,6 +11,13 @@
 #include <vector>
 
 
+// Marks the library's classes to export from a shared library, which hides
+// its other symbols.
+#ifndef KACHE_COUNTER_EXPORT
+#define KACHE_COUNTER_EXPORT __attribute__((visibility("default")))
+#endif
+
+
 namespace kache_hash
 {
 
@@ -20,7 +27,7 @@ namespace kache_hash
 // non-ACGT characters split their sequences. Counts are 32-bit.
 // The counter's operations must not overlap one another, but for `histogram`s
 // and `count_of`s.
-class Kmer_Set_Counter
+class KACHE_COUNTER_EXPORT Kmer_Set_Counter
 {
 private:
 

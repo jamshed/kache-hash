@@ -1,5 +1,5 @@
 
-#include "Fastx_Reader.hpp"
+#include "kache_hash/Fastx_Reader.hpp"
 
 #include <fcntl.h>
 #include <sys/mman.h>

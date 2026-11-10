@@ -57,6 +57,7 @@ struct RawTable {
 type KeysFn = unsafe extern "C" fn(ctx: *mut c_void, keys: *const u64, values: *const c_void, n: usize) -> c_int;
 
 extern "C" {
+    fn kache_version() -> *const c_char;
     fn kache_supports(k: u32, value_bytes: u32) -> c_int;
     fn kache_default_options(k: u32, value_bytes: u32) -> RawOptions;
     fn kache_new(options: *const RawOptions, out: *mut *mut RawTable) -> c_int;
@@ -182,6 +183,12 @@ macro_rules! map_values {
     )*};
 }
 map_values!(u8, u16, u32, u64);
+
+/// Returns the version of kache-hash's C interface library that the crate links, such as `"0.8.0"`.
+pub fn version() -> &'static str {
+    // SAFETY: `kache_version` returns a static, NUL-terminated ASCII string.
+    unsafe { CStr::from_ptr(kache_version()) }.to_str().expect("an ASCII version")
+}
 
 /// Returns whether tables of `k`-mers with values of type `V` are supported: of 31-mers only, for now.
 pub fn supports<V: Value>(k: usize) -> bool {

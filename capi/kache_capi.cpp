@@ -1,5 +1,5 @@
 
-#include "kache_capi.h"
+#include "kache_hash/kache_capi.h"
 #include "kache_table.hpp"
 
 #include <exception>
@@ -64,6 +64,12 @@ bool registered(const kache_table* const t, const uint32_t user)
 
 extern "C"
 {
+
+const char* kache_version() noexcept
+{
+    return KACHE_HASH_VERSION_STRING;
+}
+
 
 int kache_supports(const uint32_t k, const uint32_t value_bytes) noexcept
 {

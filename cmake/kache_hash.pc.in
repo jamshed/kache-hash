@@ -1,0 +1,9 @@
+prefix=${pcfiledir}/@KACHE_HASH_PC_PREFIX@
+includedir=@KACHE_HASH_PC_INCLUDEDIR@
+
+Name: kache-hash
+Description: A dynamic, concurrent, and cache-efficient hash table for streaming k-mer operations: header-only, with C++20 and AVX2
+URL: https://github.com/jamshed/kache-hash
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
+Libs: -pthread

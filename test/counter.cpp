@@ -6,8 +6,8 @@
 // Usage: counter check <dir> [threads]    Writes its inputs into the directory `dir`.
 //        counter count <segments> <reads> <threads> <size> [load-factor] [histogram-file]
 
-#include "Fastx_Reader.hpp"
-#include "Kmer_Set_Counter.hpp"
+#include "kache_hash/Fastx_Reader.hpp"
+#include "kache_hash/Kmer_Set_Counter.hpp"
 
 #include <sys/resource.h>
 #include <sys/stat.h>

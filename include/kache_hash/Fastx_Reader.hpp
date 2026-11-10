@@ -10,6 +10,13 @@
 #include <string>
 
 
+// Marks the library's classes to export from a shared library, which hides
+// its other symbols.
+#ifndef KACHE_COUNTER_EXPORT
+#define KACHE_COUNTER_EXPORT __attribute__((visibility("default")))
+#endif
+
+
 namespace kache_hash
 {
 
@@ -20,7 +27,7 @@ namespace kache_hash
 // sequence. Lines end with "\n" or "\r\n". A regular file is memory-mapped and
 // split among the workers; any other input, such as a pipe, is read by one more
 // thread, which hands them chunks of whole records.
-class Fastx_Reader
+class KACHE_COUNTER_EXPORT Fastx_Reader
 {
 private:
 

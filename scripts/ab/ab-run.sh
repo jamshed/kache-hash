@@ -4,7 +4,8 @@
 # Usage: ab-run.sh <job-dir>
 #
 # <job-dir> holds:
-#   variants: lines of `name source [extra compile flags...]`; the source is ~/kh-perf/src/<source>/.
+#   variants: lines of `name source [extra compile flags...]`; the source is ~/kh-perf/src/<source>/. A variant's
+#             own `-march` replaces `-march=native`, which expands into feature flags that a later one keeps.
 #   configs:  lines of `label policy threads driver-args...`, with policy one of local, interleave, all, preferred,
 #             none; driver arguments come after `--threads` and `--reps`, so they can override the repetitions.
 #   params:   shell assignments, e.g. ROUNDS=2 REPS=3 BUDGET_MIN=52 DRIVER=measure CPU_MODEL="Platinum 8276"; the
@@ -31,8 +32,9 @@ b=/tmp/kh-${SLURM_JOB_ID:-$$}; mkdir -p ${b}
 while read -r name src flags; do
     [ -z "${name}" ] && continue
     rsync -a --exclude "build*/" --exclude external/ ~/kh-perf/src/${src}/ ${b}/${name}/
+    march=-march=native; [[ " ${flags} " == *" -march="* ]] && march=""
     # The definitions are older trees': the headers set their own since v0.8.0.
-    ( g++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -funroll-loops -march=native -Wa,-mbranches-within-32B-boundaries \
+    ( g++ -std=c++20 -O3 -DNDEBUG -Wall -Wextra -Wpedantic -funroll-loops ${march} -Wa,-mbranches-within-32B-boundaries \
         -DXXH_INLINE_ALL -DXXH_STATIC_LINKING_ONLY -DXXH_FORCE_MEMORY_ACCESS=0 -DDEVELOP -DL1_CACHE_LINE_SIZE=64 \
         ${flags} -I ${b}/${name}/include -I ${b}/${name}/support -I ${b}/${name}/benchmark -I ${b}/${name}/tools ${b}/${name}/benchmark/${DRIVER}.cpp -o ${b}/${name}.bin \
         ~/kh-perf/jemalloc/libjemalloc.a -ldl -lz -pthread > ${b}/${name}.build.log 2>&1 \

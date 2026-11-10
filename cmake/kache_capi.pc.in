@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/@KACHE_HASH_PC_PREFIX@
+includedir=@KACHE_HASH_PC_INCLUDEDIR@
+libdir=@KACHE_HASH_PC_LIBDIR@
+
+Name: kache_capi
+Description: kache-hash's C interface: concurrent sets of 31-mers, and maps from 31-mers to 8- to 64-bit values
+URL: https://github.com/jamshed/kache-hash
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lkache_capi@KACHE_CAPI_PC_LIBS@
+Libs.private: @KACHE_CAPI_PC_LIBS_PRIVATE@

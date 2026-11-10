@@ -17,8 +17,24 @@ It:
 
 ## Requirements
 
-- C++20 compatible compiler (GCC ≥ 9.1, Clang ≥ 9.0)
-- AVX2 support
+- A C++20 compiler: GCC 11 or later, or Clang 12 or later
+- An x86-64 CPU with AVX2
+- CMake 3.14 or later, for the libraries
+
+## Installation
+
+CMake builds the libraries of the counter and of the C interface, below, and installs them with the headers, a CMake package, and pkg-config files:
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+cmake --install build --prefix <prefix>
+```
+
+A project then finds them with `find_package(kache_hash REQUIRED COMPONENTS capi counter)`, and links `kache_hash::kache_hash`, `kache_hash::kache_capi` or `kache_hash::kache_counter`; `FetchContent_Declare` with `FIND_PACKAGE_ARGS` takes an installed *k*ache-hash before its sources.
+Or pkg-config gives the flags of `kache_hash`, the headers, and of `kache_capi`.
+The libraries are static, or shared with `-DBUILD_SHARED_LIBS=ON`; `-DKACHE_HASH_BUILD_CAPI=OFF` and `-DKACHE_HASH_BUILD_COUNTER=OFF` leave them out.
+They compile for the building CPU, or for any CPU of an x86-64 level that `KACHE_HASH_ARCH` sets, for binaries that run elsewhere: `x86-64-v3` (AVX2), the default under conda-build, or `x86-64-v4` (AVX-512); `none` leaves the ISA to the toolchain's flags.
 
 ## Usage
 
@@ -85,10 +101,10 @@ A table has at most `2^32 - 1` buckets, or `2^31` when rounded.
 
 The library `kache_counter`, in `counter`, counts the k-mers of reads that belong to a set fixed beforehand, as PanGenie counts them with Jellyfish, on a table of 32-bit counts; its `Fastx_Reader` reads FASTA and FASTQ files in parallel, from files or pipes.
 Its interface is plain C++, without the table's headers, so that a project linking it, as `kache_hash::kache_counter`, keeps its own compile flags.
-CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DCOUNTER=ON`.
+CMake builds it unless `KACHE_HASH_BUILD_COUNTER` is off.
 
 ```cpp
-#include "Kmer_Set_Counter.hpp"
+#include <kache_hash/Kmer_Set_Counter.hpp>
 
 kache_hash::Kmer_Set_Counter counter(31, 3'000'000'000, 24);   // 31-mers; room for 3G of them; 24 threads.
 counter.prime("segments.fa");   // The set: the k-mers of these sequences, at count 0.
@@ -103,10 +119,11 @@ The library `kache_capi`, in `capi`, puts concurrent sets of 31-mers, and maps f
 Inserts and updates combine a k-mer's value with an operand: keep, assign, add (saturating), or, min, or max; oriented inserts choose the operand by whether a k-mer occurs as is or as its reverse complement, so that a map of orientation masks gives forward-strand membership.
 Queries count, sum, or look up the k-mers of batches of sequences, reduce the whole table, or iterate over its keys in shares.
 A table's options size it as the C++ constructor does: for `expected_keys` at `load_factor`, exactly, or rounded up to a power of 2 if `pow2_capacity` is 1.
-A project links it as `kache_hash::kache_capi`; CMake builds it in projects that fetch *k*ache-hash, and at the top level with `-DKACHE_HASH_CAPI=ON`.
+A project links it as `kache_hash::kache_capi`, or through pkg-config's `kache_capi`; CMake builds it unless `KACHE_HASH_BUILD_CAPI` is off.
+`kache_version()` gives the version of the library that a program runs with, and `KACHE_HASH_VERSION_STRING` that of the header it compiled with.
 
 ```c
-#include "kache_capi.h"
+#include <kache_hash/kache_capi.h>
 
 kache_options opt = kache_default_options(31, 4);   // 31-mers, with 32-bit values.
 opt.expected_keys = 100000000;  // It grows beyond, as needed.
@@ -146,10 +163,10 @@ counts.count(&reads, &mut present)?;
 The `benchmark` directory has a driver per table: *k*ache-hash, and as baselines, Boost's concurrent and flat tables, libcuckoo, iceberg (on Linux), Jellyfish, CBL, and SSHash.
 *k*ache-hash's driver rounds its tables' bucket counts up to powers of 2, and a second one, `bench_kache_hash_exact` (the table `kache-hash-exact` to `run.sh`), sizes them exactly, as the tables do by default.
 Each builds its table over the *k*-mers of an input and queries it with other inputs, and prints its measurements as TSV.
-CBL and SSHash build only with `-DCBL=ON` and `-DSSHASH=ON`, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's maximal unitigs of the input by `scripts/bench/sshash-index.sh`.
+CMake builds them with `-DKACHE_HASH_BUILD_BENCHMARKS=ON`, fetching the baselines; CBL and SSHash only with `-DCBL=ON` and `-DSSHASH=ON` too, which need `cargo` from `rustup`, and libclang for CBL; SSHash, a static index, is built from GGCAT's maximal unitigs of the input by `scripts/bench/sshash-index.sh`.
 
 ```bash
-cmake -S . -B build -DCBL=ON -DSSHASH=ON && cmake --build build -j
+cmake -S . -B build -DKACHE_HASH_BUILD_BENCHMARKS=ON -DCBL=ON -DSSHASH=ON && cmake --build build -j
 scripts/fetch-data.sh data small
 scripts/bench/run.sh build/benchmark data out chr21 srr5833294-1m ecoli-32
 scripts/bench/collate.py out

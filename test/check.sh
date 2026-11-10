@@ -17,10 +17,10 @@ for t in check describers counter oriented oriented-lanes capi; do
     [ ${t} = counter ] && srcs+=" ${root}/counter/Fastx_Reader.cpp ${root}/counter/Kmer_Set_Counter.cpp"
     [ ${t} = oriented-lanes ] && defs="-DKACHE_HASH_LANES=1"
     [ ${t} = capi ] && srcs+=" ${root}/capi/*.cpp"
-    clang++ -arch x86_64 -std=c++20 -O2 -march=haswell -Wall -Wextra -Wno-unknown-attributes -I "${root}/include" \
-        -I "${root}/support" -I "${root}/counter" -I "${root}/capi" -pthread ${defs} "$@" ${srcs} -o "${out}/${t}" -lz || exit 1
+    clang++ -arch x86_64 -std=c++20 -O2 -march=haswell -Wall -Wextra -I "${root}/include" \
+        -I "${root}/support" -pthread ${defs} "$@" ${srcs} -o "${out}/${t}" -lz || exit 1
 done
-clang -arch x86_64 -std=c11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -x c "${root}/capi/kache_capi.h" || exit 1
+clang -arch x86_64 -std=c11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -x c "${root}/include/kache_hash/kache_capi.h" || exit 1
 T=$(sysctl -n hw.ncpu)
 fail=0
 inputs="${root}/data/ecoli.fa.gz"; [ ${quick} = 0 ] && inputs+=" ${root}/data/chr21.fa.gz ${root}/data/SRR5833294.1M.fastq.gz"
