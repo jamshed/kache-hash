@@ -86,9 +86,12 @@ set(UBSAN_FLAGS -fsanitize=undefined
 # set(UBSAN_LINK_FLAGS -fuse-ld=lld)
 
 # Optimization flags: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html. An x86-64 build on Apple silicon, to run
-# under Rosetta, can't target the native CPU, and targets Haswell's AVX2 instead.
+# under Rosetta, can't target the native CPU, and targets Haswell's AVX2 instead. AArch64 compilers take the native CPU
+# as `-mcpu`: not all of them take it as `-march`.
 if(APPLE AND CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
     set(OPTIMIZE_FLAGS -funroll-loops -march=haswell)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    set(OPTIMIZE_FLAGS -funroll-loops -mcpu=native)
 else()
     set(OPTIMIZE_FLAGS -funroll-loops -march=native)
 endif()
@@ -164,7 +167,7 @@ find_package(Threads REQUIRED)
 
 
 # The table as a header-only library, for other projects to link. It carries what its headers need: C++20, threads, the
-# include path, and the xxHash and cache-line definitions. Optimization and ISA flags (AVX2 at least) are the linking
+# include path, and the xxHash and cache-line definitions. Optimization and ISA flags (AVX2 at least, on x86-64) are the linking
 # project's own.
 add_library(kache_hash INTERFACE)
 add_library(kache_hash::kache_hash ALIAS kache_hash)

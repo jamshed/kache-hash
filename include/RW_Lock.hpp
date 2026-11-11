@@ -63,8 +63,11 @@ inline constexpr RW_Lock<N>::RW_Lock():
 template <std::size_t N>
 inline void RW_Lock<N>::lock()
 {
-    while(writer.test_and_set(std::memory_order_acquire))   // Wait until the ongoing write finishes, if any.
-        writer.wait(true, std::memory_order_acquire);
+    // NB: The writer sets its flag and then reads the readers', while a reader sets its own and then reads the
+    // writer's: one of them sees the other only if each side's store is ordered before its load, which takes
+    // sequentially-consistent accesses on both. An x86-64 exchange gives it with any ordering; AArch64's does not.
+    while(writer.test_and_set(std::memory_order_seq_cst))   // Wait until the ongoing write finishes, if any.
+        writer.wait(true, std::memory_order_seq_cst);
 
     bool read;
     do  // Wait until ongoing reads finish.
@@ -93,13 +96,13 @@ inline void RW_Lock<N>::lock_shared(const std::size_t w_id)
 
     while(!r)   // Keep checking as long as it's not safe to commit to reading. This also makes the read-lock reentrant.
     {
-        while(writer.test(std::memory_order_acq_rel))   // Some write is either (1) ongoing, in that case wait until it finishes; or
+        while(writer.test(std::memory_order_seq_cst))   // Some write is either (1) ongoing, in that case wait until it finishes; or
                                                         // (2) has signalled that it trying to start, in that case prioritize the write.
-            writer.wait(true, std::memory_order_acq_rel);
+            writer.wait(true, std::memory_order_seq_cst);
         // Write(s) have finished.
 
         r = true;   // Declare intention to read. It is unsafe to exit right away, as some other writer may have started in between.
-        if(writer.test(std::memory_order_acq_rel)) // A new writer has, observably, sneaked in in the mean time of read-declaration; unsafe to grab a read-lock.
+        if(writer.test(std::memory_order_seq_cst)) // A new writer has, observably, sneaked in in the mean time of read-declaration; unsafe to grab a read-lock.
             r = false;  // Give up the read-intention until the new writer finishes; unfair—continual stream of writers will starve readers.
                         // A strategy to prioritize reads can starve the writes, but writes typically being much more infrequent, read-starvation is preferable.
                         // A fair policy requires shared counters, incurring performance-hits.

@@ -4,6 +4,7 @@
 
 
 
+#include "Arch.hpp"
 #include "DNA_Utility.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Batch.hpp"
@@ -29,8 +30,6 @@
 #include <barrier>
 #include <cassert>
 #include <cmath>
-
-#include <immintrin.h>
 
 
 namespace kache_hash
@@ -65,7 +64,7 @@ private:
                                                     // this fraction of the main table's capacity, and grows on its own.
     static constexpr double ov_lf = 0.75;   // Load factor at which the overflow table grows.
     static constexpr std::size_t ov_min_cap = 1024; // Fewest keys the overflow table has room for.
-    static constexpr std::size_t B = 32;    // Bucket size: a bucket's checksums fill a 256-bit vector.
+    static constexpr std::size_t B = 32;    // Bucket size: a bucket's checksums fill a 256-bit vector, or two of 128 bits.
 
     typedef uint32_t mask_t;    // A bit per slot of a bucket.
 
@@ -237,7 +236,11 @@ private:
     std::atomic_uint64_t ov_step;   // Number of keys a user adds to the overflow table before flushing its count and checking for growth.
 
 
+#if defined(KACHE_HASH_X86_64)
     typedef __m256i cs_vec; // A vector of the checksums of a bucket.
+#else
+    struct cs_vec { uint8x16_t lo{}, hi{}; };   // The checksums of a bucket: of its slots `[0, 16)` and `[16, 32)`.
+#endif
 
     // Returns the checksums of the bucket with metadata `md`.
     static cs_vec load_cs(const auto& md);
@@ -974,29 +977,55 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::Store::prefetch_frontier(c
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::load_cs(const auto& md) -> cs_vec
 {
+#if defined(KACHE_HASH_X86_64)
     return _mm256_load_si256(reinterpret_cast<const __m256i*>(md.cs));
+#else
+    return {vld1q_u8(md.cs), vld1q_u8(md.cs + 16)};
+#endif
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::splat_cs(const uint8_t c) -> cs_vec
 {
+#if defined(KACHE_HASH_X86_64)
     return _mm256_set1_epi8(static_cast<char>(c));
+#else
+    const auto v = vdupq_n_u8(c);
+    return {v, v};
+#endif
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::eq_mask(const cs_vec x, const cs_vec y) -> mask_t
 {
+#if defined(KACHE_HASH_X86_64)
     return static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(x, y)));
+#else
+    // NEON has no move-mask. Each equal byte keeps the bit of its index modulo 8; pairwise sums of neighbors, thrice,
+    // then gather each 8 bytes' bits into a byte: the 4 bytes of the mask, in order.
+    static constexpr uint8_t bit_[16] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+    const auto bit = vld1q_u8(bit_);
+    auto s = vpaddq_u8(vandq_u8(vceqq_u8(x.lo, y.lo), bit), vandq_u8(vceqq_u8(x.hi, y.hi), bit));
+    s = vpaddq_u8(s, s);
+    s = vpaddq_u8(s, s);
+    return vgetq_lane_u32(vreinterpretq_u32_u8(s), 0);
+#endif
 }
 
 
 template <uint16_t k, bool mt_, typename T_, uint16_t l>
 inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::set_cs(const cs_vec v, const std::size_t j, const uint8_t c) -> cs_vec
 {
+#if defined(KACHE_HASH_X86_64)
     const auto iota = _mm256_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
     return _mm256_or_si256(v, _mm256_and_si256(_mm256_cmpeq_epi8(iota, _mm256_set1_epi8(static_cast<char>(j))), _mm256_set1_epi8(static_cast<char>(c))));
+#else
+    static constexpr uint8_t iota_[32] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    const auto at = vdupq_n_u8(static_cast<uint8_t>(j)), c_v = vdupq_n_u8(c);
+    return {vorrq_u8(v.lo, vandq_u8(vceqq_u8(vld1q_u8(iota_), at), c_v)), vorrq_u8(v.hi, vandq_u8(vceqq_u8(vld1q_u8(iota_ + 16), at), c_v))};
+#endif
 }
 
 
@@ -1047,8 +1076,20 @@ inline auto Streaming_Kmer_Hash_Table<k, mt_, T_, l>::buckets_of(const typename 
 {
     typedef typename Kmer_Lanes<k, l>::vec vec;
     // NB: A single 32-bit multiply per k-mer: denser vector multiplies drop Cascade Lake cores to a lower AVX2 clock.
+#if defined(KACHE_HASH_X86_64)
     const auto p = _mm256_mul_epu32(reinterpret_cast<__m256i>(h), _mm256_set1_epi64x(static_cast<long long>(cap)));
     return reinterpret_cast<vec>(_mm256_srli_epi64(p, 32));
+#else
+    uint64x2_t h_h[2];  // The lanes, two per 128-bit vector.
+    std::memcpy(h_h, &h, sizeof(h));
+    const auto cap_v = vdup_n_u32(static_cast<uint32_t>(cap));
+    for(auto& x : h_h)
+        x = vshrq_n_u64(vmull_u32(vmovn_u64(x), cap_v), 32);    // The widening products of the low halves.
+
+    vec b;
+    std::memcpy(&b, h_h, sizeof(b));
+    return b;
+#endif
 }
 
 
@@ -1136,7 +1177,7 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::lock(const std::size_t b)
                 if(!(cur & Metadata::lock_mask) && __sync_bool_compare_and_swap(&w, cur, cur | Metadata::lock_mask))
                     break;
 
-                _mm_pause();
+                cpu_relax();
             }
 }
 
@@ -1159,16 +1200,12 @@ inline void Streaming_Kmer_Hash_Table<k, mt_, T_, l>::unlock(const std::size_t b
     if constexpr(mt_ || resize_)
         if(mt_ || resize_worker_c > 1)
         {
-            if constexpr(!resize_)
-            {
-                assert(md(b).flags[0] & Metadata::lock_mask);
-                md(b).flags[0] &= ~Metadata::lock_mask;
-            }
-            else
-            {
-                assert(md_new(b).flags[0] & Metadata::lock_mask);
-                md_new(b).flags[0] &= ~Metadata::lock_mask;
-            }
+            // NB: A release store, so that the bucket's next holder finds this one's writes to it. It is the plain
+            // store on x86-64, whose stores stay in order; cores with weak memory ordering, such as AArch64's, may
+            // otherwise show the flag unlocked before those writes.
+            auto& w = (resize_ ? md_new(b) : md(b)).flags[0];
+            assert(w & Metadata::lock_mask);
+            __atomic_store_n(&w, static_cast<uint8_t>(w & ~Metadata::lock_mask), __ATOMIC_RELEASE);
         }
 }
 

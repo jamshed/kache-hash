@@ -18,12 +18,12 @@ It:
 ## Requirements
 
 - C++20 compatible compiler (GCC ≥ 9.1, Clang ≥ 9.0)
-- AVX2 support
+- An x86-64 CPU with AVX2 support, or an AArch64 (ARM64) CPU
 
 ## Usage
 
 To use *k*ache-hash, copy over the content from its `include` directory to your project, and include the header file `Streaming_Kmer_Hash_Table.hpp` in your code.
-Or, with CMake, link its header-only target `kache_hash::kache_hash`, e.g. after `FetchContent_MakeAvailable(kache_hash)`: it carries the include path, the definitions, and C++20, while the optimization and ISA flags (AVX2 at least) stay your project's own.
+Or, with CMake, link its header-only target `kache_hash::kache_hash`, e.g. after `FetchContent_MakeAvailable(kache_hash)`: it carries the include path, the definitions, and C++20, while the optimization and ISA flags (AVX2 at least, on x86-64) stay your project's own.
 
 The hash table class has the following template signature:
 
