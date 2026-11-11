@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 # Builds test/check.cpp, test/describers.cpp, test/counter.cpp with the counting library, test/oriented.cpp with the
-# batch and the lane describers, and test/capi.cpp with the C interface library, locally, as x86_64 under Rosetta on
-# Apple silicon and natively elsewhere, and checks that the C interface's header is C. Runs the describers' check on E. coli, chr21 and 1M
+# batch and the lane describers, and test/capi.cpp with the C interface library, locally, and checks that the C
+# interface's header is C. On macOS they build as x86_64, to run under Rosetta on Apple silicon, or natively, as arm64
+# there, with KH_NATIVE=1; elsewhere they build natively. Runs the describers' check on E. coli, chr21 and 1M
 # SRR5833294 reads, the counting library's checks, the oriented operations' and the C interface's checks on E. coli
 # and chr21 at all threads, then the tables' correctness matrix: E. coli and chr21, each against the other as
 # negatives; sets, and maps of 64-, 32- and 8-bit counts; sequential, and concurrent at 1 and all threads; presized,
 # and resizing from 100,000 and from 10 k-mers; whole fragments, raw sequences, and ragged batches; and concurrent at
 # all threads with bucket counts rounded up to powers of 2, presized and from 10 k-mers, over whole fragments.
-# Usage: test/check.sh [quick] [extra compile flags...]; quick skips chr21 and the reads.
+# Usage: [KH_NATIVE=1] test/check.sh [quick] [extra compile flags...]; quick skips chr21 and the reads.
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
+native=${KH_NATIVE:-0} tag=""
 if [ "$(uname -s)" = Darwin ]; then
-    cxx="clang++ -arch x86_64" cc="clang -arch x86_64" arch="-march=haswell" T=$(sysctl -n hw.ncpu)
+    T=$(sysctl -n hw.ncpu)
+    if [ ${native} = 1 ] && [ "$(sysctl -n hw.optional.arm64 2> /dev/null)" = 1 ]; then
+        # Natively on Apple silicon: the M1's features, which all of it has.
+        cxx="clang++ -arch arm64" cc="clang -arch arm64" arch="-mcpu=apple-m1" tag="-arm64"
+    else
+        cxx="clang++ -arch x86_64" cc="clang -arch x86_64" arch="-march=haswell"
+    fi
 else    # Natively elsewhere, e.g. on AArch64 Linux.
     cxx="${CXX:-c++}" cc="${CC:-cc}" arch="-march=native" T=$(nproc)
     case "$(uname -m)" in aarch64|arm64) arch="-mcpu=native";; esac
 fi
 quick=0; [ "${1:-}" = quick ] && { quick=1; shift; }
-out="${root}/build-local/check$(echo "$*" | tr -c 'A-Za-z0-9=' '_')"; mkdir -p "${out}"   # Per flags, so concurrent runs don't share a binary.
+out="${root}/build-local/check${tag}$(echo "$*" | tr -c 'A-Za-z0-9=' '_')"; mkdir -p "${out}"   # Per architecture and flags, so concurrent runs don't share a binary.
 for t in check describers counter oriented oriented-lanes capi; do
     srcs="${root}/test/${t%-lanes}.cpp" defs=""
     [ ${t} = counter ] && srcs+=" ${root}/counter/Fastx_Reader.cpp ${root}/counter/Kmer_Set_Counter.cpp"

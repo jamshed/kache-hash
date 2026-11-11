@@ -154,8 +154,9 @@ if(LSWEEP)
 endif()
 
 
-# The iceberg table's benchmark, on x86-64 Linux only: its sources use AVX-512 or AVX2 intrinsics. It builds the vendored iceberg sources, in `icebergHT/`, as iceberg's
-# own Makefile does by default—vectorized, with block locks and resizes—and links them with the driver under LTO.
+# The iceberg table's benchmark, on x86-64 Linux only: its sources use AVX-512 or AVX2 intrinsics. It builds the
+# vendored iceberg sources, in `icebergHT/`, as iceberg's own Makefile does by default—vectorized, with block locks and
+# resizes—and links them with the driver under LTO.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     file(GLOB ICEBERG_SRC ${CMAKE_CURRENT_SOURCE_DIR}/icebergHT/*.c)
     set_source_files_properties(${ICEBERG_SRC} PROPERTIES COMPILE_OPTIONS -w)  # Third-party sources; their warnings are not ours.
