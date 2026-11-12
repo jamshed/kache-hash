@@ -5,7 +5,7 @@
 
 
 // kache-hash's version, which its CMake project reads from here. A release
-// bumps it, with the crate's and `CITATION.cff`'s.
+// bumps it, with the Rust crates' and `CITATION.cff`'s.
 #define KACHE_HASH_VERSION_MAJOR 0
 #define KACHE_HASH_VERSION_MINOR 7
 #define KACHE_HASH_VERSION_PATCH 1
