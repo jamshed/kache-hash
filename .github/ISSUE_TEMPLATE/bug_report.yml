@@ -1,0 +1,62 @@
+name: Bug report
+description: kache-hash gives a wrong result, crashes, or fails to build.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What kache-hash does, and what you expected it to do.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The commands, or a small program, that show it, and its output; with the inputs, if you can share them.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: kache-hash's version
+      description: The release, or the commit, e.g. `v0.8.0` or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options: [The C++ table, The counter, The C interface, The Rust crates, The benchmarks, The build]
+    validations:
+      required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      description: E.g. from `lscpu | grep 'Model name'`, or on macOS `sysctl -n machdep.cpu.brand_string`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system
+      description: E.g. Ubuntu 24.04, or macOS 15 on Intel.
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler and flags
+      description: E.g. `g++-13 -O3 -march=native`, `KACHE_HASH_ARCH=x86-64-v3`, or `RUSTFLAGS="-C target-cpu=native"`.
+    validations:
+      required: true
+  - type: input
+    id: table
+    attributes:
+      label: The table
+      description: Its k and minimizer size l, set or map and its values, and its sizing (expected k-mers, load factor, powers of 2).
+  - type: input
+    id: threads
+    attributes:
+      label: Threads
+      description: The threads that insert and query, and those of resizes.

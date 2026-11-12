@@ -1,0 +1,16 @@
+name: Feature request
+description: Something kache-hash could do, or do better.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need
+      description: The workload or the problem, e.g. the k-mers, their number, and the operations.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: The interface or the change you have in mind, and what you use now instead.
