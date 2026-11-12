@@ -21,7 +21,6 @@ Notable changes to *k*ache-hash, by release.
 - The crates' metadata for crates.io, and `rust/vendor.sh`, which copies the sources of the C interface's library into `kache-hash-sys`'s package.
 - Examples, in `examples/`: in C++, counting k-mers, filtering reads by their k-mers in a reference, strand membership, and counting reads' k-mers within a set with the counter; and in C, strand membership. `KACHE_HASH_BUILD_EXAMPLES` builds them, in top-level builds by default, and CTest checks their outputs on the test inputs against those of `examples/expected/make-expected.py`, a plain count in Python, as CI does the Rust examples'.
 - A documentation site, in `docs/`, with guides to installation, the C++, C and Rust interfaces, concurrency, tuning and the supported platforms, and an API reference that Doxygen generates from the headers' comments.
-- `REPRODUCE.md`, on reproducing the paper's evaluation of v0.7.0.
 - `CONTRIBUTING.md`, with the release checklist, and GitHub's issue templates.
 
 ### Changed
