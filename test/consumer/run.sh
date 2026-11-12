@@ -53,7 +53,7 @@ for type in static shared; do
     shared=OFF; [ "${type}" = shared ] && shared=ON
     p="${w}/prefix-${type}"
     if ! { "${offline[@]}" cmake -S "${src}" -B "${w}/build-${type}" -DBUILD_SHARED_LIBS=${shared} \
-                -DCMAKE_INSTALL_PREFIX="${p}" -DKACHE_HASH_BUILD_TESTS=OFF "$@" && "${offline[@]}" cmake --build "${w}/build-${type}" -j "${j}" &&
+                -DCMAKE_INSTALL_PREFIX="${p}" -DKACHE_HASH_BUILD_TESTS=OFF -DKACHE_HASH_BUILD_EXAMPLES=OFF "$@" && "${offline[@]}" cmake --build "${w}/build-${type}" -j "${j}" &&
            "${offline[@]}" cmake --install "${w}/build-${type}"; } > "${w}/build-${type}.log" 2>&1; then
         echo "FAIL  kache-hash ${type} build; see ${w}/build-${type}.log"; tail -20 "${w}/build-${type}.log"; exit 1
     fi

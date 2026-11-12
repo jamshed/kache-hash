@@ -1,0 +1,12 @@
+set 31-mers	289877
+occurrences counted	70176
+count 1	53640
+count 2	7409
+count 3	562
+count 4	8
+count 5	0
+count 6	0
+count 7	0
+count 8	0
+count 9	0
+count 10	0

@@ -153,6 +153,13 @@ jobs:
         run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: Run the examples, against the outputs that the C++ examples' tests expect
+        run: |
+          gzip -dc ../test/data/ecoli.fa.gz > "${RUNNER_TEMP}/ecoli.fa" && gzip -dc ../test/data/reads.fq.gz > "${RUNNER_TEMP}/reads.fq"
+          cargo run -q --release --locked --example kmer_counts -- "${RUNNER_TEMP}/ecoli.fa" 4 | diff -u ../examples/expected/count_kmers.ecoli.txt -
+          cargo run -q --release --locked --example kmer_counts -- ../test/data/edge-cases.fa 4 | diff -u ../examples/expected/count_kmers.edge-cases.txt -
+          cargo run -q --release --locked --example strand_membership -- "${RUNNER_TEMP}/ecoli.fa" "${RUNNER_TEMP}/reads.fq" |
+            diff -u ../examples/expected/strand_membership.tsv -
       # The packages as crates.io takes them, with the sources that vendor.sh copies in; each builds from its package.
       # Cargo counts the copies, which git ignores, as uncommitted changes.
       - name: Package

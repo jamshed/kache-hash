@@ -36,6 +36,7 @@ option(KACHE_HASH_BUILD_COUNTER "Build the k-mer counting library, kache_counter
 option(KACHE_HASH_BUILD_BENCHMARKS "Build the benchmarks and the tools, fetching the baselines; top-level builds only." OFF)
 option(KACHE_HASH_INSTALL "Generate the install rules." ${KACHE_HASH_TOP_LEVEL})
 option(KACHE_HASH_BUILD_TESTS "Build the tests, for CTest; top-level builds only." ${KACHE_HASH_TOP_LEVEL})
+option(KACHE_HASH_BUILD_EXAMPLES "Build the examples, which CTest runs with the tests; top-level builds only." ${KACHE_HASH_TOP_LEVEL})
 
 # The ISA of the compiled targets, i.e. the libraries, the benchmarks and the tools: `native`, the building CPU's, by
 # default; `x86-64-v3` (AVX2) or `x86-64-v4` (AVX-512), for binaries that run on other CPUs, with `x86-64-v3` the default
@@ -244,6 +245,13 @@ if(KACHE_HASH_BUILD_TESTS AND KACHE_HASH_TOP_LEVEL)
     add_subdirectory(test)
 elseif(KACHE_HASH_BUILD_TESTS)
     message(WARNING "KACHE_HASH_BUILD_TESTS takes effect in top-level builds only.")
+endif()
+
+# The examples, in `examples/`: in top-level builds only.
+if(KACHE_HASH_BUILD_EXAMPLES AND KACHE_HASH_TOP_LEVEL)
+    add_subdirectory(examples)
+elseif(KACHE_HASH_BUILD_EXAMPLES)
+    message(WARNING "KACHE_HASH_BUILD_EXAMPLES takes effect in top-level builds only.")
 endif()
 
 

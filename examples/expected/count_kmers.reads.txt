@@ -1,0 +1,12 @@
+distinct 31-mers	176549
+occurrences	274346
+count 1	147976
+count 2	18602
+count 3	4216
+count 4	1482
+count 5	1037
+count 6	559
+count 7	363
+count 8	254
+count 9	226
+count 10+	1834

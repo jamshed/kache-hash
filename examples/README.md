@@ -25,5 +25,5 @@ build/examples/filter_reads ecoli.fa reads.fq 0.5 8 > kept.fa
 (cd rust && cargo run --release --example strand_membership -- ../ecoli.fa ../reads.fq)
 ```
 
-CTest runs the C++ and C examples on the inputs in `test/data/`, as the tests labeled `examples`, and compares their outputs with those in [`expected/`](expected), which come from a plain count of the inputs' canonical 31-mers.
+CTest runs the C++ and C examples on the inputs in `test/data/`, as the tests labeled `examples`, and compares their outputs with those in [`expected/`](expected), which [`make-expected.py`](expected/make-expected.py) makes by a plain count of the inputs' canonical 31-mers.
 CI runs the Rust examples against the same outputs.
