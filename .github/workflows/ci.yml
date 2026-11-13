@@ -94,6 +94,7 @@ jobs:
   avx512:
     name: Linux, g++-14, Release, x86-64-v4 under Intel SDE
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Install the compiler and zlib
@@ -113,11 +114,13 @@ jobs:
           -DKACHE_HASH_TEST_THREADS=2 "-DCMAKE_CROSSCOMPILING_EMULATOR=${SDE};-clx;--"
       - name: Build
         run: cmake --build build -j 4
-      # The tests of the AVX-512 paths: the lane describer, and the table's concurrent operations, which use it.
+      # The tests of the AVX-512 paths: the lane describer, and the table's concurrent operations, which use it. Not the
+      # counter's: its pipe checks hang under SDE, which never completes the opens of a FIFO between two threads, and its
+      # reads in 1-byte chunks rescan the input with glibc's AVX-512 memchr, which SDE emulates, for hours.
       - name: Test under SDE, as Cascade Lake
         run: >
-          ctest --test-dir build -L quick -j 4
-          -R '^(describers|counter)$|^(oriented|oriented-lanes|capi)\.|^check\.(ecoli|edge-cases)\.mt-[a-z0-9]+\.T\.'
+          ctest --test-dir build -L quick -j 4 --timeout 600
+          -R '^describers$|^(oriented|oriented-lanes|capi)\.|^check\.(ecoli|edge-cases)\.mt-[a-z0-9]+\.T\.'
 
   consumer:
     name: Linux, g++-14, consumers of installs and sources
