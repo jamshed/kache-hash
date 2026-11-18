@@ -14,13 +14,13 @@ Notable changes to *k*ache-hash, by release.
 - Shared libraries, with `BUILD_SHARED_LIBS`, which export the symbols of their interfaces only.
 - `KACHE_HASH_ARCH`, the ISA that the libraries compile for: `native`, the default, `x86-64-v3`, `x86-64-v4`, or `none`.
 - `kache_version()` in the C interface, and `version()` in the Rust crate.
-- Continuous integration on GitHub Actions: the quick tests with GCC 11–14 and Clang 12–18, in Release and Debug, on Linux and on an Intel Mac; under ASan and UBSan; and for AVX-512 under Intel's SDE; the consumers; and the Rust crates' tests, lints, docs and packages, also on their least Rust, 1.85.
-- `TSAN`, a build option for ThreadSanitizer, and a check that the headers', the Rust crates' and `CITATION.cff`'s versions agree.
+- Continuous integration on GitHub Actions: the quick tests with GCC 11–14 and Clang 12–18, in Release and Debug, on Linux and on an Intel Mac; under ASan and UBSan; and for AVX-512 under Intel's SDE; the consumers; and the Rust crates' tests, lints, docs, and packages, also on their least Rust, 1.85.
+- `TSAN`, a build option for ThreadSanitizer, and a check that the headers', the Rust crates', and `CITATION.cff`'s versions agree.
 - Tests for CTest, which `KACHE_HASH_BUILD_TESTS` builds, in top-level builds by default: `quick` ones on small inputs in `test/data/` (248 KB, from `test/data/make-fixtures.py`), `full` ones on the datasets of `scripts/fetch-data.sh small`, and `consumer` ones on installs and sources.
 - The Rust crate `kache-hash`, with the safe interface that was `kache-hash-sys`'s, and examples that count the k-mers of a FASTA or FASTQ file from many threads, and tell the k-mers of reads in a reference's strands.
 - The crates' metadata for crates.io, and `rust/vendor.sh`, which copies the sources of the C interface's library into `kache-hash-sys`'s package.
 - Examples, in `examples/`: in C++, counting k-mers, filtering reads by their k-mers in a reference, strand membership, and counting reads' k-mers within a set with the counter; and in C, strand membership. `KACHE_HASH_BUILD_EXAMPLES` builds them, in top-level builds by default, and CTest checks their outputs on the test inputs against those of `examples/expected/make-expected.py`, a plain count in Python, as CI does the Rust examples'.
-- A documentation site, in `docs/`, with guides to installation, the C++, C and Rust interfaces, concurrency, tuning and the supported platforms, and an API reference that Doxygen generates from the headers' comments.
+- A documentation site, in `docs/`: guides to installation, the C++, C, and Rust interfaces, tuning, and the supported platforms; and an API reference that Doxygen generates from the headers' comments.
 - `CONTRIBUTING.md`, with the release checklist, and GitHub's issue templates.
 
 ### Changed
@@ -149,7 +149,7 @@ The release that the paper evaluates.
 
 ### Added
 
-- Benchmarks: drivers for Boost's tables, libcuckoo, iceberg, CBL and SSHash, their runner and collation, and exact references for their checks.
+- Benchmarks: drivers for Boost's tables, libcuckoo, iceberg, CBL, and SSHash, their runner and collation, and exact references for their checks.
 
 ### Removed
 

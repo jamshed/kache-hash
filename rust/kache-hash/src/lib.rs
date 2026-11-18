@@ -1,4 +1,4 @@
-//! Concurrent tables of k-mers: sets of k-mers, and maps from k-mers to unsigned values of 8, 16, 32 or 64 bits, over
+//! Concurrent tables of k-mers: sets of k-mers, and maps from k-mers to unsigned values of 8, 16, 32, or 64 bits, over
 //! kache-hash's C interface, which the crate `kache-hash-sys` builds and binds. Non-ACGT characters split sequences,
 //! and lowercase bases count as bases. A table keeps each k-mer in its canonical form, so that lookups find a k-mer in
 //! either orientation; oriented inserts and masked counts tell a k-mer's occurrences as is from those as its reverse
@@ -7,7 +7,7 @@
 //! A table is built through a [`Builder`], from any number of threads, each inserting through its own [`Inserter`];
 //! then frozen into a [`Table`], which answers queries from any number of threads. A map's [`Updater`] updates the
 //! values of the k-mers present, from any number of threads, while it borrows the table. The phases keep inserts,
-//! updates and queries from overlapping, as the table requires.
+//! updates, and queries apart.
 //!
 //! ```
 //! use kache_hash::{Builder, Op, Options};
@@ -137,7 +137,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// The values of a table: `()` in a set, and `u8`, `u16`, `u32` or `u64` in a map.
+/// The values of a table: `()` in a set, and `u8`, `u16`, `u32`, or `u64` in a map.
 pub trait Value: sealed::Sealed + Copy + Send + Sync + 'static {
     #[doc(hidden)]
     const BYTES: u32;
@@ -420,7 +420,7 @@ impl<V: Value> Table<V> {
         })
     }
 
-    /// Looks up each k-mer position of the sequences `seqs`, in order: puts [`PRESENT`], [`ABSENT`] or [`NOT_KMER`] in
+    /// Looks up each k-mer position of the sequences `seqs`, in order: puts [`PRESENT`], [`ABSENT`], or [`NOT_KMER`] in
     /// `found`, and whether the k-mer occurs as is in `fwd`, if given. Each has room for [`Table::positions`].
     pub fn lookup<S: AsRef<[u8]>>(&self, seqs: &[S], found: &mut [u8], fwd: Option<&mut [u8]>) -> Result<(), Error> {
         self.lookup_raw(seqs, found, std::ptr::null_mut(), 0, fwd)
@@ -471,7 +471,7 @@ impl<V: Value> Table<V> {
     }
 
     /// Calls `f(keys, values)` with the keys of the table in the share `shard` of `shards` shares, in chunks and in an
-    /// unspecified order, while it returns `true`: each key in its 2-bit encoding, with A, C, G and T as 0 to 3 and the
+    /// unspecified order, while it returns `true`: each key in its 2-bit encoding, with A, C, G, and T as 0 to 3 and the
     /// first base the most significant, and in a map, with its value. The shares partition the table, so that
     /// iterations over all of them, concurrent or not, visit each key once. A panic of `f` ends the iteration, and
     /// resumes in the caller.

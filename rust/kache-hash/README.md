@@ -1,9 +1,9 @@
 # kache-hash
 
-Concurrent tables of *k*-mers from [*k*ache-hash](https://github.com/jamshed/kache-hash), a dynamic, concurrent and cache-efficient hash table for streaming *k*-mer operations: sets of 31-mers, and maps from 31-mers to `u8`, `u16`, `u32` or `u64` values, built and queried from many threads.
+Concurrent tables of *k*-mers from [*k*ache-hash](https://github.com/jamshed/kache-hash), a dynamic, concurrent, and cache-efficient hash table for streaming *k*-mer operations: sets of 31-mers, and maps from 31-mers to `u8`, `u16`, `u32`, or `u64` values, built and queried from many threads.
 
 A table is built through a `Builder`, with an `Inserter` per thread, then frozen into a `Table` for queries from any number of threads; a map's `Updater` borrows it to update it.
-So the borrow checker keeps inserts, updates and queries from overlapping, as the table requires.
+So the borrow checker keeps inserts, updates, and queries in their phases.
 Inserts and updates combine a k-mer's value with an operand: keep, assign, add (saturating), or, min, or max.
 Queries count, sum, or look up the k-mers of batches of sequences, reduce the whole table, or iterate over its keys in shares.
 A table keeps each k-mer in its canonical form, so that it finds k-mers in either orientation; oriented inserts and masked counts tell a k-mer's occurrences as is from those as its reverse complement, e.g. for strand membership.

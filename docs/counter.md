@@ -16,9 +16,9 @@ const auto bins = counter.histogram(10'000);    // `bins[c]`: the number of k-me
 const auto c = counter.count_of(kmer);  // One k-mer's count: the 31 characters at `kmer`.
 ```
 
-The counter takes 31-mers only, *for now*.
+The counter takes 31-mers, for now.
 Its table rounds its bucket count up to a power of 2, at load factor 0.9 by default.
-Its operations must not overlap one another, except for `histogram`s and `count_of`s.
+Its operations run one at a time, but `histogram`s and `count_of`s run alongside one another.
 
 ## Reading FASTA and FASTQ in parallel
 

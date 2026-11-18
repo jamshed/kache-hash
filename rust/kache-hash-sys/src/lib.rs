@@ -1,6 +1,6 @@
 //! Raw bindings to kache-hash's C interface, `kache_hash/kache_capi.h`, which documents each function, and the
 //! interface library's build: concurrent tables of k-mers, i.e. sets of k-mers, and maps from k-mers to unsigned values
-//! of 8, 16, 32 or 64 bits. The crate `kache-hash` wraps them in a safe interface.
+//! of 8, 16, 32, or 64 bits. The crate `kache-hash` wraps them in a safe interface.
 //!
 //! The build compiles the library with the `cc` crate, for an x86-64 CPU with AVX2 at least: for the ISA that
 //! `KACHE_HASH_ARCH` names, if set, `native`, `x86-64-v3`, `x86-64-v4`, or `none` for the compiler's own flags;
@@ -69,7 +69,7 @@ pub struct kache_table {
 pub struct kache_options {
     /// Length of the k-mers.
     pub k: u32,
-    /// Width of the values in bytes: 1, 2, 4 or 8 in a map, and 0 in a set.
+    /// Width of the values in bytes: 1, 2, 4, or 8 in a map, and 0 in a set.
     pub value_bytes: u32,
     /// Number of k-mers to make room for; the table grows beyond, as needed.
     pub expected_keys: u64,

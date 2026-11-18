@@ -51,6 +51,7 @@ This executes faster than a call per sequence.
 A map's `upsert` gives an absent *k*-mer the value it takes, and applies its function to a present one's.
 A map's `update` applies the function only to the present *k*-mers, and inserts none.
 `for_each` visits the *k*-mers in the share of worker `w_id`, of `w_c` shares; the shares partition the table, so that `w_c` threads can visit each *k*-mer once between them.
+Queries run alongside one another and `for_each`, and alongside inserts while the table doesn't grow; `update`s run alongside one another.
 
 ## Orientations
 
@@ -73,11 +74,5 @@ After `n`, the constructor takes the number of threads for resizes, the load fac
 A power of 2 sizing lowers the load, which speeds the operations, at up to twice the memory at most.
 A table has at most `2^32 - 1` buckets; `fits` tells whether a size is within that.
 `size`, `capacity`, `bucket_bytes`, and `key_distribution` describe a table: its *k*-mers, its slots, the bytes of its buckets, and the shares of its keys in their primary buckets, their secondary buckets, and the overflow table.
-
-## Concurrency
-
-Queries must not overlap inserts that can grow the table, and `for_each` must not overlap a modification.
-`update`s, which insert nothing, must not overlap other operations but `update`s.
-[Concurrency](concurrency.md) tabulates which operations may overlap.
 
 The [API reference](https://jamshed.github.io/kache-hash/api/) documents each operation.

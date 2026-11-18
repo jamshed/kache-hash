@@ -38,8 +38,9 @@ A table's options size it as the C++ constructor does: for `expected_keys` at `l
 `kache_version()` gives the version of the library, and `KACHE_HASH_VERSION_STRING` that of the header it compiled with.
 
 The functions that can fail return a status code, `KACHE_OK` on success, which `kache_strerror` describes.
-Inserts may overlap one another, each user on its own thread, and updates may overlap one another; queries may overlap one another, but neither inserts nor updates.
-A table can register at most `KACHE_MAX_USERS` users, 128 for now.
+Inserts run concurrently, each user on its own thread, as do updates.
+Queries run concurrently once the inserts and updates are over.
+A table registers up to `KACHE_MAX_USERS`, 128, users.
 
 The header documents each function, as does the [API reference](https://jamshed.github.io/kache-hash/api/).
 The example [`strand_membership.c`](https://github.com/jamshed/kache-hash/blob/main/examples/strand_membership.c) counts the *k*-mers of reads in a reference's forward and reverse strands.

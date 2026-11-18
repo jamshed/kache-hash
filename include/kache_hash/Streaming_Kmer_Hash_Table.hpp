@@ -46,8 +46,6 @@ namespace kache_hash
 // `k <= 32`. `mt_` denotes whether a concurrent table is desired. If a hash map
 // is required, the mapped type is `T_`. `l`-minimizers are used in underlying
 // computations.
-// NB: concurrent insertions are guaranteed to function correctly only if
-// deletions are not performed, as of now.
 template <uint16_t k, bool mt_, typename T_ = void, uint16_t l = 22>
 class Streaming_Kmer_Hash_Table
 {
