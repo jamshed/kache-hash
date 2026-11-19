@@ -1,0 +1,59 @@
+# Doxygen's configuration of the API reference: the public headers of the table, the counter, and the C interface,
+# whose `//` comments `doxygen_filter.py` turns into documentation. `docs/build.sh` runs it from the repository's root,
+# with `KACHE_HASH_VERSION` and `KACHE_HASH_DOXYGEN_OUTPUT` set.
+
+PROJECT_NAME           = "kache-hash"
+PROJECT_NUMBER         = $(KACHE_HASH_VERSION)
+PROJECT_BRIEF          = "A dynamic, concurrent, and cache-efficient hash table for streaming k-mer operations"
+OUTPUT_DIRECTORY       = $(KACHE_HASH_DOXYGEN_OUTPUT)
+
+INPUT                  = docs/api/mainpage.md \
+                         include/kache_hash/kache_hash.hpp \
+                         include/kache_hash/Streaming_Kmer_Hash_Table.hpp \
+                         include/kache_hash/Kmer.hpp \
+                         include/kache_hash/Kmer_Set_Counter.hpp \
+                         include/kache_hash/Fastx_Reader.hpp \
+                         include/kache_hash/kache_capi.h \
+                         include/kache_hash/config.hpp \
+                         include/kache_hash/version.hpp
+USE_MDFILE_AS_MAINPAGE = docs/api/mainpage.md
+FILTER_PATTERNS        = "*.hpp=python3 docs/api/doxygen_filter.py" \
+                         "*.h=python3 docs/api/doxygen_filter.py"
+STRIP_FROM_PATH        = include
+STRIP_FROM_INC_PATH    = include
+
+# What to document: the public interfaces, with their first sentences as their briefs.
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MARKDOWN_SUPPORT       = YES
+SORT_MEMBER_DOCS       = NO
+SHOW_USED_FILES        = NO
+
+# The preprocessor: the AVX2 build of a GCC-like compiler, without the export and attribute macros.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = __AVX2__ \
+                         __GNUC__ \
+                         __cplusplus \
+                         KACHE_CAPI_EXPORT= \
+                         KACHE_COUNTER_EXPORT= \
+                         KACHE_NOEXCEPT= \
+                         "__attribute__(x)="
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = TOGGLE
+GENERATE_TREEVIEW      = YES
+GENERATE_LATEX         = NO
+SEARCHENGINE           = YES
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
