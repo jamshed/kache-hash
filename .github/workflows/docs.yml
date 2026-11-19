@@ -1,0 +1,50 @@
+# The documentation site: its pages, by MkDocs Material, with Doxygen's API reference, built on every push and pull
+# request as a check, and deployed to GitHub Pages from `main`, where the releases land. Pages takes its source from
+# GitHub Actions, as the repository's settings set it.
+
+name: Docs
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Doxygen and MkDocs Material
+        run: |
+          sudo apt-get update && sudo apt-get install -y doxygen
+          python3 -m venv "${RUNNER_TEMP}/docs" && "${RUNNER_TEMP}/docs/bin/pip" install -r docs/requirements.txt
+          echo "${RUNNER_TEMP}/docs/bin" >> "${GITHUB_PATH}"
+      - name: Build
+        run: docs/build.sh build-docs
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build-docs/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

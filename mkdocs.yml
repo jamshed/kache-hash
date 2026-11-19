@@ -1,0 +1,79 @@
+# The documentation site, built by `docs/build.sh` with MkDocs Material, with Doxygen's API reference under `api/`.
+
+site_name: kache-hash
+site_url: https://jamshed.github.io/kache-hash/
+site_description: A dynamic, concurrent, and cache-efficient hash table for streaming k-mer operations.
+repo_url: https://github.com/jamshed/kache-hash
+repo_name: jamshed/kache-hash
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2024&ndash;2026 Jamshed Khan. Distributed under the BSD 3-Clause License.
+strict: true
+
+# The tooling beside the pages: Doxygen's configuration and filter, and the build's.
+exclude_docs: |
+  /api/
+  /build.sh
+  /requirements.txt
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to the dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to the light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    absolute_links: info
+    unrecognized_links: info
+
+nav:
+  - Home: index.md
+  - Installation: install.md
+  - Guides:
+      - The C++ tables: cpp.md
+      - Counting k-mers within a set: counter.md
+      - The C interface: c.md
+      - The Rust crates: rust.md
+  - Tuning: tuning.md
+  - Supported platforms: platforms.md
+  - Examples: examples.md
+  - API reference: https://jamshed.github.io/kache-hash/api/
+  - Benchmarks: benchmarks.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
+  - Citation: citation.md

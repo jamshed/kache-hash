@@ -1,0 +1,4 @@
+# The Python packages of the documentation site's build, `docs/build.sh`; Doxygen comes from the system.
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+pymdown-extensions==10.21.3
